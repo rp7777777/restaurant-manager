@@ -1,3 +1,3 @@
-export default function Workers() {
-  return <h2>Workers Module</h2>;
+export default function SchedulePage() {
+  return <h1>Schedule Page</h1>
 }

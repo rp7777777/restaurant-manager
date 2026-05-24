@@ -109,3 +109,16 @@ code {
   padding: 4px 8px;
   background: var(--code-bg);
 }
+@media print {
+nav {
+display: none;
+}
+
+button {
+display: none;
+}
+
+body {
+background: white;
+}
+}
