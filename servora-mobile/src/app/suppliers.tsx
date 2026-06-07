@@ -1,473 +1,271 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
-  useEffect,
   useState,
 } from "react";
 
 import {
   View,
   Text,
-  StyleSheet,
+ StyleSheet,
   ScrollView,
   TextInput,
   TouchableOpacity,
   Alert,
 } from "react-native";
 
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-} from "firebase/firestore";
-
-import {
-  db,
-} from "../firebase";
-
 export default function SuppliersScreen() {
 
-  const [supplierName, setSupplierName] =
-    useState("");
+  const [supplierName,
+    setSupplierName] =
+      useState("");
 
-  const [phone, setPhone] =
-    useState("");
+  const [company,
+    setCompany] =
+      useState("");
 
-  const [email, setEmail] =
-    useState("");
+  const [phone,
+    setPhone] =
+      useState("");
 
-  const [ingredient, setIngredient] =
-    useState("");
-
-  const [pendingInvoice, setPendingInvoice] =
-    useState("");
-
-  const [suppliers, setSuppliers] =
-    useState<any[]>([]);
-
-  const getSuppliers =
-    async () => {
-
-      try {
-
-        const snapshot =
-          await getDocs(
-            collection(
-              db,
-              "suppliers"
-            )
-          );
-
-        const data: any[] = [];
-
-        snapshot.forEach(
-          (docItem) => {
-
-            data.push({
-              id: docItem.id,
-              ...(docItem.data() as any),
-            });
-
-          }
-        );
-
-        data.reverse();
-
-        setSuppliers(data);
-
-      } catch (error) {
-
-        console.log(error);
-
-      }
-
-    };
+  const [suppliers,
+    setSuppliers] =
+      useState<any[]>([]);
 
   const addSupplier =
-    async () => {
+    () => {
 
       if (
         !supplierName ||
+        !company ||
         !phone
       ) {
 
         Alert.alert(
           "Error",
-          "Fill required fields"
+          "Fill all fields"
         );
 
         return;
 
       }
 
-      try {
+      const newSupplier = {
 
-        await addDoc(
-          collection(
-            db,
-            "suppliers"
-          ),
-          {
-            supplierName,
-            phone,
-            email,
-            ingredient,
-            pendingInvoice:
-              Number(
-                pendingInvoice
-              ),
+        id:
+          Date.now(),
 
-            createdAt:
-              new Date(),
-          }
-        );
+        supplierName,
 
-        Alert.alert(
-          "Success",
-          "Supplier Added"
-        );
+        company,
 
-        setSupplierName("");
-        setPhone("");
-        setEmail("");
-        setIngredient("");
-        setPendingInvoice("");
+        phone,
 
-        getSuppliers();
+      };
 
-      } catch (error: any) {
+      setSuppliers([
+        newSupplier,
+        ...suppliers,
+      ]);
 
-        Alert.alert(
-          "Error",
-          error.message
-        );
-
-      }
-
-    };
-
-  const deleteSupplier =
-    async (id: string) => {
+      setSupplierName("");
+      setCompany("");
+      setPhone("");
 
       Alert.alert(
-        "Delete Supplier",
-        "Are you sure?",
-        [
-
-          {
-            text: "Cancel",
-          },
-
-          {
-            text: "Delete",
-
-            style: "destructive",
-
-            onPress:
-              async () => {
-
-                try {
-
-                  await deleteDoc(
-                    doc(
-                      db,
-                      "suppliers",
-                      id
-                    )
-                  );
-
-                  getSuppliers();
-
-                } catch (error) {
-
-                  console.log(error);
-
-                }
-
-              },
-          },
-
-        ]
+        "Success",
+        "Supplier Added"
       );
 
     };
 
-  useEffect(() => {
-
-    getSuppliers();
-
-  }, []);
-
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        style={styles.container}
+      >
 
-        <Text style={styles.logo}>
-          SUPPLIERS
-        </Text>
+        <View style={styles.header}>
 
-        <Text style={styles.subtitle}>
-          Supplier Management
-        </Text>
-
-      </View>
-
-      <View style={styles.form}>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Supplier Name"
-          value={supplierName}
-          onChangeText={
-            setSupplierName
-          }
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Phone Number"
-          keyboardType="phone-pad"
-          value={phone}
-          onChangeText={setPhone}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Email Address"
-          keyboardType="email-address"
-          value={email}
-          onChangeText={setEmail}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Ingredient Supply"
-          value={ingredient}
-          onChangeText={
-            setIngredient
-          }
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Pending Invoice"
-          keyboardType="numeric"
-          value={pendingInvoice}
-          onChangeText={
-            setPendingInvoice
-          }
-        />
-
-        <TouchableOpacity
-          style={styles.addButton}
-          onPress={addSupplier}
-        >
-
-          <Text style={styles.addText}>
-            ADD SUPPLIER
+          <Text style={styles.logo}>
+            SUPPLIERS
           </Text>
 
-        </TouchableOpacity>
+          <Text style={styles.subtitle}>
+            Supplier Management System
+          </Text>
 
-      </View>
+        </View>
 
-      <View style={styles.listBox}>
+        <View style={styles.form}>
 
-        <Text style={styles.listTitle}>
-          SUPPLIER LIST
-        </Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Supplier Name"
+            value={supplierName}
+            onChangeText={
+              setSupplierName
+            }
+          />
 
-        {suppliers.map((item) => (
+          <TextInput
+            style={styles.input}
+            placeholder="Company Name"
+            value={company}
+            onChangeText={
+              setCompany
+            }
+          />
 
-          <View
-            key={item.id}
-            style={styles.supplierCard}
+          <TextInput
+            style={styles.input}
+            placeholder="Phone Number"
+            keyboardType="phone-pad"
+            value={phone}
+            onChangeText={
+              setPhone
+            }
+          />
+
+          <TouchableOpacity
+            style={styles.button}
+            onPress={addSupplier}
           >
 
-            <View style={styles.topRow}>
+            <Text style={styles.buttonText}>
+              ADD SUPPLIER
+            </Text>
 
-              <Text style={styles.name}>
-                {item.supplierName}
-              </Text>
+          </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.deleteButton}
-                onPress={() =>
-                  deleteSupplier(
-                    item.id
-                  )
-                }
+        </View>
+
+        <View style={styles.listContainer}>
+
+          {suppliers.map(
+            (
+              item
+            ) => (
+
+              <View
+                key={item.id}
+                style={styles.card}
               >
 
-                <Text style={styles.deleteText}>
-                  DELETE
+                <Text style={styles.supplierName}>
+                  {item.supplierName}
                 </Text>
 
-              </TouchableOpacity>
+                <Text style={styles.info}>
+                  Company:
+                  {" "}
+                  {item.company}
+                </Text>
 
-            </View>
+                <Text style={styles.info}>
+                  Phone:
+                  {" "}
+                  {item.phone}
+                </Text>
 
-            <Text style={styles.info}>
-              Phone:
-              {" "}
-              {item.phone}
-            </Text>
+              </View>
 
-            <Text style={styles.info}>
-              Email:
-              {" "}
-              {item.email}
-            </Text>
+            )
+          )}
 
-            <Text style={styles.info}>
-              Ingredient:
-              {" "}
-              {item.ingredient}
-            </Text>
+        </View>
 
-            <Text style={styles.invoice}>
-              Pending Invoice:
-              {" "}
-              €{item.pendingInvoice}
-            </Text>
+      </ScrollView>
 
-            <Text style={styles.date}>
-
-              {
-                item.createdAt
-                  ?.toDate?.()
-                  ?.toLocaleString?.()
-              }
-
-            </Text>
-
-          </View>
-
-        ))}
-
-      </View>
-
-    </ScrollView>
+    </AuthGuard>
 
   );
 
 }
 
-const styles = StyleSheet.create({
+const styles =
+  StyleSheet.create({
 
-  container: {
-    flex: 1,
-    backgroundColor: "#f4f7fb",
-  },
+    container: {
+      flex: 1,
+      backgroundColor:
+        "#eef2f7",
+    },
 
-  header: {
-    backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
-  },
+    header: {
+      backgroundColor:
+        "#00154f",
+      padding: 35,
+      borderBottomLeftRadius: 35,
+      borderBottomRightRadius: 35,
+    },
 
-  logo: {
-    color: "gold",
-    fontSize: 38,
-    fontWeight: "bold",
-    marginTop: 25,
-  },
+    logo: {
+      color: "gold",
+      fontSize: 36,
+      fontWeight: "bold",
+      marginTop: 25,
+    },
 
-  subtitle: {
-    color: "white",
-    fontSize: 18,
-    marginTop: 10,
-  },
+    subtitle: {
+      color: "white",
+      fontSize: 18,
+      marginTop: 10,
+    },
 
-  form: {
-    padding: 20,
-  },
+    form: {
+      padding: 20,
+    },
 
-  input: {
-    backgroundColor: "white",
-    padding: 20,
-    borderRadius: 18,
-    fontSize: 18,
-    marginBottom: 18,
-  },
+    input: {
+      backgroundColor:
+        "white",
+      padding: 18,
+      borderRadius: 18,
+      marginBottom: 18,
+      fontSize: 18,
+    },
 
-  addButton: {
-    backgroundColor: "#00154f",
-    padding: 24,
-    borderRadius: 20,
-    alignItems: "center",
-  },
+    button: {
+      backgroundColor:
+        "#00154f",
+      padding: 22,
+      borderRadius: 18,
+      alignItems: "center",
+    },
 
-  addText: {
-    color: "white",
-    fontSize: 22,
-    fontWeight: "bold",
-  },
+    buttonText: {
+      color: "white",
+      fontSize: 18,
+      fontWeight: "bold",
+    },
 
-  listBox: {
-    padding: 20,
-    paddingBottom: 80,
-  },
+    listContainer: {
+      padding: 20,
+      paddingBottom: 100,
+    },
 
-  listTitle: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginBottom: 20,
-  },
+    card: {
+      backgroundColor:
+        "white",
+      padding: 24,
+      borderRadius: 24,
+      marginBottom: 20,
+    },
 
-  supplierCard: {
-    backgroundColor: "white",
-    padding: 24,
-    borderRadius: 24,
-    marginBottom: 22,
-  },
+    supplierName: {
+      fontSize: 24,
+      fontWeight: "bold",
+      color: "#00154f",
+    },
 
-  topRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
+    info: {
+      fontSize: 18,
+      marginTop: 12,
+      color: "#444",
+    },
 
-  name: {
-    fontSize: 26,
-    fontWeight: "bold",
-    color: "#00154f",
-  },
-
-  deleteButton: {
-    backgroundColor: "red",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 14,
-  },
-
-  deleteText: {
-    color: "white",
-    fontWeight: "bold",
-  },
-
-  info: {
-    fontSize: 18,
-    marginTop: 12,
-    color: "#444",
-  },
-
-  invoice: {
-    fontSize: 22,
-    marginTop: 18,
-    color: "red",
-    fontWeight: "bold",
-  },
-
-  date: {
-    marginTop: 16,
-    color: "gray",
-    fontSize: 14,
-  },
-
-});
+  });
 

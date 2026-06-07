@@ -1,41 +1,178 @@
-import React from "react";
+import AuthGuard from "./auth-guard";
+
+import React, {
+  useState,
+} from "react";
+
 import {
-View,
-Text,
-StyleSheet,
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Switch,
+  TouchableOpacity,
+  Alert,
 } from "react-native";
 
 export default function SettingsScreen() {
-return ( <View style={styles.container}> <Text style={styles.title}>
-Settings Page </Text>
 
+  const [darkMode,
+    setDarkMode] =
+      useState(false);
 
-  <Text style={styles.text}>
-    SERVORA Mobile Settings
-  </Text>
-</View>
+  const [notifications,
+    setNotifications] =
+      useState(true);
 
+  const saveSettings =
+    () => {
 
-);
+      Alert.alert(
+        "Success",
+        "Settings Saved"
+      );
+
+    };
+
+  return (
+
+    <AuthGuard>
+
+      <ScrollView
+        style={styles.container}
+      >
+
+        <View style={styles.header}>
+
+          <Text style={styles.logo}>
+            SETTINGS
+          </Text>
+
+          <Text style={styles.subtitle}>
+            System Configuration
+          </Text>
+
+        </View>
+
+        <View style={styles.card}>
+
+          <View style={styles.settingRow}>
+
+            <Text style={styles.settingText}>
+              Dark Mode
+            </Text>
+
+            <Switch
+              value={darkMode}
+              onValueChange={
+                setDarkMode
+              }
+            />
+
+          </View>
+
+          <View style={styles.settingRow}>
+
+            <Text style={styles.settingText}>
+              Notifications
+            </Text>
+
+            <Switch
+              value={notifications}
+              onValueChange={
+                setNotifications
+              }
+            />
+
+          </View>
+
+          <TouchableOpacity
+            style={styles.button}
+            onPress={saveSettings}
+          >
+
+            <Text style={styles.buttonText}>
+              SAVE SETTINGS
+            </Text>
+
+          </TouchableOpacity>
+
+        </View>
+
+      </ScrollView>
+
+    </AuthGuard>
+
+  );
+
 }
 
-const styles = StyleSheet.create({
-container: {
-flex: 1,
-justifyContent: "center",
-alignItems: "center",
-backgroundColor: "#f4f6f9",
-},
+const styles =
+  StyleSheet.create({
 
-title: {
-fontSize: 32,
-fontWeight: "bold",
-color: "#04133b",
-},
+    container: {
+      flex: 1,
+      backgroundColor:
+        "#eef2f7",
+    },
 
-text: {
-marginTop: 15,
-fontSize: 18,
-color: "#555",
-},
-});
+    header: {
+      backgroundColor:
+        "#00154f",
+      padding: 35,
+      borderBottomLeftRadius: 35,
+      borderBottomRightRadius: 35,
+    },
+
+    logo: {
+      color: "gold",
+      fontSize: 36,
+      fontWeight: "bold",
+      marginTop: 25,
+    },
+
+    subtitle: {
+      color: "white",
+      fontSize: 18,
+      marginTop: 10,
+    },
+
+    card: {
+      backgroundColor:
+        "white",
+      margin: 20,
+      padding: 28,
+      borderRadius: 24,
+    },
+
+    settingRow: {
+      flexDirection: "row",
+      justifyContent:
+        "space-between",
+      alignItems: "center",
+      marginBottom: 28,
+    },
+
+    settingText: {
+      fontSize: 20,
+      fontWeight: "bold",
+      color: "#00154f",
+    },
+
+    button: {
+      backgroundColor:
+        "#00154f",
+      padding: 22,
+      borderRadius: 18,
+      alignItems: "center",
+      marginTop: 20,
+    },
+
+    buttonText: {
+      color: "white",
+      fontSize: 18,
+      fontWeight: "bold",
+    },
+
+  });
+

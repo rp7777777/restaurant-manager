@@ -1,3 +1,5 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
   useEffect,
   useState,
@@ -7,195 +9,305 @@ import {
   View,
   Text,
   StyleSheet,
+  ScrollView,
   TextInput,
   TouchableOpacity,
-  ScrollView,
   Alert,
 } from "react-native";
 
 import {
-  addDoc,
   collection,
+  addDoc,
   getDocs,
 } from "firebase/firestore";
 
-import { db } from "../firebase";
+import {
+  db,
+  auth,
+} from "../firebase";
 
 export default function ExpensesScreen() {
 
-  const [expenseName, setExpenseName] =
-    useState("");
+  const [expenseName,
+    setExpenseName] =
+      useState("");
 
-  const [amount, setAmount] =
-    useState("");
+  const [category,
+    setCategory] =
+      useState("");
 
-  const [expenses, setExpenses] =
-    useState([]);
+  const [amount,
+    setAmount] =
+      useState("");
 
-  const getExpenses = async () => {
+  const [note,
+    setNote] =
+      useState("");
 
-    try {
-
-      const querySnapshot = await getDocs(
-        collection(db, "expenses")
-      );
-
-      const data: any = [];
-
-      querySnapshot.forEach((doc) => {
-
-        data.push({
-          id: doc.id,
-          ...doc.data(),
-        });
-
-      });
-
-      setExpenses(data);
-
-    } catch (error) {
-
-      console.log(error);
-
-    }
-
-  };
+  const [expenses,
+    setExpenses] =
+      useState<any[]>([]);
 
   useEffect(() => {
 
-    getExpenses();
+    loadExpenses();
 
   }, []);
 
-  const addExpense = async () => {
+  const loadExpenses =
+    async () => {
 
-    if (!expenseName || !amount) {
+      const user =
+        auth.currentUser;
 
-      Alert.alert(
-        "Error",
-        "Fill all fields"
+      if (!user) return;
+
+      const snapshot =
+        await getDocs(
+          collection(
+            db,
+            "expenses"
+          )
+        );
+
+      const data:
+        any[] = [];
+
+      snapshot.forEach(
+        (document) => {
+
+          const item =
+            document.data();
+
+          if (
+            item.userId ===
+            user.uid
+          ) {
+
+            data.push(item);
+
+          }
+
+        }
       );
 
-      return;
+      setExpenses(data);
 
-    }
+    };
 
-    try {
+  const saveExpense =
+    async () => {
+
+      const user =
+        auth.currentUser;
+
+      if (!user) return;
+
+      if (
+        !expenseName ||
+        !category ||
+        !amount
+      ) {
+
+        Alert.alert(
+          "Error",
+          "Fill all fields"
+        );
+
+        return;
+
+      }
 
       await addDoc(
-        collection(db, "expenses"),
+
+        collection(
+          db,
+          "expenses"
+        ),
+
         {
+
+          userId:
+            user.uid,
+
           expenseName,
+
+          category,
+
           amount,
-          createdAt: new Date(),
+
+          note,
+
+          createdAt:
+            new Date(),
+
         }
+
       );
 
       Alert.alert(
         "Success",
-        "Expense Added"
+        "Expense Saved"
       );
 
       setExpenseName("");
-
+      setCategory("");
       setAmount("");
+      setNote("");
 
-      getExpenses();
+      loadExpenses();
 
-    } catch (error) {
+    };
 
-      console.log(error);
+  const totalExpense =
+    expenses.reduce(
+      (
+        total,
+        item
+      ) =>
 
-      Alert.alert(
-        "Error",
-        "Failed to add expense"
-      );
+        total +
+        Number(
+          item.amount
+        ),
 
-    }
-
-  };
-
-  const totalExpenses = expenses.reduce(
-    (sum: number, item: any) =>
-      sum + Number(item.amount),
-    0
-  );
+      0
+    );
 
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        style={styles.container}
+      >
 
-        <Text style={styles.title}>
-          EXPENSE TRACKER
-        </Text>
+        <View style={styles.header}>
 
-        <Text style={styles.subtitle}>
-          Total Expenses: €{totalExpenses}
-        </Text>
-
-      </View>
-
-      <View style={styles.form}>
-
-        <Text style={styles.label}>
-          Expense Name
-        </Text>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Enter expense"
-          value={expenseName}
-          onChangeText={setExpenseName}
-        />
-
-        <Text style={styles.label}>
-          Amount
-        </Text>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Enter amount"
-          keyboardType="numeric"
-          value={amount}
-          onChangeText={setAmount}
-        />
-
-        <TouchableOpacity
-          style={styles.button}
-          onPress={addExpense}
-        >
-
-          <Text style={styles.buttonText}>
-            Add Expense
+          <Text style={styles.logo}>
+            EXPENSES
           </Text>
 
-        </TouchableOpacity>
-
-      </View>
-
-      <Text style={styles.sectionTitle}>
-        Expense History
-      </Text>
-
-      {expenses.map((item: any) => (
-
-        <View key={item.id} style={styles.card}>
-
-          <Text style={styles.expenseName}>
-            {item.expenseName}
-          </Text>
-
-          <Text style={styles.expenseAmount}>
-            €{item.amount}
+          <Text style={styles.subtitle}>
+            Restaurant Expense Management
           </Text>
 
         </View>
 
-      ))}
+        <View style={styles.totalCard}>
 
-    </ScrollView>
+          <Text style={styles.totalTitle}>
+            Total Expenses
+          </Text>
+
+          <Text style={styles.totalValue}>
+            €
+            {totalExpense}
+          </Text>
+
+        </View>
+
+        <View style={styles.form}>
+
+          <TextInput
+            style={styles.input}
+            placeholder="Expense Name"
+            value={expenseName}
+            onChangeText={
+              setExpenseName
+            }
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Category"
+            value={category}
+            onChangeText={
+              setCategory
+            }
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Amount"
+            keyboardType="numeric"
+            value={amount}
+            onChangeText={
+              setAmount
+            }
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Note"
+            value={note}
+            onChangeText={
+              setNote
+            }
+          />
+
+          <TouchableOpacity
+            style={styles.button}
+            onPress={
+              saveExpense
+            }
+          >
+
+            <Text style={styles.buttonText}>
+              SAVE EXPENSE
+            </Text>
+
+          </TouchableOpacity>
+
+        </View>
+
+        <View style={styles.historyContainer}>
+
+          <Text style={styles.sectionTitle}>
+            Expense History
+          </Text>
+
+          {expenses.map(
+            (
+              item,
+              index
+            ) => (
+
+              <View
+                key={index}
+                style={styles.expenseCard}
+              >
+
+                <Text style={styles.expenseName}>
+                  {item.expenseName}
+                </Text>
+
+                <Text style={styles.info}>
+                  Category:
+                  {" "}
+                  {item.category}
+                </Text>
+
+                <Text style={styles.info}>
+                  Amount:
+                  €
+                  {item.amount}
+                </Text>
+
+                <Text style={styles.note}>
+                  {item.note}
+                </Text>
+
+              </View>
+
+            )
+          )}
+
+        </View>
+
+      </ScrollView>
+
+    </AuthGuard>
 
   );
 
@@ -205,46 +317,59 @@ const styles = StyleSheet.create({
 
   container: {
     flex: 1,
-    backgroundColor: "#f4f7fb",
+    backgroundColor: "#eef2f7",
   },
 
   header: {
     backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
+    padding: 28,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
   },
 
-  title: {
-    color: "gold",
+  logo: {
     fontSize: 34,
     fontWeight: "bold",
-    marginTop: 25,
+    color: "gold",
+    marginTop: 20,
   },
 
   subtitle: {
-    color: "white",
+    color: "#fff",
+    marginTop: 8,
+    fontSize: 16,
+  },
+
+  totalCard: {
+    backgroundColor: "#fff",
+    margin: 16,
+    padding: 28,
+    borderRadius: 22,
+    alignItems: "center",
+  },
+
+  totalTitle: {
     fontSize: 18,
-    marginTop: 10,
+    color: "#666",
+  },
+
+  totalValue: {
+    fontSize: 38,
+    fontWeight: "bold",
+    color: "red",
+    marginTop: 12,
   },
 
   form: {
-    padding: 20,
-  },
-
-  label: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginBottom: 10,
+    padding: 16,
   },
 
   input: {
-    backgroundColor: "white",
+    backgroundColor: "#fff",
     padding: 18,
-    borderRadius: 16,
-    fontSize: 20,
-    marginBottom: 20,
+    borderRadius: 18,
+    marginBottom: 16,
+    fontSize: 16,
   },
 
   button: {
@@ -255,27 +380,28 @@ const styles = StyleSheet.create({
   },
 
   buttonText: {
-    color: "white",
-    fontSize: 20,
+    color: "#fff",
     fontWeight: "bold",
+    fontSize: 18,
+  },
+
+  historyContainer: {
+    padding: 16,
+    paddingBottom: 100,
   },
 
   sectionTitle: {
     fontSize: 24,
     fontWeight: "bold",
     color: "#00154f",
-    marginLeft: 20,
-    marginTop: 10,
-    marginBottom: 10,
+    marginBottom: 20,
   },
 
-  card: {
-    backgroundColor: "white",
-    marginHorizontal: 20,
-    marginBottom: 15,
-    padding: 20,
-    borderRadius: 18,
-    elevation: 4,
+  expenseCard: {
+    backgroundColor: "#fff",
+    padding: 22,
+    borderRadius: 20,
+    marginBottom: 16,
   },
 
   expenseName: {
@@ -284,11 +410,17 @@ const styles = StyleSheet.create({
     color: "#00154f",
   },
 
-  expenseAmount: {
-    fontSize: 20,
-    color: "red",
+  info: {
+    fontSize: 16,
+    color: "#555",
     marginTop: 10,
-    fontWeight: "bold",
+  },
+
+  note: {
+    marginTop: 14,
+    fontSize: 15,
+    color: "#666",
   },
 
 });
+

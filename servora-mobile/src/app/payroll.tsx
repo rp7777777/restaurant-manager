@@ -1,3 +1,5 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
   useEffect,
   useState,
@@ -14,373 +16,539 @@ import {
 } from "react-native";
 
 import {
-  addDoc,
   collection,
+  addDoc,
   getDocs,
 } from "firebase/firestore";
 
 import {
   db,
+  auth,
 } from "../firebase";
+
+import * as Print from "expo-print";
+
+import * as Sharing from "expo-sharing";
 
 export default function PayrollScreen() {
 
-  const [workers, setWorkers] =
-    useState<any[]>([]);
+  const [employeeName,
+    setEmployeeName] =
+      useState("");
 
-  const [selectedWorker, setSelectedWorker] =
-    useState<any>(null);
+  const [position,
+    setPosition] =
+      useState("");
 
-  const [baseSalary, setBaseSalary] =
-    useState("");
+  const [basicSalary,
+    setBasicSalary] =
+      useState("");
 
-  const [foodAllowance, setFoodAllowance] =
-    useState("");
+  const [overtime,
+    setOvertime] =
+      useState("");
 
-  const [bonus, setBonus] =
-    useState("");
+  const [bonus,
+    setBonus] =
+      useState("");
 
-  const [overtime, setOvertime] =
-    useState("");
+  const [taxRate,
+    setTaxRate] =
+      useState("");
 
-  const [deduction, setDeduction] =
-    useState("");
+  const [deduction,
+    setDeduction] =
+      useState("");
 
-  const [taxPercent, setTaxPercent] =
-    useState("25");
+  const [month,
+    setMonth] =
+      useState("");
 
-  const [paid, setPaid] =
-    useState(false);
+  const [staff,
+    setStaff] =
+      useState<any[]>([]);
 
-  const getWorkers =
+  useEffect(() => {
+
+    loadPayroll();
+
+  }, []);
+
+  const loadPayroll =
     async () => {
 
-      try {
+      const user =
+        auth.currentUser;
 
-        const snapshot =
-          await getDocs(
-            collection(
-              db,
-              "workers"
-            )
-          );
+      if (!user) return;
 
-        const data: any[] = [];
+      const snapshot =
+        await getDocs(
+          collection(
+            db,
+            "payroll"
+          )
+        );
 
-        snapshot.forEach(
-          (docItem) => {
+      const data:
+        any[] = [];
+
+      snapshot.forEach(
+        (document) => {
+
+          const item =
+            document.data();
+
+          if (
+            item.userId ===
+            user.uid
+          ) {
 
             data.push({
-              id: docItem.id,
-              ...(docItem.data() as any),
+              id:
+                document.id,
+
+              ...item,
             });
 
           }
-        );
 
-        setWorkers(data);
-
-      } catch (error) {
-
-        console.log(error);
-
-      }
-
-    };
-
-  const calculateGross =
-    () => {
-
-      return (
-        Number(baseSalary || 0) +
-        Number(foodAllowance || 0) +
-        Number(bonus || 0) +
-        Number(overtime || 0)
+        }
       );
 
-    };
-
-  const calculateTax =
-    () => {
-
-      return (
-        calculateGross() *
-        (Number(taxPercent) / 100)
-      );
-
-    };
-
-  const calculateNet =
-    () => {
-
-      return (
-        calculateGross() -
-        calculateTax() -
-        Number(deduction || 0)
-      );
+      setStaff(data);
 
     };
 
   const savePayroll =
     async () => {
 
+      const user =
+        auth.currentUser;
+
+      if (!user) return;
+
       if (
-        !selectedWorker
+        !employeeName ||
+        !basicSalary ||
+        !month
       ) {
 
         Alert.alert(
           "Error",
-          "Select worker"
+          "Fill required fields"
         );
 
         return;
 
       }
 
-      try {
-
-        await addDoc(
-          collection(
-            db,
-            "payroll"
-          ),
-          {
-            workerName:
-              selectedWorker.name,
-
-            workerId:
-              selectedWorker.serialNumber,
-
-            department:
-              selectedWorker.kitchen,
-
-            position:
-              selectedWorker.position,
-
-            baseSalary:
-              Number(baseSalary),
-
-            foodAllowance:
-              Number(foodAllowance),
-
-            bonus:
-              Number(bonus),
-
-            overtime:
-              Number(overtime),
-
-            deduction:
-              Number(deduction),
-
-            taxPercent:
-              Number(taxPercent),
-
-            grossSalary:
-              calculateGross(),
-
-            taxAmount:
-              calculateTax(),
-
-            netSalary:
-              calculateNet(),
-
-            paid,
-
-            createdAt:
-              new Date(),
-          }
+      const basic =
+        Number(
+          basicSalary
         );
 
-        Alert.alert(
-          "Success",
-          "Payroll Saved"
+      const overtimePay =
+        Number(
+          overtime || 0
         );
 
-      } catch (error: any) {
-
-        Alert.alert(
-          "Error",
-          error.message
+      const bonusPay =
+        Number(
+          bonus || 0
         );
 
-      }
+      const deductionPay =
+        Number(
+          deduction || 0
+        );
+
+      const tax =
+        (
+          basic *
+          Number(
+            taxRate || 0
+          )
+        ) / 100;
+
+      const grossSalary =
+
+        basic +
+        overtimePay +
+        bonusPay;
+
+      const netSalary =
+
+        grossSalary -
+        tax -
+        deductionPay;
+
+      await addDoc(
+
+        collection(
+          db,
+          "payroll"
+        ),
+
+        {
+
+          userId:
+            user.uid,
+
+          employeeName,
+
+          position,
+
+          basicSalary,
+
+          overtime,
+
+          bonus,
+
+          taxRate,
+
+          deduction,
+
+          grossSalary,
+
+          netSalary,
+
+          month,
+
+          createdAt:
+            new Date(),
+
+        }
+
+      );
+
+      Alert.alert(
+        "Success",
+        "Salary Slip Saved"
+      );
+
+      setEmployeeName("");
+      setPosition("");
+      setBasicSalary("");
+      setOvertime("");
+      setBonus("");
+      setTaxRate("");
+      setDeduction("");
+      setMonth("");
+
+      loadPayroll();
 
     };
 
-  useEffect(() => {
+  const generatePDF =
+    async (item: any) => {
 
-    getWorkers();
+      const html = `
 
-  }, []);
+      <html>
+
+      <body
+        style="
+          font-family: Arial;
+          padding: 30px;
+        "
+      >
+
+        <h1>
+          SERVORA ERP
+        </h1>
+
+        <h2>
+          Employee Salary Slip
+        </h2>
+
+        <hr />
+
+        <p>
+          <strong>
+            Employee:
+          </strong>
+          ${item.employeeName}
+        </p>
+
+        <p>
+          <strong>
+            Position:
+          </strong>
+          ${item.position}
+        </p>
+
+        <p>
+          <strong>
+            Month:
+          </strong>
+          ${item.month}
+        </p>
+
+        <hr />
+
+        <h3>
+          Salary Details
+        </h3>
+
+        <p>
+          Basic Salary:
+          €${item.basicSalary}
+        </p>
+
+        <p>
+          Overtime:
+          €${item.overtime}
+        </p>
+
+        <p>
+          Bonus:
+          €${item.bonus}
+        </p>
+
+        <p>
+          Deduction:
+          €${item.deduction}
+        </p>
+
+        <p>
+          Tax Rate:
+          ${item.taxRate}%
+        </p>
+
+        <hr />
+
+        <h2
+          style="
+            color: green;
+          "
+        >
+          Net Salary:
+          €${item.netSalary}
+        </h2>
+
+      </body>
+
+      </html>
+
+      `;
+
+      const file =
+
+        await Print.printToFileAsync({
+
+          html,
+
+        });
+
+      await Sharing.shareAsync(
+        file.uri
+      );
+
+    };
 
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        horizontal
+        style={styles.container}
+      >
 
-        <Text style={styles.logo}>
-          PAYROLL
-        </Text>
+        <View style={styles.paper}>
 
-        <Text style={styles.subtitle}>
-          Salary Management System
-        </Text>
+          <Text style={styles.company}>
+            SERVORA ERP
+          </Text>
 
-      </View>
+          <Text style={styles.title}>
+            EMPLOYEE SALARY SLIP
+          </Text>
 
-      <View style={styles.form}>
+          <View style={styles.form}>
 
-        <Text style={styles.label}>
-          Select Worker
-        </Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Employee Name"
+              value={employeeName}
+              onChangeText={
+                setEmployeeName
+              }
+            />
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={
-            false
-          }
-          style={styles.row}
-        >
+            <TextInput
+              style={styles.input}
+              placeholder="Position"
+              value={position}
+              onChangeText={
+                setPosition
+              }
+            />
 
-          {workers.map((item) => (
+            <TextInput
+              style={styles.input}
+              placeholder="Month"
+              value={month}
+              onChangeText={
+                setMonth
+              }
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Basic Salary"
+              keyboardType="numeric"
+              value={basicSalary}
+              onChangeText={
+                setBasicSalary
+              }
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Overtime"
+              keyboardType="numeric"
+              value={overtime}
+              onChangeText={
+                setOvertime
+              }
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Bonus"
+              keyboardType="numeric"
+              value={bonus}
+              onChangeText={
+                setBonus
+              }
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Tax Rate %"
+              keyboardType="numeric"
+              value={taxRate}
+              onChangeText={
+                setTaxRate
+              }
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Deduction"
+              keyboardType="numeric"
+              value={deduction}
+              onChangeText={
+                setDeduction
+              }
+            />
 
             <TouchableOpacity
-              key={item.id}
-              style={[
-                styles.workerButton,
-
-                selectedWorker?.id ===
-                  item.id &&
-                styles.activeButton,
-              ]}
-              onPress={() =>
-                setSelectedWorker(
-                  item
-                )
+              style={styles.button}
+              onPress={
+                savePayroll
               }
             >
 
-              <Text style={styles.workerText}>
-                {item.name}
+              <Text style={styles.buttonText}>
+                SAVE SALARY SLIP
               </Text>
 
             </TouchableOpacity>
 
-          ))}
+          </View>
 
-        </ScrollView>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Base Salary"
-          keyboardType="numeric"
-          value={baseSalary}
-          onChangeText={setBaseSalary}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Food Allowance"
-          keyboardType="numeric"
-          value={foodAllowance}
-          onChangeText={
-            setFoodAllowance
-          }
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Bonus"
-          keyboardType="numeric"
-          value={bonus}
-          onChangeText={setBonus}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Overtime"
-          keyboardType="numeric"
-          value={overtime}
-          onChangeText={setOvertime}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Deduction"
-          keyboardType="numeric"
-          value={deduction}
-          onChangeText={
-            setDeduction
-          }
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Tax %"
-          keyboardType="numeric"
-          value={taxPercent}
-          onChangeText={
-            setTaxPercent
-          }
-        />
-
-        <TouchableOpacity
-          style={[
-            styles.statusButton,
-
-            paid
-              ? styles.paid
-              : styles.unpaid,
-          ]}
-          onPress={() =>
-            setPaid(!paid)
-          }
-        >
-
-          <Text style={styles.statusText}>
-
-            {paid
-              ? "PAID"
-              : "UNPAID"}
-
+          <Text style={styles.historyTitle}>
+            SAVED SALARY SLIPS
           </Text>
 
-        </TouchableOpacity>
+          {staff.map(
+            (
+              item,
+              index
+            ) => (
 
-        <View style={styles.summaryCard}>
+              <View
+                key={index}
+                style={styles.salaryCard}
+              >
 
-          <Text style={styles.summaryText}>
-            Gross Salary:
-            €{calculateGross()}
-          </Text>
+                <Text style={styles.employee}>
+                  {item.employeeName}
+                </Text>
 
-          <Text style={styles.summaryText}>
-            Tax:
-            €{calculateTax()}
-          </Text>
+                <Text style={styles.info}>
+                  Position:
+                  {" "}
+                  {item.position}
+                </Text>
 
-          <Text style={styles.summaryText}>
-            Net Salary:
-            €{calculateNet()}
-          </Text>
+                <Text style={styles.info}>
+                  Month:
+                  {" "}
+                  {item.month}
+                </Text>
+
+                <Text style={styles.info}>
+                  Basic Salary:
+                  €
+                  {item.basicSalary}
+                </Text>
+
+                <Text style={styles.info}>
+                  Overtime:
+                  €
+                  {item.overtime}
+                </Text>
+
+                <Text style={styles.info}>
+                  Bonus:
+                  €
+                  {item.bonus}
+                </Text>
+
+                <Text style={styles.info}>
+                  Tax:
+                  {item.taxRate}%
+                </Text>
+
+                <Text style={styles.info}>
+                  Deduction:
+                  €
+                  {item.deduction}
+                </Text>
+
+                <Text style={styles.netSalary}>
+                  Net Salary:
+                  €
+                  {item.netSalary}
+                </Text>
+
+                <TouchableOpacity
+                  style={styles.pdfButton}
+                  onPress={() =>
+                    generatePDF(item)
+                  }
+                >
+
+                  <Text style={styles.pdfText}>
+                    EXPORT PDF
+                  </Text>
+
+                </TouchableOpacity>
+
+              </View>
+
+            )
+          )}
 
         </View>
 
-        <TouchableOpacity
-          style={styles.saveButton}
-          onPress={savePayroll}
-        >
+      </ScrollView>
 
-          <Text style={styles.saveText}>
-            SAVE PAYROLL
-          </Text>
-
-        </TouchableOpacity>
-
-      </View>
-
-    </ScrollView>
+    </AuthGuard>
 
   );
 
@@ -390,116 +558,107 @@ const styles = StyleSheet.create({
 
   container: {
     flex: 1,
-    backgroundColor: "#f4f7fb",
+    backgroundColor: "#dfe6e9",
   },
 
-  header: {
-    backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
+  paper: {
+    width: 1000,
+    padding: 24,
+    backgroundColor: "#fff",
+    margin: 20,
+    borderRadius: 20,
   },
 
-  logo: {
-    color: "gold",
-    fontSize: 38,
+  company: {
+    fontSize: 34,
     fontWeight: "bold",
-    marginTop: 25,
+    color: "#00154f",
   },
 
-  subtitle: {
-    color: "white",
-    fontSize: 18,
+  title: {
+    fontSize: 24,
     marginTop: 10,
+    marginBottom: 20,
+    color: "#444",
   },
 
   form: {
-    padding: 20,
-    paddingBottom: 80,
-  },
-
-  label: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginBottom: 12,
-  },
-
-  row: {
-    marginBottom: 20,
-  },
-
-  workerButton: {
-    backgroundColor: "#dbe4ff",
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    borderRadius: 18,
-    marginRight: 10,
-  },
-
-  activeButton: {
-    backgroundColor: "#00154f",
-  },
-
-  workerText: {
-    color: "black",
-    fontWeight: "bold",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
   },
 
   input: {
-    backgroundColor: "white",
+    width: "48%",
+    backgroundColor: "#f1f2f6",
+    padding: 16,
+    borderRadius: 14,
+    marginBottom: 16,
+    fontSize: 16,
+  },
+
+  button: {
+    width: "100%",
+    backgroundColor: "#00154f",
+    padding: 18,
+    borderRadius: 14,
+    alignItems: "center",
+    marginTop: 10,
+  },
+
+  buttonText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "bold",
+  },
+
+  historyTitle: {
+    fontSize: 26,
+    fontWeight: "bold",
+    marginTop: 30,
+    marginBottom: 20,
+    color: "#00154f",
+  },
+
+  salaryCard: {
+    backgroundColor: "#f8f9fa",
     padding: 20,
     borderRadius: 18,
-    fontSize: 18,
     marginBottom: 18,
   },
 
-  statusButton: {
-    padding: 20,
-    borderRadius: 18,
-    alignItems: "center",
-    marginBottom: 20,
-  },
-
-  paid: {
-    backgroundColor: "green",
-  },
-
-  unpaid: {
-    backgroundColor: "red",
-  },
-
-  statusText: {
-    color: "white",
-    fontWeight: "bold",
-    fontSize: 20,
-  },
-
-  summaryCard: {
-    backgroundColor: "white",
-    padding: 25,
-    borderRadius: 20,
-    marginBottom: 30,
-  },
-
-  summaryText: {
-    fontSize: 22,
+  employee: {
+    fontSize: 24,
     fontWeight: "bold",
     color: "#00154f",
     marginBottom: 10,
   },
 
-  saveButton: {
-    backgroundColor: "#00154f",
-    padding: 24,
-    borderRadius: 20,
-    alignItems: "center",
+  info: {
+    fontSize: 16,
+    color: "#555",
+    marginTop: 6,
   },
 
-  saveText: {
-    color: "white",
+  netSalary: {
     fontSize: 22,
+    color: "green",
     fontWeight: "bold",
+    marginTop: 14,
+  },
+
+  pdfButton: {
+    backgroundColor: "#00154f",
+    padding: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 20,
+  },
+
+  pdfText: {
+    color: "#fff",
+    fontWeight: "bold",
+    fontSize: 16,
   },
 
 });

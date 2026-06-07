@@ -1,171 +1,74 @@
+import AuthGuard from "./auth-guard";
+
 import React from "react";
 
 import {
   View,
-  Text,
   StyleSheet,
-  TouchableOpacity,
-  ScrollView,
 } from "react-native";
 
-import { router } from "expo-router";
+import SidebarScreen
+from "./sidebar";
 
-export default function DashboardLayout() {
+export default function DashboardLayout({
 
-  const menuItems = [
+  children,
 
-    {
-      title: "Dashboard",
-      page: "/dashboard",
-    },
-
-    {
-      title: "Restaurants",
-      page: "/restaurants",
-    },
-
-    {
-      title: "Sales",
-      page: "/sales",
-    },
-
-    {
-      title: "Analytics",
-      page: "/analytics",
-    },
-
-    {
-      title: "Inventory",
-      page: "/inventory",
-    },
-
-    {
-      title: "Workers",
-      page: "/workers",
-    },
-
-    {
-      title: "Schedule",
-      page: "/workerschedule",
-    },
-
-    {
-      title: "Profit & Loss",
-      page: "/profit-loss",
-    },
-
-    {
-      title: "Settings",
-      page: "/settings",
-    },
-
-  ];
+}: any) {
 
   return (
 
-    <View style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.sidebar}>
+      <View
+        style={styles.container}
+      >
 
-        <Text style={styles.logo}>
-          SERVORA
-        </Text>
+        <View
+          style={styles.sidebar}
+        >
 
-        <ScrollView>
+          <SidebarScreen />
 
-          {menuItems.map((item, index) => (
+        </View>
 
-            <TouchableOpacity
-              key={index}
-              style={styles.menuButton}
-              onPress={() =>
-                router.push(item.page as any)
-              }
-            >
+        <View
+          style={styles.content}
+        >
 
-              <Text style={styles.menuText}>
-                {item.title}
-              </Text>
+          {children}
 
-            </TouchableOpacity>
-
-          ))}
-
-        </ScrollView>
+        </View>
 
       </View>
 
-      <View style={styles.content}>
-
-        <Text style={styles.welcome}>
-          Welcome To SERVORA ERP
-        </Text>
-
-        <Text style={styles.description}>
-          Professional Restaurant
-          Management System
-        </Text>
-
-      </View>
-
-    </View>
+    </AuthGuard>
 
   );
 
 }
 
-const styles = StyleSheet.create({
+const styles =
+  StyleSheet.create({
 
-  container: {
-    flex: 1,
-    flexDirection: "row",
-    backgroundColor: "#f4f7fb",
-  },
+    container: {
+      flex: 1,
+      flexDirection: "row",
+      backgroundColor:
+        "#eef2f7",
+    },
 
-  sidebar: {
-    width: 260,
-    backgroundColor: "#00154f",
-    paddingTop: 60,
-    paddingHorizontal: 20,
-  },
+    sidebar: {
+      width: 300,
+      backgroundColor:
+        "#00154f",
+    },
 
-  logo: {
-    color: "gold",
-    fontSize: 32,
-    fontWeight: "bold",
-    marginBottom: 40,
-  },
+    content: {
+      flex: 1,
+      backgroundColor:
+        "#eef2f7",
+    },
 
-  menuButton: {
-    backgroundColor: "#002a80",
-    padding: 18,
-    borderRadius: 14,
-    marginBottom: 15,
-  },
-
-  menuText: {
-    color: "white",
-    fontSize: 18,
-    fontWeight: "bold",
-  },
-
-  content: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  welcome: {
-    fontSize: 38,
-    fontWeight: "bold",
-    color: "#00154f",
-  },
-
-  description: {
-    fontSize: 22,
-    color: "gray",
-    marginTop: 20,
-  },
-
-});
+  });
 

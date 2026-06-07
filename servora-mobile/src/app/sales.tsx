@@ -1,303 +1,387 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
-  useEffect,
-  useState,
+useEffect,
+useState,
 } from "react";
 
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Alert,
+View,
+Text,
+StyleSheet,
+ScrollView,
+TouchableOpacity,
+Alert,
 } from "react-native";
 
 import {
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
+collection,
+onSnapshot,
+deleteDoc,
+doc,
 } from "firebase/firestore";
 
 import {
-  db,
+db,
 } from "../firebase";
 
 export default function SalesScreen() {
 
-  const [sales, setSales] =
-    useState<any[]>([]);
+const [sales,
+setSales] =
+useState<any[]>([]);
 
-  const [totalSales, setTotalSales] =
-    useState(0);
+const [todayTotal,
+setTodayTotal] =
+useState(0);
 
-  const getSales =
-    async () => {
+const today =
+new Date()
+.toISOString()
+.split("T")[0];
 
-      try {
+useEffect(() => {
 
-        const snapshot =
-          await getDocs(
-            collection(
-              db,
-              "sales"
-            )
-          );
+const unsubscribe =
+  onSnapshot(
 
-        const data: any[] = [];
+    collection(
+      db,
+      "sales"
+    ),
 
-        let total = 0;
+    (snapshot) => {
 
-        snapshot.forEach(
-          (docItem) => {
+      const list: any[] =
+        [];
 
-            const saleData = {
+      let total = 0;
+
+      snapshot.forEach(
+        (docItem) => {
+
+          const data =
+            docItem.data();
+
+          if (
+            data.date ===
+            today
+          ) {
+
+            list.push({
               id: docItem.id,
-              ...(docItem.data() as any),
-            };
-
-            data.push(
-              saleData
-            );
+              ...data,
+            });
 
             total += Number(
-              saleData.amount || 0
+              data.totalSale ||
+                0
             );
 
           }
-        );
 
-        data.reverse();
-
-        setSales(data);
-
-        setTotalSales(total);
-
-      } catch (error) {
-
-        console.log(error);
-
-      }
-
-    };
-
-  const deleteSale =
-    async (id: string) => {
-
-      Alert.alert(
-        "Delete Sale",
-        "Are you sure?",
-        [
-
-          {
-            text: "Cancel",
-          },
-
-          {
-            text: "Delete",
-
-            style: "destructive",
-
-            onPress:
-              async () => {
-
-                try {
-
-                  await deleteDoc(
-                    doc(
-                      db,
-                      "sales",
-                      id
-                    )
-                  );
-
-                  getSales();
-
-                } catch (error) {
-
-                  console.log(error);
-
-                }
-
-              },
-          },
-
-        ]
+        }
       );
 
-    };
+      setSales(list);
 
-  useEffect(() => {
+      setTodayTotal(
+        total
+      );
 
-    getSales();
-
-  }, []);
-
-  return (
-
-    <ScrollView style={styles.container}>
-
-      <View style={styles.header}>
-
-        <Text style={styles.title}>
-          SALES HISTORY
-        </Text>
-
-        <Text style={styles.subtitle}>
-          Total Sales:
-          €{totalSales}
-        </Text>
-
-      </View>
-
-      {sales.map((item) => (
-
-        <View
-          key={item.id}
-          style={styles.card}
-        >
-
-          <View style={styles.topRow}>
-
-            <Text style={styles.kitchen}>
-              {item.kitchen}
-            </Text>
-
-            <Text style={styles.amount}>
-              €{item.amount}
-            </Text>
-
-          </View>
-
-          <Text style={styles.payment}>
-            Payment:
-            {" "}
-            {item.paymentMethod}
-          </Text>
-
-          <Text style={styles.notes}>
-            {item.notes}
-          </Text>
-
-          <Text style={styles.date}>
-
-            {
-              item.createdAt
-                ?.toDate?.()
-                ?.toLocaleString?.()
-            }
-
-          </Text>
-
-          <TouchableOpacity
-            style={styles.deleteButton}
-            onPress={() =>
-              deleteSale(
-                item.id
-              )
-            }
-          >
-
-            <Text style={styles.deleteText}>
-              DELETE
-            </Text>
-
-          </TouchableOpacity>
-
-        </View>
-
-      ))}
-
-    </ScrollView>
+    }
 
   );
 
+return () =>
+  unsubscribe();
+
+}, []);
+
+const deleteSale =
+async (
+id: string
+) => {
+
+  Alert.alert(
+    "Delete Sale",
+    "Are you sure?",
+    [
+
+      {
+        text: "Cancel",
+      },
+
+      {
+        text: "Delete",
+
+        onPress:
+          async () => {
+
+            await deleteDoc(
+              doc(
+                db,
+                "sales",
+                id
+              )
+            );
+
+          },
+
+      },
+
+    ]
+  );
+
+};
+
+return (
+
+<AuthGuard>
+
+  <ScrollView
+    style={
+      styles.container
+    }
+  >
+
+    <Text
+      style={
+        styles.title
+      }
+    >
+      TODAY SALES
+    </Text>
+
+    <Text
+      style={
+        styles.date
+      }
+    >
+      {today}
+    </Text>
+
+    <View
+      style={
+        styles.totalBox
+      }
+    >
+
+      <Text
+        style={
+          styles.totalLabel
+        }
+      >
+        Today Total
+      </Text>
+
+      <Text
+        style={
+          styles.totalValue
+        }
+      >
+        €{todayTotal}
+      </Text>
+
+    </View>
+
+    {sales.length ===
+    0 ? (
+
+      <Text
+        style={
+          styles.empty
+        }
+      >
+        No Sales Recorded Today
+      </Text>
+
+    ) : (
+
+      sales.map(
+        (item) => (
+
+          <View
+            key={
+              item.id
+            }
+            style={
+              styles.card
+            }
+          >
+
+            <Text
+              style={
+                styles.row
+              }
+            >
+              Morning:
+              €
+              {
+                item.morningSale
+              }
+            </Text>
+
+            <Text
+              style={
+                styles.row
+              }
+            >
+              Afternoon:
+              €
+              {
+                item.afternoonSale
+              }
+            </Text>
+
+            <Text
+              style={
+                styles.row
+              }
+            >
+              Night:
+              €
+              {
+                item.nightSale
+              }
+            </Text>
+
+            <Text
+              style={
+                styles.total
+              }
+            >
+              Total:
+              €
+              {
+                item.totalSale
+              }
+            </Text>
+
+            <TouchableOpacity
+              style={
+                styles.deleteButton
+              }
+              onPress={() =>
+                deleteSale(
+                  item.id
+                )
+              }
+            >
+
+              <Text
+                style={
+                  styles.deleteText
+                }
+              >
+                DELETE
+              </Text>
+
+            </TouchableOpacity>
+
+          </View>
+
+        )
+      )
+
+    )}
+
+  </ScrollView>
+
+</AuthGuard>
+
+);
+
 }
 
-const styles = StyleSheet.create({
+const styles =
+StyleSheet.create({
 
-  container: {
-    flex: 1,
-    backgroundColor: "#f4f7fb",
-  },
+container: {
+  flex: 1,
+  backgroundColor:
+    "#eef2f7",
+  padding: 20,
+},
 
-  header: {
-    backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
-  },
+title: {
+  fontSize: 30,
+  fontWeight:
+    "bold",
+  color:
+    "#00154f",
+  marginTop: 40,
+},
 
-  title: {
-    color: "gold",
-    fontSize: 36,
-    fontWeight: "bold",
-    marginTop: 25,
-  },
+date: {
+  fontSize: 16,
+  color: "#666",
+  marginBottom: 20,
+},
 
-  subtitle: {
-    color: "white",
-    fontSize: 20,
-    marginTop: 12,
-  },
+totalBox: {
+  backgroundColor:
+    "#fff",
+  borderRadius: 20,
+  padding: 20,
+  marginBottom: 20,
+},
 
-  card: {
-    backgroundColor: "white",
-    margin: 20,
-    padding: 22,
-    borderRadius: 22,
-    elevation: 4,
-  },
+totalLabel: {
+  fontSize: 18,
+  color: "#666",
+},
 
-  topRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
+totalValue: {
+  fontSize: 34,
+  fontWeight:
+    "bold",
+  color: "green",
+},
 
-  kitchen: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#00154f",
-  },
+empty: {
+  textAlign:
+    "center",
+  marginTop: 50,
+  fontSize: 18,
+  color: "#888",
+},
 
-  amount: {
-    fontSize: 26,
-    fontWeight: "bold",
-    color: "green",
-  },
+card: {
+  backgroundColor:
+    "#fff",
+  borderRadius: 20,
+  padding: 20,
+  marginBottom: 15,
+},
 
-  payment: {
-    fontSize: 18,
-    marginTop: 16,
-    color: "#333",
-  },
+row: {
+  fontSize: 16,
+  marginBottom: 8,
+},
 
-  notes: {
-    fontSize: 17,
-    marginTop: 10,
-    color: "gray",
-  },
+total: {
+  fontSize: 22,
+  fontWeight:
+    "bold",
+  color: "green",
+  marginTop: 10,
+},
 
-  date: {
-    fontSize: 15,
-    marginTop: 14,
-    color: "#888",
-  },
+deleteButton: {
+  backgroundColor:
+    "#d32f2f",
+  padding: 12,
+  borderRadius: 10,
+  marginTop: 15,
+  alignItems:
+    "center",
+},
 
-  deleteButton: {
-    backgroundColor: "red",
-    marginTop: 20,
-    padding: 16,
-    borderRadius: 16,
-    alignItems: "center",
-  },
-
-  deleteText: {
-    color: "white",
-    fontWeight: "bold",
-    fontSize: 18,
-  },
+deleteText: {
+  color: "#fff",
+  fontWeight:
+    "bold",
+},
 
 });
-

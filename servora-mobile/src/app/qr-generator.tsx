@@ -1,3 +1,5 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
   useState,
 } from "react";
@@ -12,291 +14,190 @@ import {
   Alert,
 } from "react-native";
 
-import QRCode from "react-native-qrcode-svg";
+import QRCode
+from "react-native-qrcode-svg";
 
-import * as Print from "expo-print";
+export default function QrGeneratorScreen() {
 
-import * as Sharing from "expo-sharing";
-
-export default function QRGeneratorScreen() {
-
-  const [branchName,
-    setBranchName] =
+  const [tableNumber,
+    setTableNumber] =
       useState("");
 
-  const [tableName,
-    setTableName] =
-      useState("");
+  const [generated,
+    setGenerated] =
+      useState(false);
 
-  const generateQRValue =
+  const generateQR =
     () => {
 
-      return JSON.stringify({
-
-        branch:
-          branchName,
-
-        table:
-          tableName,
-
-        type:
-          "SERVORA_QR",
-
-      });
-
-    };
-
-  const printQR =
-    async () => {
-
-      if (
-        !branchName ||
-        !tableName
-      ) {
+      if (!tableNumber) {
 
         Alert.alert(
           "Error",
-          "Fill all fields"
+          "Enter table number"
         );
 
         return;
 
       }
 
-      const qrData =
-        generateQRValue();
-
-      const html = `
-        <html>
-
-        <body style="
-          font-family: Arial;
-          text-align: center;
-          padding: 40px;
-        ">
-
-          <h1>
-            SERVORA ERP
-          </h1>
-
-          <h2>
-            QR Table Card
-          </h2>
-
-          <hr />
-
-          <h3>
-            ${branchName}
-          </h3>
-
-          <h1>
-            ${tableName}
-          </h1>
-
-          <p>
-            Scan to Order
-          </p>
-
-          <div style="
-            margin-top: 30px;
-          ">
-
-            <img
-              src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
-                qrData
-              )}"
-            />
-
-          </div>
-
-          <br />
-          <br />
-
-          <p>
-            Powered by SERVORA
-          </p>
-
-        </body>
-
-        </html>
-      `;
-
-      try {
-
-        const file =
-          await Print.printToFileAsync({
-            html,
-          });
-
-        await Sharing.shareAsync(
-          file.uri
-        );
-
-      } catch (error: any) {
-
-        Alert.alert(
-          "Error",
-          error.message
-        );
-
-      }
+      setGenerated(true);
 
     };
 
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        contentContainerStyle={
+          styles.container
+        }
+      >
 
-        <Text style={styles.logo}>
-          QR GENERATOR
-        </Text>
+        <View style={styles.header}>
 
-        <Text style={styles.subtitle}>
-          Smart Table QR System
-        </Text>
+          <Text style={styles.logo}>
+            QR GENERATOR
+          </Text>
 
-      </View>
+          <Text style={styles.subtitle}>
+            Restaurant Table QR System
+          </Text>
 
-      <View style={styles.form}>
+        </View>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Branch Name"
-          value={branchName}
-          onChangeText={
-            setBranchName
-          }
-        />
+        <View style={styles.form}>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Table Name"
-          value={tableName}
-          onChangeText={
-            setTableName
-          }
-        />
+          <TextInput
+            style={styles.input}
+            placeholder="Enter Table Number"
+            value={tableNumber}
+            onChangeText={
+              setTableNumber
+            }
+          />
 
-        {branchName &&
-          tableName && (
+          <TouchableOpacity
+            style={styles.button}
+            onPress={generateQR}
+          >
 
-          <View style={styles.qrBox}>
+            <Text style={styles.buttonText}>
+              GENERATE QR
+            </Text>
+
+          </TouchableOpacity>
+
+        </View>
+
+        {generated && (
+
+          <View style={styles.qrContainer}>
 
             <QRCode
               value={
-                generateQRValue()
+                "Table-" +
+                tableNumber
               }
               size={240}
             />
 
             <Text style={styles.qrText}>
-              {branchName}
-            </Text>
-
-            <Text style={styles.qrTable}>
-              {tableName}
+              Table QR:
+              {" "}
+              {tableNumber}
             </Text>
 
           </View>
 
         )}
 
-        <TouchableOpacity
-          style={styles.printButton}
-          onPress={printQR}
-        >
+      </ScrollView>
 
-          <Text style={styles.printText}>
-            PRINT QR CARD
-          </Text>
-
-        </TouchableOpacity>
-
-      </View>
-
-    </ScrollView>
+    </AuthGuard>
 
   );
 
 }
 
-const styles = StyleSheet.create({
+const styles =
+  StyleSheet.create({
 
-  container: {
-    flex: 1,
-    backgroundColor: "#f4f7fb",
-  },
+    container: {
+      flexGrow: 1,
+      backgroundColor:
+        "#eef2f7",
+      alignItems: "center",
+      paddingBottom: 100,
+    },
 
-  header: {
-    backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
-  },
+    header: {
+      width: "100%",
+      backgroundColor:
+        "#00154f",
+      padding: 35,
+      borderBottomLeftRadius: 35,
+      borderBottomRightRadius: 35,
+      alignItems: "center",
+    },
 
-  logo: {
-    color: "gold",
-    fontSize: 38,
-    fontWeight: "bold",
-    marginTop: 25,
-  },
+    logo: {
+      color: "gold",
+      fontSize: 36,
+      fontWeight: "bold",
+      marginTop: 25,
+    },
 
-  subtitle: {
-    color: "white",
-    fontSize: 18,
-    marginTop: 10,
-  },
+    subtitle: {
+      color: "white",
+      fontSize: 18,
+      marginTop: 10,
+    },
 
-  form: {
-    padding: 20,
-    paddingBottom: 80,
-  },
+    form: {
+      width: "90%",
+      marginTop: 30,
+    },
 
-  input: {
-    backgroundColor: "white",
-    padding: 20,
-    borderRadius: 18,
-    fontSize: 18,
-    marginBottom: 18,
-  },
+    input: {
+      backgroundColor:
+        "white",
+      padding: 18,
+      borderRadius: 18,
+      marginBottom: 18,
+      fontSize: 18,
+    },
 
-  qrBox: {
-    backgroundColor: "white",
-    padding: 30,
-    borderRadius: 24,
-    alignItems: "center",
-    marginTop: 20,
-  },
+    button: {
+      backgroundColor:
+        "#00154f",
+      padding: 22,
+      borderRadius: 18,
+      alignItems: "center",
+    },
 
-  qrText: {
-    marginTop: 20,
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#00154f",
-  },
+    buttonText: {
+      color: "white",
+      fontSize: 18,
+      fontWeight: "bold",
+    },
 
-  qrTable: {
-    marginTop: 10,
-    fontSize: 30,
-    fontWeight: "bold",
-    color: "green",
-  },
+    qrContainer: {
+      backgroundColor:
+        "white",
+      padding: 30,
+      borderRadius: 30,
+      marginTop: 40,
+      alignItems: "center",
+    },
 
-  printButton: {
-    backgroundColor: "#00154f",
-    padding: 24,
-    borderRadius: 22,
-    alignItems: "center",
-    marginTop: 30,
-  },
+    qrText: {
+      fontSize: 22,
+      fontWeight: "bold",
+      marginTop: 25,
+      color: "#00154f",
+    },
 
-  printText: {
-    color: "white",
-    fontSize: 22,
-    fontWeight: "bold",
-  },
-
-});
+  });
 

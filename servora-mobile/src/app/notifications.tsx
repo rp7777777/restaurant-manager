@@ -1,5 +1,6 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
-  useEffect,
   useState,
 } from "react";
 
@@ -8,342 +9,217 @@ import {
   Text,
   StyleSheet,
   ScrollView,
+  TouchableOpacity,
+  Alert,
 } from "react-native";
 
-import {
-  collection,
-  getDocs,
-} from "firebase/firestore";
+export default function NotificationScreen() {
 
-import {
-  db,
-} from "../firebase";
+  const [notifications,
+    setNotifications] =
+      useState([
 
-export default function NotificationsScreen() {
+        {
+          id: 1,
+          title:
+            "New Order Received",
+          message:
+            "Table 4 placed a new order",
+        },
 
-  const [notifications, setNotifications] =
-    useState<any[]>([]);
+        {
+          id: 2,
+          title:
+            "Inventory Alert",
+          message:
+            "Chicken stock running low",
+        },
 
-  const loadNotifications =
-    async () => {
+        {
+          id: 3,
+          title:
+            "Worker Attendance",
+          message:
+            "John checked in at 9:00 AM",
+        },
 
-      try {
+      ]);
 
-        const orderSnapshot =
-          await getDocs(
-            collection(
-              db,
-              "orders"
-            )
-          );
+  const clearAll =
+    () => {
 
-        const inventorySnapshot =
-          await getDocs(
-            collection(
-              db,
-              "inventory"
-            )
-          );
+      setNotifications([]);
 
-        const payrollSnapshot =
-          await getDocs(
-            collection(
-              db,
-              "payroll"
-            )
-          );
-
-        const data: any[] = [];
-
-        orderSnapshot.forEach(
-          (docItem) => {
-
-            const order: any =
-              docItem.data();
-
-            data.push({
-              type: "ORDER",
-              message:
-                `New order from Table ${order.tableNumber}`,
-              createdAt:
-                order.createdAt,
-            });
-
-            if (
-              order.status ===
-              "READY"
-            ) {
-
-              data.push({
-                type: "READY",
-                message:
-                  `Order ready for Table ${order.tableNumber}`,
-                createdAt:
-                  order.createdAt,
-              });
-
-            }
-
-          }
-        );
-
-        inventorySnapshot.forEach(
-          (docItem) => {
-
-            const item: any =
-              docItem.data();
-
-            if (
-              Number(
-                item.quantity
-              ) <=
-              Number(
-                item.minimumStock
-              )
-            ) {
-
-              data.push({
-                type: "LOW_STOCK",
-                message:
-                  `${item.ingredient} stock is low`,
-                createdAt:
-                  item.createdAt,
-              });
-
-            }
-
-          }
-        );
-
-        payrollSnapshot.forEach(
-          (docItem) => {
-
-            const payroll: any =
-              docItem.data();
-
-            if (
-              !payroll.paid
-            ) {
-
-              data.push({
-                type: "PAYROLL",
-                message:
-                  `${payroll.workerName} payroll pending`,
-                createdAt:
-                  payroll.createdAt,
-              });
-
-            }
-
-          }
-        );
-
-        data.sort(
-          (a, b) => {
-
-            const first =
-              a.createdAt
-                ?.toDate?.()
-                ?.getTime?.() || 0;
-
-            const second =
-              b.createdAt
-                ?.toDate?.()
-                ?.getTime?.() || 0;
-
-            return second - first;
-
-          }
-        );
-
-        setNotifications(data);
-
-      } catch (error) {
-
-        console.log(error);
-
-      }
+      Alert.alert(
+        "Success",
+        "Notifications Cleared"
+      );
 
     };
 
-  useEffect(() => {
-
-    loadNotifications();
-
-    const interval =
-      setInterval(() => {
-
-        loadNotifications();
-
-      }, 5000);
-
-    return () =>
-      clearInterval(interval);
-
-  }, []);
-
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        style={styles.container}
+      >
 
-        <Text style={styles.logo}>
-          NOTIFICATIONS
-        </Text>
+        <View style={styles.header}>
 
-        <Text style={styles.subtitle}>
-          Real-Time Alert Center
-        </Text>
+          <Text style={styles.logo}>
+            NOTIFICATIONS
+          </Text>
 
-      </View>
+          <Text style={styles.subtitle}>
+            Live Restaurant Alerts
+          </Text>
 
-      <View style={styles.content}>
+        </View>
 
-        {notifications.map(
-          (
-            item,
-            index
-          ) => {
+        <TouchableOpacity
+          style={styles.clearButton}
+          onPress={clearAll}
+        >
 
-            const isOrder =
-              item.type ===
-              "ORDER";
+          <Text style={styles.clearText}>
+            CLEAR ALL
+          </Text>
 
-            const isReady =
-              item.type ===
-              "READY";
+        </TouchableOpacity>
 
-            const isLowStock =
-              item.type ===
-              "LOW_STOCK";
+        <View style={styles.listContainer}>
 
-            const isPayroll =
-              item.type ===
-              "PAYROLL";
-
-            return (
+          {notifications.map(
+            (
+              item
+            ) => (
 
               <View
-                key={index}
-                style={[
-
-                  styles.card,
-
-                  isOrder &&
-                  styles.orderCard,
-
-                  isReady &&
-                  styles.readyCard,
-
-                  isLowStock &&
-                  styles.lowStockCard,
-
-                  isPayroll &&
-                  styles.payrollCard,
-
-                ]}
+                key={item.id}
+                style={styles.card}
               >
+
+                <Text style={styles.title}>
+                  {item.title}
+                </Text>
 
                 <Text style={styles.message}>
                   {item.message}
                 </Text>
 
-                <Text style={styles.date}>
-
-                  {
-                    item.createdAt
-                      ?.toDate?.()
-                      ?.toLocaleString?.()
-                  }
-
-                </Text>
-
               </View>
 
-            );
+            )
+          )}
 
-          }
-        )}
+          {notifications.length === 0 && (
 
-      </View>
+            <View style={styles.emptyCard}>
 
-    </ScrollView>
+              <Text style={styles.emptyText}>
+                No Notifications
+              </Text>
+
+            </View>
+
+          )}
+
+        </View>
+
+      </ScrollView>
+
+    </AuthGuard>
 
   );
 
 }
 
-const styles = StyleSheet.create({
+const styles =
+  StyleSheet.create({
 
-  container: {
-    flex: 1,
-    backgroundColor: "#f4f7fb",
-  },
+    container: {
+      flex: 1,
+      backgroundColor:
+        "#eef2f7",
+    },
 
-  header: {
-    backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
-  },
+    header: {
+      backgroundColor:
+        "#00154f",
+      padding: 35,
+      borderBottomLeftRadius: 35,
+      borderBottomRightRadius: 35,
+    },
 
-  logo: {
-    color: "gold",
-    fontSize: 36,
-    fontWeight: "bold",
-    marginTop: 25,
-  },
+    logo: {
+      color: "gold",
+      fontSize: 36,
+      fontWeight: "bold",
+      marginTop: 25,
+    },
 
-  subtitle: {
-    color: "white",
-    fontSize: 18,
-    marginTop: 10,
-  },
+    subtitle: {
+      color: "white",
+      fontSize: 18,
+      marginTop: 10,
+    },
 
-  content: {
-    padding: 20,
-    paddingBottom: 80,
-  },
+    clearButton: {
+      backgroundColor:
+        "#00154f",
+      margin: 20,
+      padding: 18,
+      borderRadius: 18,
+      alignItems: "center",
+    },
 
-  card: {
-    backgroundColor: "white",
-    padding: 24,
-    borderRadius: 22,
-    marginBottom: 20,
-  },
+    clearText: {
+      color: "white",
+      fontSize: 18,
+      fontWeight: "bold",
+    },
 
-  orderCard: {
-    borderLeftWidth: 8,
-    borderLeftColor: "#0057ff",
-  },
+    listContainer: {
+      padding: 20,
+      paddingTop: 0,
+      paddingBottom: 100,
+    },
 
-  readyCard: {
-    borderLeftWidth: 8,
-    borderLeftColor: "green",
-  },
+    card: {
+      backgroundColor:
+        "white",
+      padding: 24,
+      borderRadius: 24,
+      marginBottom: 20,
+    },
 
-  lowStockCard: {
-    borderLeftWidth: 8,
-    borderLeftColor: "red",
-  },
+    title: {
+      fontSize: 22,
+      fontWeight: "bold",
+      color: "#00154f",
+    },
 
-  payrollCard: {
-    borderLeftWidth: 8,
-    borderLeftColor: "#ff9800",
-  },
+    message: {
+      fontSize: 18,
+      marginTop: 12,
+      color: "#555",
+      lineHeight: 28,
+    },
 
-  message: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#00154f",
-  },
+    emptyCard: {
+      backgroundColor:
+        "white",
+      padding: 40,
+      borderRadius: 24,
+      alignItems: "center",
+    },
 
-  date: {
-    marginTop: 12,
-    color: "gray",
-    fontSize: 15,
-  },
+    emptyText: {
+      fontSize: 22,
+      fontWeight: "bold",
+      color: "#888",
+    },
 
-});
+  });
 

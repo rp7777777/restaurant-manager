@@ -1,5 +1,6 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
-  useEffect,
   useState,
 } from "react";
 
@@ -11,456 +12,237 @@ import {
   TouchableOpacity,
 } from "react-native";
 
-import {
-  collection,
-  doc,
-  getDocs,
-  updateDoc,
-} from "firebase/firestore";
-
-import {
-  db,
-} from "../firebase";
-
 export default function KitchenScreen() {
 
-  const [orders, setOrders] =
-    useState<any[]>([]);
+  const [orders,
+    setOrders] =
+      useState([
 
-  const getOrders =
-    async () => {
+        {
+          id: 1,
+          item:
+            "Burger Combo",
+          table:
+            "Table 1",
+          status:
+            "Preparing",
+        },
 
-      try {
+        {
+          id: 2,
+          item:
+            "Pizza Large",
+          table:
+            "Table 4",
+          status:
+            "Pending",
+        },
 
-        const snapshot =
-          await getDocs(
-            collection(
-              db,
-              "orders"
-            )
-          );
+        {
+          id: 3,
+          item:
+            "Cold Coffee",
+          table:
+            "Table 2",
+          status:
+            "Ready",
+        },
 
-        const data: any[] = [];
+      ]);
 
-        snapshot.forEach(
-          (docItem) => {
+  const markReady =
+    (id: number) => {
 
-            data.push({
-              id: docItem.id,
-              ...(docItem.data() as any),
-            });
+      const updatedOrders =
+        orders.map(
+          (
+            item
+          ) =>
 
-          }
+            item.id === id
+
+              ? {
+                  ...item,
+                  status: "Ready",
+                }
+
+              : item
         );
 
-        data.reverse();
-
-        setOrders(data);
-
-      } catch (error) {
-
-        console.log(error);
-
-      }
+      setOrders(
+        updatedOrders
+      );
 
     };
-
-  const updateStatus =
-    async (
-      id: string,
-      status: string
-    ) => {
-
-      try {
-
-        await updateDoc(
-          doc(
-            db,
-            "orders",
-            id
-          ),
-          {
-            status,
-          }
-        );
-
-        getOrders();
-
-      } catch (error) {
-
-        console.log(error);
-
-      }
-
-    };
-
-  useEffect(() => {
-
-    getOrders();
-
-    const interval =
-      setInterval(() => {
-
-        getOrders();
-
-      }, 5000);
-
-    return () =>
-      clearInterval(interval);
-
-  }, []);
 
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        style={styles.container}
+      >
 
-        <Text style={styles.logo}>
-          KITCHEN DISPLAY
-        </Text>
+        <View
+          style={styles.header}
+        >
 
-        <Text style={styles.subtitle}>
-          Live Kitchen Orders
-        </Text>
-
-      </View>
-
-      <View style={styles.content}>
-
-        {orders.map((order) => (
-
-          <View
-            key={order.id}
-            style={[
-              styles.orderCard,
-
-              order.status ===
-                "READY" &&
-              styles.readyCard,
-
-              order.status ===
-                "DELIVERED" &&
-              styles.deliveredCard,
-            ]}
+          <Text
+            style={styles.logo}
           >
+            KITCHEN
+          </Text>
 
-            <View style={styles.topRow}>
+          <Text
+            style={styles.subtitle}
+          >
+            Live Kitchen Orders
+          </Text>
 
-              <Text style={styles.tableText}>
-                Table:
-                {" "}
-                {order.tableNumber}
-              </Text>
+        </View>
 
-              <Text
-                style={[
-                  styles.status,
+        <View
+          style={styles.ordersContainer}
+        >
 
-                  order.status ===
-                    "PREPARING" &&
-                  styles.preparing,
+          {orders.map(
+            (
+              item
+            ) => (
 
-                  order.status ===
-                    "READY" &&
-                  styles.ready,
-
-                  order.status ===
-                    "DELIVERED" &&
-                  styles.delivered,
-                ]}
+              <View
+                key={item.id}
+                style={styles.card}
               >
 
-                {order.status}
+                <Text
+                  style={styles.item}
+                >
+                  {item.item}
+                </Text>
 
-              </Text>
+                <Text
+                  style={styles.info}
+                >
+                  {item.table}
+                </Text>
 
-            </View>
+                <Text
+                  style={styles.status}
+                >
+                  Status:
+                  {" "}
+                  {item.status}
+                </Text>
 
-            <Text style={styles.customer}>
-              Customer:
-              {" "}
-              {order.customerName}
-            </Text>
-
-            <View style={styles.itemsBox}>
-
-              {order.items?.map(
-                (
-                  item: any,
-                  index: number
-                ) => (
+                <TouchableOpacity
+                  style={styles.button}
+                  onPress={() =>
+                    markReady(
+                      item.id
+                    )
+                  }
+                >
 
                   <Text
-                    key={index}
-                    style={styles.item}
+                    style={styles.buttonText}
                   >
-
-                    {item.quantity}x
-                    {" "}
-                    {item.name}
-
+                    MARK READY
                   </Text>
 
-                )
-              )}
+                </TouchableOpacity>
 
-            </View>
+              </View>
 
-            <Text style={styles.notes}>
-              {order.notes}
-            </Text>
+            )
+          )}
 
-            <Text style={styles.total}>
-              TOTAL:
-              €{order.total}
-            </Text>
+        </View>
 
-            <Text style={styles.date}>
+      </ScrollView>
 
-              {
-                order.createdAt
-                  ?.toDate?.()
-                  ?.toLocaleString?.()
-              }
-
-            </Text>
-
-            <View style={styles.buttonRow}>
-
-              <TouchableOpacity
-                style={[
-                  styles.button,
-
-                  styles.preparingButton,
-                ]}
-                onPress={() =>
-                  updateStatus(
-                    order.id,
-                    "PREPARING"
-                  )
-                }
-              >
-
-                <Text
-                  style={
-                    styles.buttonText
-                  }
-                >
-                  PREPARING
-                </Text>
-
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.button,
-
-                  styles.readyButton,
-                ]}
-                onPress={() =>
-                  updateStatus(
-                    order.id,
-                    "READY"
-                  )
-                }
-              >
-
-                <Text
-                  style={
-                    styles.buttonText
-                  }
-                >
-                  READY
-                </Text>
-
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.button,
-
-                  styles.deliveredButton,
-                ]}
-                onPress={() =>
-                  updateStatus(
-                    order.id,
-                    "DELIVERED"
-                  )
-                }
-              >
-
-                <Text
-                  style={
-                    styles.buttonText
-                  }
-                >
-                  DONE
-                </Text>
-
-              </TouchableOpacity>
-
-            </View>
-
-          </View>
-
-        ))}
-
-      </View>
-
-    </ScrollView>
+    </AuthGuard>
 
   );
 
 }
 
-const styles = StyleSheet.create({
+const styles =
+  StyleSheet.create({
 
-  container: {
-    flex: 1,
-    backgroundColor: "#f4f7fb",
-  },
+    container: {
+      flex: 1,
+      backgroundColor:
+        "#eef2f7",
+    },
 
-  header: {
-    backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
-  },
+    header: {
+      backgroundColor:
+        "#00154f",
+      padding: 35,
+      borderBottomLeftRadius: 35,
+      borderBottomRightRadius: 35,
+    },
 
-  logo: {
-    color: "gold",
-    fontSize: 36,
-    fontWeight: "bold",
-    marginTop: 25,
-  },
+    logo: {
+      color: "gold",
+      fontSize: 38,
+      fontWeight: "bold",
+      marginTop: 25,
+    },
 
-  subtitle: {
-    color: "white",
-    fontSize: 18,
-    marginTop: 10,
-  },
+    subtitle: {
+      color: "white",
+      fontSize: 18,
+      marginTop: 10,
+    },
 
-  content: {
-    padding: 20,
-    paddingBottom: 100,
-  },
+    ordersContainer: {
+      padding: 20,
+      paddingBottom: 100,
+    },
 
-  orderCard: {
-    backgroundColor: "white",
-    padding: 24,
-    borderRadius: 24,
-    marginBottom: 24,
-  },
+    card: {
+      backgroundColor:
+        "white",
+      padding: 24,
+      borderRadius: 24,
+      marginBottom: 20,
+    },
 
-  readyCard: {
-    borderWidth: 3,
-    borderColor: "green",
-  },
+    item: {
+      fontSize: 24,
+      fontWeight: "bold",
+      color: "#00154f",
+    },
 
-  deliveredCard: {
-    opacity: 0.7,
-  },
+    info: {
+      fontSize: 18,
+      marginTop: 12,
+      color: "#555",
+    },
 
-  topRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
+    status: {
+      fontSize: 18,
+      marginTop: 12,
+      color: "orange",
+      fontWeight: "bold",
+    },
 
-  tableText: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#00154f",
-  },
+    button: {
+      backgroundColor:
+        "#00154f",
+      padding: 18,
+      borderRadius: 18,
+      alignItems: "center",
+      marginTop: 20,
+    },
 
-  status: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 14,
-    color: "white",
-    fontWeight: "bold",
-    overflow: "hidden",
-  },
+    buttonText: {
+      color: "white",
+      fontSize: 16,
+      fontWeight: "bold",
+    },
 
-  preparing: {
-    backgroundColor: "#ff9800",
-  },
-
-  ready: {
-    backgroundColor: "green",
-  },
-
-  delivered: {
-    backgroundColor: "#00154f",
-  },
-
-  customer: {
-    fontSize: 18,
-    marginTop: 16,
-    color: "#444",
-  },
-
-  itemsBox: {
-    marginTop: 20,
-  },
-
-  item: {
-    fontSize: 20,
-    fontWeight: "bold",
-    marginBottom: 10,
-    color: "#00154f",
-  },
-
-  notes: {
-    marginTop: 18,
-    fontSize: 17,
-    color: "gray",
-  },
-
-  total: {
-    marginTop: 20,
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "green",
-  },
-
-  date: {
-    marginTop: 16,
-    color: "gray",
-    fontSize: 14,
-  },
-
-  buttonRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 24,
-  },
-
-  button: {
-    width: "31%",
-    padding: 16,
-    borderRadius: 16,
-    alignItems: "center",
-  },
-
-  preparingButton: {
-    backgroundColor: "#ff9800",
-  },
-
-  readyButton: {
-    backgroundColor: "green",
-  },
-
-  deliveredButton: {
-    backgroundColor: "#00154f",
-  },
-
-  buttonText: {
-    color: "white",
-    fontWeight: "bold",
-    fontSize: 14,
-  },
-
-});
+  });
 

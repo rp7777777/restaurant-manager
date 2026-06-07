@@ -5,43 +5,49 @@ import React, {
 import {
   View,
   Text,
+  StyleSheet,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
   Alert,
 } from "react-native";
 
 import {
+  useRouter,
+} from "expo-router";
+
+import {
   signInWithEmailAndPassword,
+  sendEmailVerification,
 } from "firebase/auth";
 
 import {
   auth,
 } from "../firebase";
 
-import {
-  router,
-} from "expo-router";
-
 export default function LoginScreen() {
 
-  const [email, setEmail] =
-    useState("");
+  const router =
+    useRouter();
 
-  const [password, setPassword] =
-    useState("");
+  const [email,
+    setEmail] =
+      useState("");
 
-  const [loading, setLoading] =
-    useState(false);
+  const [password,
+    setPassword] =
+      useState("");
 
-  const handleLogin =
+  const login =
     async () => {
 
-      if (!email || !password) {
+      if (
+        !email ||
+        !password
+      ) {
 
         Alert.alert(
           "Error",
-          "Enter email and password"
+          "Fill all fields"
         );
 
         return;
@@ -50,17 +56,37 @@ export default function LoginScreen() {
 
       try {
 
-        setLoading(true);
+        const userCredential =
 
-        await signInWithEmailAndPassword(
-          auth,
-          email,
-          password
-        );
+          await signInWithEmailAndPassword(
+            auth,
+            email,
+            password
+          );
+
+        const user =
+          userCredential.user;
+
+        if (
+          !user.emailVerified
+        ) {
+
+          await sendEmailVerification(
+            user
+          );
+
+          Alert.alert(
+            "Verify Email",
+            "Verification email sent. Please verify your email first."
+          );
+
+          return;
+
+        }
 
         Alert.alert(
           "Success",
-          "Admin Login Successful"
+          "Login Successful"
         );
 
         router.replace(
@@ -70,13 +96,9 @@ export default function LoginScreen() {
       } catch (error: any) {
 
         Alert.alert(
-          "Login Error",
+          "Login Failed",
           error.message
         );
-
-      } finally {
-
-        setLoading(false);
 
       }
 
@@ -84,43 +106,88 @@ export default function LoginScreen() {
 
   return (
 
-    <View style={styles.container}>
+    <View
+      style={styles.container}
+    >
 
-      <View style={styles.card}>
+      <View
+        style={styles.card}
+      >
 
-        <Text style={styles.logo}>
-          SERVORA
+        <Text
+          style={styles.logo}
+        >
+          SERVORA ERP
         </Text>
 
-        <Text style={styles.subtitle}>
-          Global Restaurant ERP
+        <Text
+          style={styles.subtitle}
+        >
+          Login To Continue
         </Text>
 
         <TextInput
           style={styles.input}
-          placeholder="Admin Email"
-          value={email}
-          onChangeText={setEmail}
+          placeholder="Email"
+          keyboardType="email-address"
           autoCapitalize="none"
+          value={email}
+          onChangeText={
+            setEmail
+          }
         />
 
         <TextInput
           style={styles.input}
           placeholder="Password"
-          value={password}
-          onChangeText={setPassword}
           secureTextEntry
+          value={password}
+          onChangeText={
+            setPassword
+          }
         />
 
         <TouchableOpacity
           style={styles.button}
-          onPress={handleLogin}
+          onPress={login}
         >
 
-          <Text style={styles.buttonText}>
-            {loading
-              ? "Logging In..."
-              : "LOGIN"}
+          <Text
+            style={styles.buttonText}
+          >
+            LOGIN
+          </Text>
+
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() =>
+            router.push(
+              "/register"
+            )
+          }
+        >
+
+          <Text
+            style={styles.link}
+          >
+            Create New Account
+          </Text>
+
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() =>
+            router.push(
+              "/forgot-password"
+            )
+          }
+        >
+
+          <Text
+            style={styles.link}
+          >
+            Forgot Password?
           </Text>
 
         </TouchableOpacity>
@@ -133,60 +200,75 @@ export default function LoginScreen() {
 
 }
 
-const styles = StyleSheet.create({
+const styles =
+  StyleSheet.create({
 
-  container: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#00154f",
-    padding: 20,
-  },
+    container: {
+      flex: 1,
+      justifyContent:
+        "center",
+      alignItems:
+        "center",
+      backgroundColor:
+        "#eef2f7",
+      padding: 20,
+    },
 
-  card: {
-    width: "100%",
-    maxWidth: 420,
-    backgroundColor: "white",
-    padding: 35,
-    borderRadius: 30,
-  },
+    card: {
+      width: "100%",
+      maxWidth: 420,
+      backgroundColor:
+        "white",
+      padding: 30,
+      borderRadius: 30,
+    },
 
-  logo: {
-    fontSize: 52,
-    fontWeight: "bold",
-    color: "#00154f",
-    textAlign: "center",
-  },
+    logo: {
+      fontSize: 38,
+      fontWeight: "bold",
+      color: "#00154f",
+      textAlign: "center",
+    },
 
-  subtitle: {
-    textAlign: "center",
-    color: "gray",
-    fontSize: 20,
-    marginTop: 10,
-    marginBottom: 35,
-  },
+    subtitle: {
+      fontSize: 18,
+      color: "#555",
+      textAlign: "center",
+      marginTop: 10,
+      marginBottom: 30,
+    },
 
-  input: {
-    backgroundColor: "#f4f4f4",
-    padding: 20,
-    borderRadius: 18,
-    fontSize: 18,
-    marginBottom: 22,
-  },
+    input: {
+      backgroundColor:
+        "#f3f4f6",
+      padding: 18,
+      borderRadius: 18,
+      marginBottom: 18,
+      fontSize: 18,
+    },
 
-  button: {
-    backgroundColor: "#00154f",
-    padding: 22,
-    borderRadius: 18,
-    alignItems: "center",
-    marginTop: 10,
-  },
+    button: {
+      backgroundColor:
+        "#00154f",
+      padding: 20,
+      borderRadius: 18,
+      alignItems: "center",
+      marginTop: 10,
+    },
 
-  buttonText: {
-    color: "white",
-    fontSize: 22,
-    fontWeight: "bold",
-  },
+    buttonText: {
+      color: "white",
+      fontSize: 18,
+      fontWeight: "bold",
+    },
 
-});
+    link: {
+      textAlign: "center",
+      marginTop: 20,
+      fontSize: 16,
+      color: "#00154f",
+      fontWeight: "bold",
+    },
+
+  });
 

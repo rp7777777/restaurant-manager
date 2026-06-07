@@ -1,7 +1,6 @@
-import React, {
-  useEffect,
-  useState,
-} from "react";
+import AuthGuard from "./auth-guard";
+
+import React from "react";
 
 import {
   View,
@@ -10,477 +9,231 @@ import {
   ScrollView,
 } from "react-native";
 
-import {
-  collection,
-  getDocs,
-} from "firebase/firestore";
-
-import {
-  db,
-} from "../firebase";
-
 export default function ExecutiveDashboardScreen() {
 
-  const [totalSales,
-    setTotalSales] =
-      useState(0);
-
-  const [totalOrders,
-    setTotalOrders] =
-      useState(0);
-
-  const [totalProfit,
-    setTotalProfit] =
-      useState(0);
-
-  const [topItem,
-    setTopItem] =
-      useState("");
-
-  const [topWorker,
-    setTopWorker] =
-      useState("");
-
-  const [businessScore,
-    setBusinessScore] =
-      useState(0);
-
-  const loadAnalytics =
-    async () => {
-
-      try {
-
-        const salesSnapshot =
-          await getDocs(
-            collection(
-              db,
-              "sales"
-            )
-          );
-
-        const ordersSnapshot =
-          await getDocs(
-            collection(
-              db,
-              "orders"
-            )
-          );
-
-        const workersSnapshot =
-          await getDocs(
-            collection(
-              db,
-              "workers"
-            )
-          );
-
-        const expensesSnapshot =
-          await getDocs(
-            collection(
-              db,
-              "expenses"
-            )
-          );
-
-        let sales = 0;
-
-        let expenses = 0;
-
-        const itemMap: any = {};
-
-        salesSnapshot.forEach(
-          (docItem) => {
-
-            const data: any =
-              docItem.data();
-
-            sales += Number(
-              data.amount || 0
-            );
-
-          }
-        );
-
-        expensesSnapshot.forEach(
-          (docItem) => {
-
-            const data: any =
-              docItem.data();
-
-            expenses += Number(
-              data.amount || 0
-            );
-
-          }
-        );
-
-        ordersSnapshot.forEach(
-          (docItem) => {
-
-            const order: any =
-              docItem.data();
-
-            order.items?.forEach(
-              (item: any) => {
-
-                if (
-                  itemMap[
-                    item.name
-                  ]
-                ) {
-
-                  itemMap[
-                    item.name
-                  ] +=
-                    item.quantity;
-
-                } else {
-
-                  itemMap[
-                    item.name
-                  ] =
-                    item.quantity;
-
-                }
-
-              }
-            );
-
-          }
-        );
-
-        let bestItem =
-          "";
-
-        let bestCount = 0;
-
-        Object.keys(
-          itemMap
-        ).forEach((key) => {
-
-          if (
-            itemMap[key] >
-            bestCount
-          ) {
-
-            bestCount =
-              itemMap[key];
-
-            bestItem =
-              key;
-
-          }
-
-        });
-
-        let workerName =
-          "";
-
-        if (
-          workersSnapshot.docs
-            .length > 0
-        ) {
-
-          workerName =
-            workersSnapshot.docs[0]
-              .data()?.name ||
-            "No Worker";
-
-        }
-
-        const profit =
-          sales - expenses;
-
-        let score = 50;
-
-        if (
-          sales > 10000
-        ) {
-
-          score += 20;
-
-        }
-
-        if (
-          profit > 0
-        ) {
-
-          score += 20;
-
-        }
-
-        if (
-          ordersSnapshot.size >
-          20
-        ) {
-
-          score += 10;
-
-        }
-
-        setTotalSales(sales);
-
-        setTotalOrders(
-          ordersSnapshot.size
-        );
-
-        setTotalProfit(profit);
-
-        setTopItem(bestItem);
-
-        setTopWorker(workerName);
-
-        setBusinessScore(score);
-
-      } catch (error) {
-
-        console.log(error);
-
-      }
-
-    };
-
-  useEffect(() => {
-
-    loadAnalytics();
-
-  }, []);
+  const stats = [
+
+    {
+      title:
+        "Total Revenue",
+      value:
+        "€124,500",
+    },
+
+    {
+      title:
+        "Net Profit",
+      value:
+        "€48,200",
+    },
+
+    {
+      title:
+        "Total Orders",
+      value:
+        "5,820",
+    },
+
+    {
+      title:
+        "Employees",
+      value:
+        "84",
+    },
+
+    {
+      title:
+        "Branches",
+      value:
+        "12",
+    },
+
+    {
+      title:
+        "Customers",
+      value:
+        "18,450",
+    },
+
+  ];
 
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        style={styles.container}
+      >
 
-        <Text style={styles.logo}>
-          EXECUTIVE PRO
-        </Text>
+        <View
+          style={styles.header}
+        >
 
-        <Text style={styles.subtitle}>
-          Enterprise Analytics Dashboard
-        </Text>
-
-      </View>
-
-      <View style={styles.statsGrid}>
-
-        <View style={styles.card}>
-
-          <Text style={styles.cardTitle}>
-            TOTAL SALES
+          <Text
+            style={styles.logo}
+          >
+            EXECUTIVE DASHBOARD
           </Text>
 
-          <Text style={styles.green}>
-            €{totalSales}
+          <Text
+            style={styles.subtitle}
+          >
+            SERVORA Business Overview
           </Text>
 
         </View>
 
-        <View style={styles.card}>
+        <View
+          style={styles.grid}
+        >
 
-          <Text style={styles.cardTitle}>
-            TOTAL ORDERS
+          {stats.map(
+            (
+              item,
+              index
+            ) => (
+
+              <View
+                key={index}
+                style={styles.card}
+              >
+
+                <Text
+                  style={styles.cardTitle}
+                >
+                  {item.title}
+                </Text>
+
+                <Text
+                  style={styles.cardValue}
+                >
+                  {item.value}
+                </Text>
+
+              </View>
+
+            )
+          )}
+
+        </View>
+
+        <View
+          style={styles.summaryBox}
+        >
+
+          <Text
+            style={styles.summaryTitle}
+          >
+            BUSINESS SUMMARY
           </Text>
 
-          <Text style={styles.blue}>
-            {totalOrders}
+          <Text
+            style={styles.summaryText}
+          >
+            Restaurant performance
+            is growing strongly with
+            increased revenue,
+            customer engagement,
+            and operational efficiency.
           </Text>
 
         </View>
 
-        <View style={styles.card}>
+      </ScrollView>
 
-          <Text style={styles.cardTitle}>
-            TOTAL PROFIT
-          </Text>
-
-          <Text style={styles.green}>
-            €{totalProfit}
-          </Text>
-
-        </View>
-
-        <View style={styles.card}>
-
-          <Text style={styles.cardTitle}>
-            BUSINESS SCORE
-          </Text>
-
-          <Text style={styles.gold}>
-            {businessScore}/100
-          </Text>
-
-        </View>
-
-      </View>
-
-      <View style={styles.bigCard}>
-
-        <Text style={styles.bigTitle}>
-          TOP SELLING ITEM
-        </Text>
-
-        <Text style={styles.bigValue}>
-          {topItem || "No Data"}
-        </Text>
-
-      </View>
-
-      <View style={styles.bigCard}>
-
-        <Text style={styles.bigTitle}>
-          TOP WORKER
-        </Text>
-
-        <Text style={styles.bigValue}>
-          {topWorker || "No Worker"}
-        </Text>
-
-      </View>
-
-      <View style={styles.aiBox}>
-
-        <Text style={styles.aiTitle}>
-          AI BUSINESS ANALYSIS
-        </Text>
-
-        <Text style={styles.aiText}>
-          📈 Sales performance is growing
-        </Text>
-
-        <Text style={styles.aiText}>
-          🔥 Best selling item:
-          {" "}
-          {topItem}
-        </Text>
-
-        <Text style={styles.aiText}>
-          ⚠ Monitor low stock items daily
-        </Text>
-
-        <Text style={styles.aiText}>
-          👨‍🍳 Increase workers on weekends
-        </Text>
-
-      </View>
-
-    </ScrollView>
+    </AuthGuard>
 
   );
 
 }
 
-const styles = StyleSheet.create({
+const styles =
+  StyleSheet.create({
 
-  container: {
-    flex: 1,
-    backgroundColor: "#eef2f7",
-  },
+    container: {
+      flex: 1,
+      backgroundColor:
+        "#eef2f7",
+    },
 
-  header: {
-    backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
-  },
+    header: {
+      backgroundColor:
+        "#00154f",
+      padding: 35,
+      borderBottomLeftRadius: 35,
+      borderBottomRightRadius: 35,
+    },
 
-  logo: {
-    color: "gold",
-    fontSize: 40,
-    fontWeight: "bold",
-    marginTop: 25,
-  },
+    logo: {
+      color: "gold",
+      fontSize: 34,
+      fontWeight: "bold",
+      marginTop: 25,
+    },
 
-  subtitle: {
-    color: "white",
-    fontSize: 18,
-    marginTop: 10,
-  },
+    subtitle: {
+      color: "white",
+      fontSize: 18,
+      marginTop: 10,
+    },
 
-  statsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    padding: 20,
-  },
+    grid: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      justifyContent:
+        "space-between",
+      padding: 20,
+    },
 
-  card: {
-    backgroundColor: "white",
-    width: "48%",
-    padding: 24,
-    borderRadius: 24,
-    marginBottom: 20,
-  },
+    card: {
+      width: "48%",
+      backgroundColor:
+        "white",
+      padding: 24,
+      borderRadius: 24,
+      marginBottom: 20,
+      alignItems: "center",
+      justifyContent:
+        "center",
+      minHeight: 150,
+    },
 
-  cardTitle: {
-    fontSize: 16,
-    color: "#666",
-    fontWeight: "bold",
-  },
+    cardTitle: {
+      fontSize: 20,
+      fontWeight: "bold",
+      color: "#555",
+      textAlign: "center",
+    },
 
-  green: {
-    fontSize: 34,
-    fontWeight: "bold",
-    color: "green",
-    marginTop: 18,
-  },
+    cardValue: {
+      fontSize: 28,
+      fontWeight: "bold",
+      color: "#00154f",
+      marginTop: 16,
+      textAlign: "center",
+    },
 
-  blue: {
-    fontSize: 34,
-    fontWeight: "bold",
-    color: "#2196f3",
-    marginTop: 18,
-  },
+    summaryBox: {
+      backgroundColor:
+        "white",
+      margin: 20,
+      padding: 28,
+      borderRadius: 24,
+      marginBottom: 100,
+    },
 
-  gold: {
-    fontSize: 34,
-    fontWeight: "bold",
-    color: "gold",
-    marginTop: 18,
-  },
+    summaryTitle: {
+      fontSize: 26,
+      fontWeight: "bold",
+      color: "#00154f",
+      marginBottom: 18,
+    },
 
-  bigCard: {
-    backgroundColor: "white",
-    marginHorizontal: 20,
-    marginBottom: 20,
-    padding: 28,
-    borderRadius: 24,
-  },
+    summaryText: {
+      fontSize: 18,
+      color: "#555",
+      lineHeight: 30,
+    },
 
-  bigTitle: {
-    fontSize: 20,
-    color: "#555",
-    fontWeight: "bold",
-  },
-
-  bigValue: {
-    fontSize: 34,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginTop: 20,
-  },
-
-  aiBox: {
-    backgroundColor: "#00154f",
-    margin: 20,
-    padding: 28,
-    borderRadius: 24,
-    marginBottom: 100,
-  },
-
-  aiTitle: {
-    color: "gold",
-    fontSize: 24,
-    fontWeight: "bold",
-    marginBottom: 20,
-  },
-
-  aiText: {
-    color: "white",
-    fontSize: 18,
-    marginBottom: 16,
-    lineHeight: 28,
-  },
-
-});
+  });
 

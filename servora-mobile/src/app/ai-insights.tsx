@@ -1,7 +1,6 @@
-import React, {
-  useEffect,
-  useState,
-} from "react";
+import AuthGuard from "./auth-guard";
+
+import React from "react";
 
 import {
   View,
@@ -10,313 +9,177 @@ import {
   ScrollView,
 } from "react-native";
 
-import {
-  collection,
-  getDocs,
-} from "firebase/firestore";
+export default function AiInsightsScreen() {
 
-import {
-  db,
-} from "../firebase";
+  const insights = [
 
-export default function AIInsightsScreen() {
+    {
+      title:
+        "Sales Growth",
+      message:
+        "Sales increased by 18% this week compared to last week.",
+    },
 
-  const [insights, setInsights] =
-    useState<string[]>([]);
+    {
+      title:
+        "Top Product",
+      message:
+        "Burger Combo is currently the best-selling menu item.",
+    },
 
-  const loadInsights =
-    async () => {
+    {
+      title:
+        "Low Inventory",
+      message:
+        "Chicken stock may run out within 3 days.",
+    },
 
-      try {
+    {
+      title:
+        "Peak Hours",
+      message:
+        "Highest customer traffic occurs between 7 PM and 9 PM.",
+    },
 
-        const salesSnapshot =
-          await getDocs(
-            collection(
-              db,
-              "sales"
-            )
-          );
+    {
+      title:
+        "Profit Insight",
+      message:
+        "Net profit margin improved by 12% this month.",
+    },
 
-        const inventorySnapshot =
-          await getDocs(
-            collection(
-              db,
-              "inventory"
-            )
-          );
+    {
+      title:
+        "Customer Trend",
+      message:
+        "Returning customers increased significantly this week.",
+    },
 
-        const orderSnapshot =
-          await getDocs(
-            collection(
-              db,
-              "orders"
-            )
-          );
-
-        const workerSnapshot =
-          await getDocs(
-            collection(
-              db,
-              "workers"
-            )
-          );
-
-        const messages: string[] = [];
-
-        let totalSales = 0;
-
-        const itemMap: any = {};
-
-        salesSnapshot.forEach(
-          (docItem) => {
-
-            const data: any =
-              docItem.data();
-
-            totalSales += Number(
-              data.amount || 0
-            );
-
-          }
-        );
-
-        if (
-          totalSales > 10000
-        ) {
-
-          messages.push(
-            "🔥 Sales performance is very strong this month"
-          );
-
-        } else {
-
-          messages.push(
-            "⚠ Sales are lower than expected"
-          );
-
-        }
-
-        inventorySnapshot.forEach(
-          (docItem) => {
-
-            const item: any =
-              docItem.data();
-
-            if (
-              Number(
-                item.quantity
-              ) <=
-              Number(
-                item.minimumStock
-              )
-            ) {
-
-              messages.push(
-                `⚠ ${item.ingredient} stock may finish soon`
-              );
-
-            }
-
-          }
-        );
-
-        orderSnapshot.forEach(
-          (docItem) => {
-
-            const order: any =
-              docItem.data();
-
-            order.items?.forEach(
-              (item: any) => {
-
-                if (
-                  itemMap[
-                    item.name
-                  ]
-                ) {
-
-                  itemMap[
-                    item.name
-                  ] +=
-                    item.quantity;
-
-                } else {
-
-                  itemMap[
-                    item.name
-                  ] =
-                    item.quantity;
-
-                }
-
-              }
-            );
-
-          }
-        );
-
-        let bestItem =
-          "No Data";
-
-        let bestCount = 0;
-
-        Object.keys(
-          itemMap
-        ).forEach((key) => {
-
-          if (
-            itemMap[key] >
-            bestCount
-          ) {
-
-            bestCount =
-              itemMap[key];
-
-            bestItem =
-              key;
-
-          }
-
-        });
-
-        messages.push(
-          `🔥 Top selling item is ${bestItem}`
-        );
-
-        if (
-          workerSnapshot.size <
-          5
-        ) {
-
-          messages.push(
-            "⚠ You may need more workers for smooth operations"
-          );
-
-        } else {
-
-          messages.push(
-            "✅ Worker count is healthy"
-          );
-
-        }
-
-        messages.push(
-          "📈 Friday and weekend sales are usually highest"
-        );
-
-        messages.push(
-          "🧠 AI suggests checking low stock items daily"
-        );
-
-        setInsights(messages);
-
-      } catch (error) {
-
-        console.log(error);
-
-      }
-
-    };
-
-  useEffect(() => {
-
-    loadInsights();
-
-  }, []);
+  ];
 
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        style={styles.container}
+      >
 
-        <Text style={styles.logo}>
-          AI INSIGHTS
-        </Text>
+        <View
+          style={styles.header}
+        >
 
-        <Text style={styles.subtitle}>
-          Smart Business Intelligence
-        </Text>
+          <Text
+            style={styles.logo}
+          >
+            AI INSIGHTS
+          </Text>
 
-      </View>
+          <Text
+            style={styles.subtitle}
+          >
+            Smart Restaurant Intelligence
+          </Text>
 
-      <View style={styles.content}>
+        </View>
 
-        {insights.map(
-          (
-            item,
-            index
-          ) => (
+        <View
+          style={styles.listContainer}
+        >
 
-            <View
-              key={index}
-              style={styles.card}
-            >
+          {insights.map(
+            (
+              item,
+              index
+            ) => (
 
-              <Text style={styles.message}>
-                {item}
-              </Text>
+              <View
+                key={index}
+                style={styles.card}
+              >
 
-            </View>
+                <Text
+                  style={styles.title}
+                >
+                  {item.title}
+                </Text>
 
-          )
-        )}
+                <Text
+                  style={styles.message}
+                >
+                  {item.message}
+                </Text>
 
-      </View>
+              </View>
 
-    </ScrollView>
+            )
+          )}
+
+        </View>
+
+      </ScrollView>
+
+    </AuthGuard>
 
   );
 
 }
 
-const styles = StyleSheet.create({
+const styles =
+  StyleSheet.create({
 
-  container: {
-    flex: 1,
-    backgroundColor: "#f4f7fb",
-  },
+    container: {
+      flex: 1,
+      backgroundColor:
+        "#eef2f7",
+    },
 
-  header: {
-    backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
-  },
+    header: {
+      backgroundColor:
+        "#00154f",
+      padding: 35,
+      borderBottomLeftRadius: 35,
+      borderBottomRightRadius: 35,
+    },
 
-  logo: {
-    color: "gold",
-    fontSize: 36,
-    fontWeight: "bold",
-    marginTop: 25,
-  },
+    logo: {
+      color: "gold",
+      fontSize: 34,
+      fontWeight: "bold",
+      marginTop: 25,
+    },
 
-  subtitle: {
-    color: "white",
-    fontSize: 18,
-    marginTop: 10,
-  },
+    subtitle: {
+      color: "white",
+      fontSize: 18,
+      marginTop: 10,
+    },
 
-  content: {
-    padding: 20,
-    paddingBottom: 80,
-  },
+    listContainer: {
+      padding: 20,
+      paddingBottom: 100,
+    },
 
-  card: {
-    backgroundColor: "white",
-    padding: 24,
-    borderRadius: 24,
-    marginBottom: 20,
-    borderLeftWidth: 8,
-    borderLeftColor: "#00154f",
-  },
+    card: {
+      backgroundColor:
+        "white",
+      padding: 26,
+      borderRadius: 24,
+      marginBottom: 20,
+    },
 
-  message: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#00154f",
-    lineHeight: 30,
-  },
+    title: {
+      fontSize: 24,
+      fontWeight: "bold",
+      color: "#00154f",
+      marginBottom: 14,
+    },
 
-});
+    message: {
+      fontSize: 18,
+      color: "#555",
+      lineHeight: 30,
+    },
+
+  });
 

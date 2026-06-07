@@ -1,404 +1,253 @@
-import React, {
-  useEffect,
-  useState,
-} from "react";
+import AuthGuard from "./auth-guard";
+import React, { useEffect, useState } from "react";
 
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
+  TouchableOpacity,
 } from "react-native";
+
+import { router } from "expo-router";
+
+import { LinearGradient } from "expo-linear-gradient";
+
+import {
+  MaterialIcons,
+} from "@expo/vector-icons";
 
 import {
   collection,
-  getDocs,
+  onSnapshot,
 } from "firebase/firestore";
 
-import {
-  db,
-} from "../firebase";
+import { db } from "../firebase";
 
 export default function DashboardScreen() {
 
-  const [todaySales, setTodaySales] =
+  const [totalSales, setTotalSales] =
     useState(0);
-
-  const [todayOrders, setTodayOrders] =
-    useState(0);
-
-  const [workers, setWorkers] =
-    useState(0);
-
-  const [lowStock, setLowStock] =
-    useState(0);
-
-  const [pendingPayroll, setPendingPayroll] =
-    useState(0);
-
-  const [topItem, setTopItem] =
-    useState("No Data");
-
-  const loadDashboard =
-    async () => {
-
-      try {
-
-        const salesSnapshot =
-          await getDocs(
-            collection(
-              db,
-              "sales"
-            )
-          );
-
-        const orderSnapshot =
-          await getDocs(
-            collection(
-              db,
-              "orders"
-            )
-          );
-
-        const workerSnapshot =
-          await getDocs(
-            collection(
-              db,
-              "workers"
-            )
-          );
-
-        const inventorySnapshot =
-          await getDocs(
-            collection(
-              db,
-              "inventory"
-            )
-          );
-
-        const payrollSnapshot =
-          await getDocs(
-            collection(
-              db,
-              "payroll"
-            )
-          );
-
-        let salesTotal = 0;
-
-        let lowStockCount = 0;
-
-        let unpaidCount = 0;
-
-        const itemMap: any = {};
-
-        salesSnapshot.forEach(
-          (docItem) => {
-
-            const data: any =
-              docItem.data();
-
-            salesTotal += Number(
-              data.amount || 0
-            );
-
-          }
-        );
-
-        inventorySnapshot.forEach(
-          (docItem) => {
-
-            const data: any =
-              docItem.data();
-
-            if (
-              Number(
-                data.quantity
-              ) <=
-              Number(
-                data.minimumStock
-              )
-            ) {
-
-              lowStockCount++;
-
-            }
-
-          }
-        );
-
-        payrollSnapshot.forEach(
-          (docItem) => {
-
-            const data: any =
-              docItem.data();
-
-            if (!data.paid) {
-
-              unpaidCount++;
-
-            }
-
-          }
-        );
-
-        orderSnapshot.forEach(
-          (docItem) => {
-
-            const data: any =
-              docItem.data();
-
-            data.items?.forEach(
-              (item: any) => {
-
-                if (
-                  itemMap[
-                    item.name
-                  ]
-                ) {
-
-                  itemMap[
-                    item.name
-                  ] +=
-                    item.quantity;
-
-                } else {
-
-                  itemMap[
-                    item.name
-                  ] =
-                    item.quantity;
-
-                }
-
-              }
-            );
-
-          }
-        );
-
-        let highestItem =
-          "No Data";
-
-        let highestCount = 0;
-
-        Object.keys(
-          itemMap
-        ).forEach((key) => {
-
-          if (
-            itemMap[key] >
-            highestCount
-          ) {
-
-            highestCount =
-              itemMap[key];
-
-            highestItem =
-              key;
-
-          }
-
-        });
-
-        setTodaySales(
-          salesTotal
-        );
-
-        setTodayOrders(
-          orderSnapshot.size
-        );
-
-        setWorkers(
-          workerSnapshot.size
-        );
-
-        setLowStock(
-          lowStockCount
-        );
-
-        setPendingPayroll(
-          unpaidCount
-        );
-
-        setTopItem(
-          highestItem
-        );
-
-      } catch (error) {
-
-        console.log(error);
-
-      }
-
-    };
 
   useEffect(() => {
 
-    loadDashboard();
+    const unsubscribe =
+      onSnapshot(
+        collection(db, "sales"),
+        (snapshot) => {
+
+          let total = 0;
+
+          snapshot.forEach((doc) => {
+
+            const data =
+              doc.data();
+
+            total += Number(
+              data.totalSale || 0
+            );
+
+          });
+
+          setTotalSales(total);
+
+        }
+      );
+
+    return () =>
+      unsubscribe();
 
   }, []);
 
   return (
+    <AuthGuard>
 
-    <ScrollView style={styles.container}>
+      <ScrollView
+        style={styles.container}
+        showsVerticalScrollIndicator={false}
+      >
 
-      <View style={styles.header}>
+        <LinearGradient
+          colors={[
+            "#00154f",
+            "#0039cb",
+          ]}
+          style={styles.header}
+        >
 
-        <Text style={styles.logo}>
-          SERVORA ERP
+          <Text style={styles.logo}>
+            SERVORA ERP
+          </Text>
+
+          <Text style={styles.subtitle}>
+            Restaurant Management System
+          </Text>
+
+        </LinearGradient>
+
+        <View style={styles.summaryRow}>
+
+          <LinearGradient
+            colors={[
+              "#00b09b",
+              "#96c93d",
+            ]}
+            style={styles.card}
+          >
+
+            <MaterialIcons
+              name="point-of-sale"
+              size={40}
+              color="#fff"
+            />
+
+            <Text style={styles.cardTitle}>
+              Total Sales
+            </Text>
+
+            <Text style={styles.cardValue}>
+              €{totalSales}
+            </Text>
+
+          </LinearGradient>
+
+          <LinearGradient
+            colors={[
+              "#11998e",
+              "#38ef7d",
+            ]}
+            style={styles.card}
+          >
+
+            <MaterialIcons
+              name="trending-up"
+              size={40}
+              color="#fff"
+            />
+
+            <Text style={styles.cardTitle}>
+              Net Profit
+            </Text>
+
+            <Text style={styles.cardValue}>
+              €{totalSales}
+            </Text>
+
+          </LinearGradient>
+
+        </View>
+
+        <Text style={styles.sectionTitle}>
+          Management
         </Text>
 
-        <Text style={styles.subtitle}>
-          Executive Dashboard
-        </Text>
+        <View style={styles.grid}>
 
-      </View>
+          <TouchableOpacity
+            style={styles.menuCard}
+            onPress={() =>
+              router.push("/add-sale" as any)
+           }
+         >
+          <MaterialIcons
+            name="shopping-cart"
+            size={50}
+            color="#00154f"
+          />
 
-      <View style={styles.grid}>
-
-        <View style={styles.card}>
-
-          <Text style={styles.label}>
-            Today Sales
-          </Text>
-
-          <Text style={styles.green}>
-            €{todaySales}
-          </Text>
-
-        </View>
-
-        <View style={styles.card}>
-
-          <Text style={styles.label}>
-            Orders
-          </Text>
-
-          <Text style={styles.blue}>
-            {todayOrders}
-          </Text>
+         <Text style={styles.menuText}>
+           Sales Entry
+         </Text>
+       </TouchableOpacity>
 
         </View>
 
-        <View style={styles.card}>
+      </ScrollView>
 
-          <Text style={styles.label}>
-            Workers
-          </Text>
-
-          <Text style={styles.blue}>
-            {workers}
-          </Text>
-
-        </View>
-
-        <View style={styles.card}>
-
-          <Text style={styles.label}>
-            Low Stock
-          </Text>
-
-          <Text style={styles.red}>
-            {lowStock}
-          </Text>
-
-        </View>
-
-        <View style={styles.card}>
-
-          <Text style={styles.label}>
-            Pending Payroll
-          </Text>
-
-          <Text style={styles.red}>
-            {pendingPayroll}
-          </Text>
-
-        </View>
-
-        <View style={styles.card}>
-
-          <Text style={styles.label}>
-            Top Selling Item
-          </Text>
-
-          <Text style={styles.green}>
-            {topItem}
-          </Text>
-
-        </View>
-
-      </View>
-
-    </ScrollView>
-
+    </AuthGuard>
   );
-
 }
 
 const styles = StyleSheet.create({
 
   container: {
     flex: 1,
-    backgroundColor: "#f4f7fb",
+    backgroundColor: "#eef2f7",
   },
 
   header: {
-    backgroundColor: "#00154f",
-    padding: 35,
+    paddingTop: 70,
+    paddingBottom: 40,
+    paddingHorizontal: 24,
     borderBottomLeftRadius: 35,
     borderBottomRightRadius: 35,
   },
 
   logo: {
-    color: "gold",
     fontSize: 38,
     fontWeight: "bold",
-    marginTop: 25,
+    color: "gold",
   },
 
   subtitle: {
-    color: "white",
+    color: "#fff",
     fontSize: 18,
     marginTop: 10,
   },
 
-  grid: {
-    padding: 20,
+  summaryRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    marginTop: 20,
   },
 
   card: {
-    backgroundColor: "white",
-    padding: 28,
+    width: "48%",
     borderRadius: 24,
-    marginBottom: 22,
+    padding: 20,
+    minHeight: 150,
+    justifyContent: "space-between",
   },
 
-  label: {
-    fontSize: 22,
+  cardTitle: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "bold",
+  },
+
+  cardValue: {
+    color: "#fff",
+    fontSize: 30,
+    fontWeight: "bold",
+  },
+
+  sectionTitle: {
+    fontSize: 30,
     fontWeight: "bold",
     color: "#00154f",
-    marginBottom: 14,
+    marginTop: 30,
+    marginLeft: 20,
+    marginBottom: 20,
   },
 
-  green: {
-    color: "green",
-    fontSize: 34,
-    fontWeight: "bold",
+  grid: {
+    paddingHorizontal: 16,
+    paddingBottom: 100,
   },
 
-  blue: {
-    color: "#0057ff",
-    fontSize: 34,
-    fontWeight: "bold",
+  menuCard: {
+    backgroundColor: "#fff",
+    borderRadius: 24,
+    paddingVertical: 40,
+    alignItems: "center",
   },
 
-  red: {
-    color: "red",
-    fontSize: 34,
+  menuText: {
+    marginTop: 14,
+    fontSize: 20,
     fontWeight: "bold",
+    color: "#00154f",
   },
 
 });
-

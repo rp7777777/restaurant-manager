@@ -1,3 +1,5 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
   useState,
 } from "react";
@@ -7,236 +9,141 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TextInput,
   TouchableOpacity,
   Alert,
 } from "react-native";
 
-import * as Print from "expo-print";
-
-import * as Sharing from "expo-sharing";
-
 export default function BillingScreen() {
 
-  const [subtotal, setSubtotal] =
-    useState("");
+  const [cart,
+    setCart] =
+      useState<any[]>([]);
 
-  const [taxPercent, setTaxPercent] =
-    useState("10");
+  const menuItems = [
 
-  const [serviceCharge, setServiceCharge] =
-    useState("0");
+    {
+      id: 1,
+      name: "Burger",
+      price: 8,
+    },
 
-  const [discount, setDiscount] =
-    useState("0");
+    {
+      id: 2,
+      name: "Pizza",
+      price: 12,
+    },
 
-  const [paymentMethod, setPaymentMethod] =
-    useState("Cash");
+    {
+      id: 3,
+      name: "Cold Coffee",
+      price: 5,
+    },
 
-  const paymentMethods = [
-
-    "Cash",
-    "Card",
-    "Online",
+    {
+      id: 4,
+      name: "French Fries",
+      price: 4,
+    },
 
   ];
 
-  const calculateTax =
-    () => {
+  const addToBill =
+    (item: any) => {
 
-      return (
-        Number(subtotal || 0) *
-        (
-          Number(taxPercent) / 100
-        )
-      );
+      setCart([
+        ...cart,
+        item,
+      ]);
 
     };
 
-  const calculateTotal =
+  const total =
+    cart.reduce(
+      (
+        sum,
+        item
+      ) =>
+
+        sum +
+        item.price,
+
+      0
+    );
+
+  const completeBilling =
     () => {
 
-      return (
-        Number(subtotal || 0) +
-        calculateTax() +
-        Number(serviceCharge || 0) -
-        Number(discount || 0)
+      Alert.alert(
+        "Success",
+        "Billing Completed"
       );
 
-    };
-
-  const printReceipt =
-    async () => {
-
-      const html = `
-        <html>
-
-        <body style="
-          font-family: Arial;
-          padding: 30px;
-        ">
-
-          <h1>
-            SERVORA ERP
-          </h1>
-
-          <h2>
-            Restaurant Receipt
-          </h2>
-
-          <hr />
-
-          <p>
-            Subtotal:
-            €${subtotal}
-          </p>
-
-          <p>
-            Tax (${taxPercent}%):
-            €${calculateTax()}
-          </p>
-
-          <p>
-            Service Charge:
-            €${serviceCharge}
-          </p>
-
-          <p>
-            Discount:
-            €${discount}
-          </p>
-
-          <hr />
-
-          <h2>
-            TOTAL:
-            €${calculateTotal()}
-          </h2>
-
-          <p>
-            Payment:
-            ${paymentMethod}
-          </p>
-
-          <p>
-            Date:
-            ${new Date().toLocaleString()}
-          </p>
-
-          <br />
-          <br />
-
-          <h3>
-            Thank You
-          </h3>
-
-        </body>
-
-        </html>
-      `;
-
-      const file =
-        await Print.printToFileAsync({
-          html,
-        });
-
-      await Sharing.shareAsync(
-        file.uri
-      );
+      setCart([]);
 
     };
 
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        style={styles.container}
+      >
 
-        <Text style={styles.logo}>
-          BILLING
-        </Text>
+        <View
+          style={styles.header}
+        >
 
-        <Text style={styles.subtitle}>
-          Receipt & Payment System
-        </Text>
+          <Text
+            style={styles.logo}
+          >
+            BILLING
+          </Text>
 
-      </View>
+          <Text
+            style={styles.subtitle}
+          >
+            Restaurant Billing System
+          </Text>
 
-      <View style={styles.form}>
+        </View>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Subtotal Amount"
-          keyboardType="numeric"
-          value={subtotal}
-          onChangeText={
-            setSubtotal
-          }
-        />
+        <View
+          style={styles.section}
+        >
 
-        <TextInput
-          style={styles.input}
-          placeholder="Tax %"
-          keyboardType="numeric"
-          value={taxPercent}
-          onChangeText={
-            setTaxPercent
-          }
-        />
+          <Text
+            style={styles.sectionTitle}
+          >
+            MENU ITEMS
+          </Text>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Service Charge"
-          keyboardType="numeric"
-          value={serviceCharge}
-          onChangeText={
-            setServiceCharge
-          }
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Discount"
-          keyboardType="numeric"
-          value={discount}
-          onChangeText={
-            setDiscount
-          }
-        />
-
-        <Text style={styles.label}>
-          Payment Method
-        </Text>
-
-        <View style={styles.paymentRow}>
-
-          {paymentMethods.map(
-            (item) => (
+          {menuItems.map(
+            (
+              item
+            ) => (
 
               <TouchableOpacity
-                key={item}
-                style={[
-
-                  styles.paymentButton,
-
-                  paymentMethod ===
-                    item &&
-                  styles.activeButton,
-
-                ]}
+                key={item.id}
+                style={styles.card}
                 onPress={() =>
-                  setPaymentMethod(
+                  addToBill(
                     item
                   )
                 }
               >
 
                 <Text
-                  style={
-                    styles.paymentText
-                  }
+                  style={styles.itemName}
                 >
-                  {item}
+                  {item.name}
+                </Text>
+
+                <Text
+                  style={styles.price}
+                >
+                  €
+                  {item.price}
                 </Text>
 
               </TouchableOpacity>
@@ -246,137 +153,207 @@ export default function BillingScreen() {
 
         </View>
 
-        <View style={styles.summaryCard}>
+        <View
+          style={styles.cartSection}
+        >
 
-          <Text style={styles.summaryText}>
-            Tax:
-            €{calculateTax()}
+          <Text
+            style={styles.sectionTitle}
+          >
+            BILL SUMMARY
           </Text>
 
-          <Text style={styles.summaryText}>
-            TOTAL:
-            €{calculateTotal()}
-          </Text>
+          {cart.map(
+            (
+              item,
+              index
+            ) => (
+
+              <View
+                key={index}
+                style={styles.cartItem}
+              >
+
+                <Text
+                  style={styles.cartText}
+                >
+                  {item.name}
+                </Text>
+
+                <Text
+                  style={styles.cartText}
+                >
+                  €
+                  {item.price}
+                </Text>
+
+              </View>
+
+            )
+          )}
+
+          <View
+            style={styles.totalBox}
+          >
+
+            <Text
+              style={styles.totalText}
+            >
+              TOTAL:
+            </Text>
+
+            <Text
+              style={styles.totalAmount}
+            >
+              €
+              {total}
+            </Text>
+
+          </View>
+
+          <TouchableOpacity
+            style={styles.checkoutButton}
+            onPress={
+              completeBilling
+            }
+          >
+
+            <Text
+              style={styles.checkoutText}
+            >
+              COMPLETE BILLING
+            </Text>
+
+          </TouchableOpacity>
 
         </View>
 
-        <TouchableOpacity
-          style={styles.printButton}
-          onPress={printReceipt}
-        >
+      </ScrollView>
 
-          <Text style={styles.printText}>
-            PRINT RECEIPT
-          </Text>
-
-        </TouchableOpacity>
-
-      </View>
-
-    </ScrollView>
+    </AuthGuard>
 
   );
 
 }
 
-const styles = StyleSheet.create({
+const styles =
+  StyleSheet.create({
 
-  container: {
-    flex: 1,
-    backgroundColor: "#f4f7fb",
-  },
+    container: {
+      flex: 1,
+      backgroundColor:
+        "#eef2f7",
+    },
 
-  header: {
-    backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
-  },
+    header: {
+      backgroundColor:
+        "#00154f",
+      padding: 35,
+      borderBottomLeftRadius: 35,
+      borderBottomRightRadius: 35,
+    },
 
-  logo: {
-    color: "gold",
-    fontSize: 38,
-    fontWeight: "bold",
-    marginTop: 25,
-  },
+    logo: {
+      color: "gold",
+      fontSize: 38,
+      fontWeight: "bold",
+      marginTop: 25,
+    },
 
-  subtitle: {
-    color: "white",
-    fontSize: 18,
-    marginTop: 10,
-  },
+    subtitle: {
+      color: "white",
+      fontSize: 18,
+      marginTop: 10,
+    },
 
-  form: {
-    padding: 20,
-    paddingBottom: 80,
-  },
+    section: {
+      padding: 20,
+    },
 
-  input: {
-    backgroundColor: "white",
-    padding: 20,
-    borderRadius: 18,
-    fontSize: 18,
-    marginBottom: 18,
-  },
+    sectionTitle: {
+      fontSize: 28,
+      fontWeight: "bold",
+      color: "#00154f",
+      marginBottom: 20,
+    },
 
-  label: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginBottom: 14,
-    marginTop: 10,
-  },
+    card: {
+      backgroundColor:
+        "white",
+      padding: 24,
+      borderRadius: 24,
+      marginBottom: 18,
+      flexDirection: "row",
+      justifyContent:
+        "space-between",
+    },
 
-  paymentRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 24,
-  },
+    itemName: {
+      fontSize: 22,
+      fontWeight: "bold",
+      color: "#00154f",
+    },
 
-  paymentButton: {
-    backgroundColor: "#dbe4ff",
-    padding: 18,
-    borderRadius: 18,
-    width: "31%",
-    alignItems: "center",
-  },
+    price: {
+      fontSize: 20,
+      color: "green",
+      fontWeight: "bold",
+    },
 
-  activeButton: {
-    backgroundColor: "#00154f",
-  },
+    cartSection: {
+      padding: 20,
+      paddingBottom: 100,
+    },
 
-  paymentText: {
-    color: "black",
-    fontWeight: "bold",
-  },
+    cartItem: {
+      backgroundColor:
+        "white",
+      padding: 20,
+      borderRadius: 20,
+      marginBottom: 14,
+      flexDirection: "row",
+      justifyContent:
+        "space-between",
+    },
 
-  summaryCard: {
-    backgroundColor: "white",
-    padding: 24,
-    borderRadius: 22,
-    marginTop: 10,
-  },
+    cartText: {
+      fontSize: 18,
+      color: "#333",
+    },
 
-  summaryText: {
-    fontSize: 26,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginBottom: 14,
-  },
+    totalBox: {
+      flexDirection: "row",
+      justifyContent:
+        "space-between",
+      marginTop: 25,
+      marginBottom: 25,
+    },
 
-  printButton: {
-    backgroundColor: "#00154f",
-    padding: 24,
-    borderRadius: 22,
-    alignItems: "center",
-    marginTop: 30,
-  },
+    totalText: {
+      fontSize: 26,
+      fontWeight: "bold",
+      color: "#00154f",
+    },
 
-  printText: {
-    color: "white",
-    fontSize: 22,
-    fontWeight: "bold",
-  },
+    totalAmount: {
+      fontSize: 28,
+      fontWeight: "bold",
+      color: "green",
+    },
 
-});
+    checkoutButton: {
+      backgroundColor:
+        "#00154f",
+      padding: 22,
+      borderRadius: 18,
+      alignItems: "center",
+    },
+
+    checkoutText: {
+      color: "white",
+      fontSize: 18,
+      fontWeight: "bold",
+    },
+
+  });
 

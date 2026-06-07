@@ -1,3 +1,5 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
   useState,
 } from "react";
@@ -7,521 +9,223 @@ import {
   Text,
   StyleSheet,
   ScrollView,
- TouchableOpacity,
-  TextInput,
-  Alert,
+  TouchableOpacity,
 } from "react-native";
-
-import {
-  addDoc,
-  collection,
-} from "firebase/firestore";
-
-import {
-  db,
-} from "../firebase";
-
-const menuItems = [
-
-  {
-    id: 1,
-    name: "Sushi Deluxe",
-    price: 28,
-    category: "Sushi",
-  },
-
-  {
-    id: 2,
-    name: "Margherita Pizza",
-    price: 16,
-    category: "Pizza",
-  },
-
-  {
-    id: 3,
-    name: "Cheese Burger",
-    price: 14,
-    category: "Burger",
-  },
-
-  {
-    id: 4,
-    name: "Cappuccino",
-    price: 5,
-    category: "Coffee",
-  },
-
-  {
-    id: 5,
-    name: "Fresh Beer",
-    price: 8,
-    category: "Bar",
-  },
-
-];
 
 export default function CustomerAppScreen() {
 
-  const [cart, setCart] =
-    useState<any[]>([]);
+  const [orders] =
+    useState([
 
-  const [tableNumber, setTableNumber] =
-    useState("");
+      {
+        id: 1,
+        item:
+          "Burger Combo",
+        status:
+          "Preparing",
+      },
 
-  const [customerName, setCustomerName] =
-    useState("");
+      {
+        id: 2,
+        item:
+          "Pizza Large",
+        status:
+          "Delivered",
+      },
 
-  const [notes, setNotes] =
-    useState("");
+      {
+        id: 3,
+        item:
+          "Cold Coffee",
+        status:
+          "Pending",
+      },
 
-  const addToCart =
-    (item: any) => {
-
-      const existing =
-        cart.find(
-          (cartItem) =>
-            cartItem.id === item.id
-        );
-
-      if (existing) {
-
-        const updated =
-          cart.map((cartItem) => {
-
-            if (
-              cartItem.id === item.id
-            ) {
-
-              return {
-                ...cartItem,
-                quantity:
-                  cartItem.quantity + 1,
-              };
-
-            }
-
-            return cartItem;
-
-          });
-
-        setCart(updated);
-
-      } else {
-
-        setCart([
-          ...cart,
-          {
-            ...item,
-            quantity: 1,
-          },
-        ]);
-
-      }
-
-    };
-
-  const removeFromCart =
-    (id: number) => {
-
-      const updated =
-        cart.filter(
-          (item) =>
-            item.id !== id
-        );
-
-      setCart(updated);
-
-    };
-
-  const getTotal =
-    () => {
-
-      return cart.reduce(
-        (
-          total,
-          item
-        ) =>
-
-          total +
-          item.price *
-            item.quantity,
-
-        0
-      );
-
-    };
-
-  const placeOrder =
-    async () => {
-
-      if (
-        cart.length === 0
-      ) {
-
-        Alert.alert(
-          "Error",
-          "Cart is empty"
-        );
-
-        return;
-
-      }
-
-      try {
-
-        await addDoc(
-          collection(
-            db,
-            "orders"
-          ),
-          {
-            customerName,
-            tableNumber,
-            notes,
-            items: cart,
-            total:
-              getTotal(),
-            status:
-              "PREPARING",
-            source:
-              "CUSTOMER_APP",
-            createdAt:
-              new Date(),
-          }
-        );
-
-        Alert.alert(
-          "Success",
-          "Order Sent Successfully"
-        );
-
-        setCart([]);
-        setCustomerName("");
-        setTableNumber("");
-        setNotes("");
-
-      } catch (error: any) {
-
-        Alert.alert(
-          "Error",
-          error.message
-        );
-
-      }
-
-    };
+    ]);
 
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        style={styles.container}
+      >
 
-        <Text style={styles.logo}>
-          SERVORA
-        </Text>
+        <View style={styles.header}>
 
-        <Text style={styles.subtitle}>
-          Customer Ordering App
-        </Text>
+          <Text style={styles.logo}>
+            CUSTOMER APP
+          </Text>
 
-      </View>
+          <Text style={styles.subtitle}>
+            Customer Order Tracking
+          </Text>
 
-      <View style={styles.form}>
+        </View>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Customer Name"
-          value={customerName}
-          onChangeText={
-            setCustomerName
-          }
-        />
+        <View style={styles.banner}>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Table Number"
-          value={tableNumber}
-          onChangeText={
-            setTableNumber
-          }
-        />
+          <Text style={styles.bannerTitle}>
+            Welcome To SERVORA
+          </Text>
 
-      </View>
+          <Text style={styles.bannerText}>
+            Track your restaurant
+            orders live
+          </Text>
 
-      <Text style={styles.sectionTitle}>
-        MENU
-      </Text>
+        </View>
 
-      <View style={styles.menuGrid}>
+        <View style={styles.section}>
 
-        {menuItems.map((item) => (
+          <Text style={styles.sectionTitle}>
+            ACTIVE ORDERS
+          </Text>
 
-          <TouchableOpacity
-            key={item.id}
-            style={styles.menuCard}
-            onPress={() =>
-              addToCart(item)
-            }
-          >
+          {orders.map(
+            (
+              item
+            ) => (
 
-            <Text style={styles.menuName}>
-              {item.name}
-            </Text>
-
-            <Text style={styles.category}>
-              {item.category}
-            </Text>
-
-            <Text style={styles.price}>
-              €{item.price}
-            </Text>
-
-          </TouchableOpacity>
-
-        ))}
-
-      </View>
-
-      <Text style={styles.sectionTitle}>
-        YOUR CART
-      </Text>
-
-      <View style={styles.cartBox}>
-
-        {cart.map((item) => (
-
-          <View
-            key={item.id}
-            style={styles.cartItem}
-          >
-
-            <View>
-
-              <Text style={styles.cartName}>
-                {item.name}
-              </Text>
-
-              <Text style={styles.cartInfo}>
-                Qty:
-                {" "}
-                {item.quantity}
-              </Text>
-
-            </View>
-
-            <View>
-
-              <Text style={styles.cartPrice}>
-                €
-                {item.price *
-                  item.quantity}
-              </Text>
-
-              <TouchableOpacity
-                onPress={() =>
-                  removeFromCart(
-                    item.id
-                  )
-                }
+              <View
+                key={item.id}
+                style={styles.card}
               >
 
-                <Text style={styles.remove}>
-                  REMOVE
+                <Text style={styles.item}>
+                  {item.item}
                 </Text>
 
-              </TouchableOpacity>
+                <Text style={styles.status}>
+                  Status:
+                  {" "}
+                  {item.status}
+                </Text>
 
-            </View>
+              </View>
 
-          </View>
+            )
+          )}
 
-        ))}
-
-        <Text style={styles.total}>
-          TOTAL:
-          €{getTotal()}
-        </Text>
-
-        <TextInput
-          style={styles.notesInput}
-          placeholder="Special Notes..."
-          value={notes}
-          onChangeText={setNotes}
-          multiline
-        />
+        </View>
 
         <TouchableOpacity
-          style={styles.orderButton}
-          onPress={placeOrder}
+          style={styles.button}
         >
 
-          <Text style={styles.orderText}>
-            PLACE ORDER
+          <Text style={styles.buttonText}>
+            PLACE NEW ORDER
           </Text>
 
         </TouchableOpacity>
 
-      </View>
+      </ScrollView>
 
-    </ScrollView>
+    </AuthGuard>
 
   );
 
 }
 
-const styles = StyleSheet.create({
+const styles =
+  StyleSheet.create({
 
-  container: {
-    flex: 1,
-    backgroundColor: "#f4f7fb",
-  },
+    container: {
+      flex: 1,
+      backgroundColor:
+        "#eef2f7",
+    },
 
-  header: {
-    backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
-  },
+    header: {
+      backgroundColor:
+        "#00154f",
+      padding: 35,
+      borderBottomLeftRadius: 35,
+      borderBottomRightRadius: 35,
+    },
 
-  logo: {
-    color: "gold",
-    fontSize: 42,
-    fontWeight: "bold",
-    marginTop: 25,
-  },
+    logo: {
+      color: "gold",
+      fontSize: 36,
+      fontWeight: "bold",
+      marginTop: 25,
+    },
 
-  subtitle: {
-    color: "white",
-    fontSize: 18,
-    marginTop: 10,
-  },
+    subtitle: {
+      color: "white",
+      fontSize: 18,
+      marginTop: 10,
+    },
 
-  form: {
-    padding: 20,
-  },
+    banner: {
+      backgroundColor:
+        "white",
+      margin: 20,
+      padding: 28,
+      borderRadius: 24,
+      alignItems: "center",
+    },
 
-  input: {
-    backgroundColor: "white",
-    padding: 20,
-    borderRadius: 18,
-    fontSize: 18,
-    marginBottom: 18,
-  },
+    bannerTitle: {
+      fontSize: 28,
+      fontWeight: "bold",
+      color: "#00154f",
+    },
 
-  sectionTitle: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginHorizontal: 20,
-    marginTop: 10,
-    marginBottom: 20,
-  },
+    bannerText: {
+      fontSize: 18,
+      marginTop: 12,
+      color: "#555",
+      textAlign: "center",
+    },
 
-  menuGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-  },
+    section: {
+      padding: 20,
+      paddingTop: 0,
+    },
 
-  menuCard: {
-    backgroundColor: "white",
-    width: "48%",
-    padding: 24,
-    borderRadius: 22,
-    marginBottom: 20,
-  },
+    sectionTitle: {
+      fontSize: 26,
+      fontWeight: "bold",
+      color: "#00154f",
+      marginBottom: 20,
+    },
 
-  menuName: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#00154f",
-  },
+    card: {
+      backgroundColor:
+        "white",
+      padding: 24,
+      borderRadius: 24,
+      marginBottom: 18,
+    },
 
-  category: {
-    fontSize: 16,
-    color: "gray",
-    marginTop: 10,
-  },
+    item: {
+      fontSize: 22,
+      fontWeight: "bold",
+      color: "#00154f",
+    },
 
-  price: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "green",
-    marginTop: 18,
-  },
+    status: {
+      fontSize: 18,
+      marginTop: 12,
+      color: "#444",
+    },
 
-  cartBox: {
-    backgroundColor: "white",
-    margin: 20,
-    padding: 24,
-    borderRadius: 24,
-    marginBottom: 80,
-  },
+    button: {
+      backgroundColor:
+        "#00154f",
+      margin: 20,
+      padding: 22,
+      borderRadius: 18,
+      alignItems: "center",
+      marginBottom: 100,
+    },
 
-  cartItem: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    borderBottomWidth: 1,
-    borderColor: "#ddd",
-    paddingVertical: 16,
-  },
+    buttonText: {
+      color: "white",
+      fontSize: 18,
+      fontWeight: "bold",
+    },
 
-  cartName: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#00154f",
-  },
-
-  cartInfo: {
-    fontSize: 16,
-    marginTop: 6,
-    color: "#555",
-  },
-
-  cartPrice: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "green",
-  },
-
-  remove: {
-    color: "red",
-    marginTop: 8,
-    fontWeight: "bold",
-  },
-
-  total: {
-    fontSize: 30,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginTop: 24,
-  },
-
-  notesInput: {
-    backgroundColor: "#f4f4f4",
-    padding: 20,
-    borderRadius: 18,
-    marginTop: 24,
-    height: 120,
-    textAlignVertical: "top",
-    fontSize: 17,
-  },
-
-  orderButton: {
-    backgroundColor: "#00154f",
-    padding: 24,
-    borderRadius: 22,
-    alignItems: "center",
-    marginTop: 30,
-  },
-
-  orderText: {
-    color: "white",
-    fontSize: 22,
-    fontWeight: "bold",
-  },
-
-});
+  });
 

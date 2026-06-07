@@ -1,220 +1,270 @@
-import React, { useEffect, useState } from "react";
+import AuthGuard from "./auth-guard";
+
+import React, {
+  useState,
+} from "react";
 
 import {
   View,
   Text,
   StyleSheet,
+  ScrollView,
   TextInput,
   TouchableOpacity,
-  ScrollView,
   Alert,
 } from "react-native";
 
-import {
-  addDoc,
-  collection,
-  getDocs,
-} from "firebase/firestore";
-
-import { db } from "../firebase";
-
 export default function RestaurantsScreen() {
-  const [restaurantName, setRestaurantName] =
-    useState("");
 
-  const [restaurants, setRestaurants] =
-    useState([]);
+  const [restaurantName,
+    setRestaurantName] =
+      useState("");
 
-  const getRestaurants = async () => {
-    try {
-      const querySnapshot = await getDocs(
-        collection(db, "restaurants")
-      );
+  const [location,
+    setLocation] =
+      useState("");
 
-      const data: any = [];
+  const [owner,
+    setOwner] =
+      useState("");
 
-      querySnapshot.forEach((doc) => {
-        data.push({
-          id: doc.id,
-          ...doc.data(),
-        });
-      });
+  const [restaurants,
+    setRestaurants] =
+      useState<any[]>([]);
 
-      setRestaurants(data);
-    } catch (error) {
-      console.log(error);
-    }
-  };
+  const addRestaurant =
+    () => {
 
-  useEffect(() => {
-    getRestaurants();
-  }, []);
+      if (
+        !restaurantName ||
+        !location ||
+        !owner
+      ) {
 
-  const addRestaurant = async () => {
-    if (!restaurantName) {
-      Alert.alert(
-        "Error",
-        "Enter restaurant name"
-      );
-      return;
-    }
+        Alert.alert(
+          "Error",
+          "Fill all fields"
+        );
 
-    try {
-      await addDoc(
-        collection(db, "restaurants"),
-        {
-          name: restaurantName,
-          createdAt: new Date(),
-        }
-      );
+        return;
+
+      }
+
+      const newRestaurant = {
+
+        id:
+          Date.now(),
+
+        restaurantName,
+
+        location,
+
+        owner,
+
+      };
+
+      setRestaurants([
+        newRestaurant,
+        ...restaurants,
+      ]);
+
+      setRestaurantName("");
+      setLocation("");
+      setOwner("");
 
       Alert.alert(
         "Success",
         "Restaurant Added"
       );
 
-      setRestaurantName("");
-
-      getRestaurants();
-    } catch (error) {
-      console.log(error);
-
-      Alert.alert(
-        "Error",
-        "Failed to add restaurant"
-      );
-    }
-  };
+    };
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>
-          RESTAURANTS
-        </Text>
 
-        <Text style={styles.subtitle}>
-          Multi Restaurant Management
-        </Text>
-      </View>
+    <AuthGuard>
 
-      <View style={styles.form}>
-        <Text style={styles.label}>
-          Restaurant Name
-        </Text>
+      <ScrollView
+        style={styles.container}
+      >
 
-        <TextInput
-          style={styles.input}
-          placeholder="Enter restaurant name"
-          value={restaurantName}
-          onChangeText={setRestaurantName}
-        />
+        <View style={styles.header}>
 
-        <TouchableOpacity
-          style={styles.button}
-          onPress={addRestaurant}
-        >
-          <Text style={styles.buttonText}>
-            Add Restaurant
+          <Text style={styles.logo}>
+            RESTAURANTS
           </Text>
-        </TouchableOpacity>
-      </View>
 
-      <Text style={styles.sectionTitle}>
-        Your Restaurants
-      </Text>
-
-      {restaurants.map((item: any) => (
-        <View key={item.id} style={styles.card}>
-          <Text style={styles.cardText}>
-            {item.name}
+          <Text style={styles.subtitle}>
+            Restaurant Management
           </Text>
+
         </View>
-      ))}
-    </ScrollView>
+
+        <View style={styles.form}>
+
+          <TextInput
+            style={styles.input}
+            placeholder="Restaurant Name"
+            value={restaurantName}
+            onChangeText={
+              setRestaurantName
+            }
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Location"
+            value={location}
+            onChangeText={
+              setLocation
+            }
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Owner Name"
+            value={owner}
+            onChangeText={
+              setOwner
+            }
+          />
+
+          <TouchableOpacity
+            style={styles.button}
+            onPress={addRestaurant}
+          >
+
+            <Text style={styles.buttonText}>
+              ADD RESTAURANT
+            </Text>
+
+          </TouchableOpacity>
+
+        </View>
+
+        <View style={styles.listContainer}>
+
+          {restaurants.map(
+            (
+              item
+            ) => (
+
+              <View
+                key={item.id}
+                style={styles.card}
+              >
+
+                <Text style={styles.restaurantName}>
+                  {item.restaurantName}
+                </Text>
+
+                <Text style={styles.info}>
+                  Location:
+                  {" "}
+                  {item.location}
+                </Text>
+
+                <Text style={styles.info}>
+                  Owner:
+                  {" "}
+                  {item.owner}
+                </Text>
+
+              </View>
+
+            )
+          )}
+
+        </View>
+
+      </ScrollView>
+
+    </AuthGuard>
+
   );
+
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#f4f7fb",
-  },
+const styles =
+  StyleSheet.create({
 
-  header: {
-    backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
-  },
+    container: {
+      flex: 1,
+      backgroundColor:
+        "#eef2f7",
+    },
 
-  title: {
-    color: "gold",
-    fontSize: 36,
-    fontWeight: "bold",
-    marginTop: 25,
-  },
+    header: {
+      backgroundColor:
+        "#00154f",
+      padding: 35,
+      borderBottomLeftRadius: 35,
+      borderBottomRightRadius: 35,
+    },
 
-  subtitle: {
-    color: "white",
-    fontSize: 18,
-    marginTop: 10,
-  },
+    logo: {
+      color: "gold",
+      fontSize: 36,
+      fontWeight: "bold",
+      marginTop: 25,
+    },
 
-  form: {
-    padding: 20,
-    marginTop: 10,
-  },
+    subtitle: {
+      color: "white",
+      fontSize: 18,
+      marginTop: 10,
+    },
 
-  label: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginBottom: 10,
-  },
+    form: {
+      padding: 20,
+    },
 
-  input: {
-    backgroundColor: "white",
-    padding: 18,
-    borderRadius: 16,
-    fontSize: 20,
-    marginBottom: 20,
-  },
+    input: {
+      backgroundColor:
+        "white",
+      padding: 18,
+      borderRadius: 18,
+      marginBottom: 18,
+      fontSize: 18,
+    },
 
-  button: {
-    backgroundColor: "#00154f",
-    padding: 20,
-    borderRadius: 18,
-    alignItems: "center",
-  },
+    button: {
+      backgroundColor:
+        "#00154f",
+      padding: 22,
+      borderRadius: 18,
+      alignItems: "center",
+    },
 
-  buttonText: {
-    color: "white",
-    fontSize: 20,
-    fontWeight: "bold",
-  },
+    buttonText: {
+      color: "white",
+      fontSize: 18,
+      fontWeight: "bold",
+    },
 
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginLeft: 20,
-    marginTop: 20,
-    marginBottom: 10,
-  },
+    listContainer: {
+      padding: 20,
+      paddingBottom: 100,
+    },
 
-  card: {
-    backgroundColor: "white",
-    marginHorizontal: 20,
-    marginBottom: 15,
-    padding: 20,
-    borderRadius: 18,
-    elevation: 4,
-  },
+    card: {
+      backgroundColor:
+        "white",
+      padding: 24,
+      borderRadius: 24,
+      marginBottom: 20,
+    },
 
-  cardText: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "#00154f",
-  },
-});
+    restaurantName: {
+      fontSize: 24,
+      fontWeight: "bold",
+      color: "#00154f",
+    },
+
+    info: {
+      fontSize: 18,
+      marginTop: 12,
+      color: "#444",
+    },
+
+  });
+

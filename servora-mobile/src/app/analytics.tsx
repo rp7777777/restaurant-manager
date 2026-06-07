@@ -1,3 +1,5 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
   useEffect,
   useState,
@@ -17,144 +19,26 @@ import {
 
 import {
   db,
+  auth,
 } from "../firebase";
 
 export default function AnalyticsScreen() {
 
-  const [totalSales, setTotalSales] =
-    useState(0);
+  const [salesTotal,
+    setSalesTotal] =
+      useState(0);
 
-  const [totalExpenses, setTotalExpenses] =
-    useState(0);
+  const [expenseTotal,
+    setExpenseTotal] =
+      useState(0);
 
-  const [profit, setProfit] =
-    useState(0);
+  const [profit,
+    setProfit] =
+      useState(0);
 
-  const [topKitchen, setTopKitchen] =
-    useState("");
-
-  const loadAnalytics =
-    async () => {
-
-      try {
-
-        const salesSnapshot =
-          await getDocs(
-            collection(
-              db,
-              "sales"
-            )
-          );
-
-        const expenseSnapshot =
-          await getDocs(
-            collection(
-              db,
-              "expenses"
-            )
-          );
-
-        let salesTotal = 0;
-
-        let expenseTotal = 0;
-
-        const kitchenMap: any = {};
-
-        salesSnapshot.forEach(
-          (docItem) => {
-
-            const data: any =
-              docItem.data();
-
-            salesTotal += Number(
-              data.amount || 0
-            );
-
-            if (
-              kitchenMap[
-                data.kitchen
-              ]
-            ) {
-
-              kitchenMap[
-                data.kitchen
-              ] += Number(
-                data.amount
-              );
-
-            } else {
-
-              kitchenMap[
-                data.kitchen
-              ] = Number(
-                data.amount
-              );
-
-            }
-
-          }
-        );
-
-        expenseSnapshot.forEach(
-          (docItem) => {
-
-            const data: any =
-              docItem.data();
-
-            expenseTotal += Number(
-              data.amount || 0
-            );
-
-          }
-        );
-
-        let highestKitchen = "";
-
-        let highestAmount = 0;
-
-        Object.keys(
-          kitchenMap
-        ).forEach((key) => {
-
-          if (
-            kitchenMap[key] >
-            highestAmount
-          ) {
-
-            highestAmount =
-              kitchenMap[key];
-
-            highestKitchen =
-              key;
-
-          }
-
-        });
-
-        setTotalSales(
-          salesTotal
-        );
-
-        setTotalExpenses(
-          expenseTotal
-        );
-
-        setProfit(
-          salesTotal -
-          expenseTotal
-        );
-
-        setTopKitchen(
-          highestKitchen
-        );
-
-      } catch (error) {
-
-        console.log(error);
-
-      }
-
-    };
+  const [inventoryCount,
+    setInventoryCount] =
+      useState(0);
 
   useEffect(() => {
 
@@ -162,71 +46,213 @@ export default function AnalyticsScreen() {
 
   }, []);
 
+  const loadAnalytics =
+    async () => {
+
+      const user =
+        auth.currentUser;
+
+      if (!user) return;
+
+      let sales = 0;
+      let expenses = 0;
+      let inventory = 0;
+
+      const salesSnapshot =
+        await getDocs(
+          collection(
+            db,
+            "sales"
+          )
+        );
+
+      salesSnapshot.forEach(
+        (document) => {
+
+          const item =
+            document.data();
+
+          if (
+            item.userId ===
+            user.uid
+          ) {
+
+            sales +=
+              Number(
+                item.total || 0
+              );
+
+          }
+
+        }
+      );
+
+      const expenseSnapshot =
+        await getDocs(
+          collection(
+            db,
+            "expenses"
+          )
+        );
+
+      expenseSnapshot.forEach(
+        (document) => {
+
+          const item =
+            document.data();
+
+          if (
+            item.userId ===
+            user.uid
+          ) {
+
+            expenses +=
+              Number(
+                item.amount || 0
+              );
+
+          }
+
+        }
+      );
+
+      const inventorySnapshot =
+        await getDocs(
+          collection(
+            db,
+            "inventory"
+          )
+        );
+
+      inventorySnapshot.forEach(
+        (document) => {
+
+          const item =
+            document.data();
+
+          if (
+            item.userId ===
+            user.uid
+          ) {
+
+            inventory +=
+              Number(
+                item.quantity || 0
+              );
+
+          }
+
+        }
+      );
+
+      setSalesTotal(sales);
+
+      setExpenseTotal(expenses);
+
+      setProfit(
+        sales - expenses
+      );
+
+      setInventoryCount(
+        inventory
+      );
+
+    };
+
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        style={styles.container}
+      >
 
-        <Text style={styles.logo}>
-          ANALYTICS
-        </Text>
+        <View style={styles.header}>
 
-        <Text style={styles.subtitle}>
-          Global Restaurant ERP
-        </Text>
+          <Text style={styles.logo}>
+            ANALYTICS
+          </Text>
 
-      </View>
+          <Text style={styles.subtitle}>
+            Restaurant Business Overview
+          </Text>
 
-      <View style={styles.card}>
+        </View>
 
-        <Text style={styles.label}>
-          Total Sales
-        </Text>
+        <View style={styles.card}>
 
-        <Text style={styles.green}>
-          €{totalSales}
-        </Text>
+          <Text style={styles.cardTitle}>
+            Total Sales
+          </Text>
 
-      </View>
+          <Text style={styles.sales}>
+            €
+            {salesTotal}
+          </Text>
 
-      <View style={styles.card}>
+        </View>
 
-        <Text style={styles.label}>
-          Total Expenses
-        </Text>
+        <View style={styles.card}>
 
-        <Text style={styles.red}>
-          €{totalExpenses}
-        </Text>
+          <Text style={styles.cardTitle}>
+            Total Expenses
+          </Text>
 
-      </View>
+          <Text style={styles.expense}>
+            €
+            {expenseTotal}
+          </Text>
 
-      <View style={styles.card}>
+        </View>
 
-        <Text style={styles.label}>
-          Net Profit
-        </Text>
+        <View style={styles.card}>
 
-        <Text style={styles.green}>
-          €{profit}
-        </Text>
+          <Text style={styles.cardTitle}>
+            Net Profit
+          </Text>
 
-      </View>
+          <Text style={styles.profit}>
+            €
+            {profit}
+          </Text>
 
-      <View style={styles.card}>
+        </View>
 
-        <Text style={styles.label}>
-          Top Kitchen
-        </Text>
+        <View style={styles.card}>
 
-        <Text style={styles.blue}>
-          {topKitchen || "No Data"}
-        </Text>
+          <Text style={styles.cardTitle}>
+            Inventory Remaining
+          </Text>
 
-      </View>
+          <Text style={styles.inventory}>
+            {inventoryCount}
+          </Text>
 
-    </ScrollView>
+        </View>
+
+        <View style={styles.summaryBox}>
+
+          <Text style={styles.summaryTitle}>
+            Business Summary
+          </Text>
+
+          <Text style={styles.summaryText}>
+            Revenue and profit are
+            automatically calculated
+            from your sales and
+            expense records.
+          </Text>
+
+          <Text style={styles.summaryText}>
+            Inventory remaining stock
+            updates in real-time.
+          </Text>
+
+        </View>
+
+      </ScrollView>
+
+    </AuthGuard>
 
   );
 
@@ -236,60 +262,89 @@ const styles = StyleSheet.create({
 
   container: {
     flex: 1,
-    backgroundColor: "#f4f7fb",
+    backgroundColor: "#eef2f7",
   },
 
   header: {
     backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
+    padding: 28,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
   },
 
   logo: {
-    color: "gold",
-    fontSize: 38,
+    fontSize: 34,
     fontWeight: "bold",
-    marginTop: 25,
+    color: "gold",
+    marginTop: 20,
   },
 
   subtitle: {
-    color: "white",
-    fontSize: 18,
-    marginTop: 10,
+    color: "#fff",
+    marginTop: 8,
+    fontSize: 16,
   },
 
   card: {
-    backgroundColor: "white",
-    margin: 20,
+    backgroundColor: "#fff",
+    margin: 16,
     padding: 28,
-    borderRadius: 24,
-    elevation: 4,
+    borderRadius: 22,
   },
 
-  label: {
-    fontSize: 22,
+  cardTitle: {
+    fontSize: 18,
+    color: "#666",
+  },
+
+  sales: {
+    fontSize: 38,
+    fontWeight: "bold",
+    color: "green",
+    marginTop: 10,
+  },
+
+  expense: {
+    fontSize: 38,
+    fontWeight: "bold",
+    color: "red",
+    marginTop: 10,
+  },
+
+  profit: {
+    fontSize: 38,
     fontWeight: "bold",
     color: "#00154f",
+    marginTop: 10,
+  },
+
+  inventory: {
+    fontSize: 38,
+    fontWeight: "bold",
+    color: "orange",
+    marginTop: 10,
+  },
+
+  summaryBox: {
+    backgroundColor: "#fff",
+    margin: 16,
+    padding: 24,
+    borderRadius: 22,
+    marginBottom: 100,
+  },
+
+  summaryTitle: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#00154f",
+    marginBottom: 16,
+  },
+
+  summaryText: {
+    fontSize: 16,
+    color: "#555",
+    lineHeight: 26,
     marginBottom: 12,
-  },
-
-  green: {
-    color: "green",
-    fontSize: 34,
-    fontWeight: "bold",
-  },
-
-  red: {
-    color: "red",
-    fontSize: 34,
-    fontWeight: "bold",
-  },
-
-  blue: {
-    color: "#0057ff",
-    fontSize: 34,
-    fontWeight: "bold",
   },
 
 });

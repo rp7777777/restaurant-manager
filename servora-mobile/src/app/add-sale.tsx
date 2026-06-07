@@ -1,3 +1,5 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
   useState,
 } from "react";
@@ -6,110 +8,124 @@ import {
   View,
   Text,
   StyleSheet,
+  ScrollView,
   TextInput,
   TouchableOpacity,
-  ScrollView,
   Alert,
 } from "react-native";
 
-import {
-  addDoc,
-  collection,
-} from "firebase/firestore";
+import { router } from "expo-router";
 
 import {
-  db,
-} from "../firebase";
-
-const kitchens = [
-
-  "Main Kitchen",
-  "Bar",
-  "Bakery",
-  "Pizza",
-  "Sushi",
-  "Grill",
-  "Coffee",
-  "Dessert",
-
-];
-
-const paymentMethods = [
-
-  "Cash",
-  "Card",
-  "Online",
-];
+  createSale,
+} from "./services/sales-service";
 
 export default function AddSaleScreen() {
 
-  const [kitchen, setKitchen] =
-    useState("Main Kitchen");
+  const [date] =
+    useState(
+      new Date()
+        .toISOString()
+        .split("T")[0]
+    );
 
-  const [paymentMethod, setPaymentMethod] =
+  const [morningSale,
+    setMorningSale] =
+    useState("");
+
+  const [afternoonSale,
+    setAfternoonSale] =
+    useState("");
+
+  const [nightSale,
+    setNightSale] =
+    useState("");
+
+  const [paymentMethod,
+    setPaymentMethod] =
     useState("Cash");
 
-  const [amount, setAmount] =
+  const [note,
+    setNote] =
     useState("");
 
-  const [notes, setNotes] =
-    useState("");
+  const totalSale =
 
-  const [loading, setLoading] =
-    useState(false);
+    Number(
+      morningSale || 0
+    ) +
 
-  const saveSale =
+    Number(
+      afternoonSale || 0
+    ) +
+
+    Number(
+      nightSale || 0
+    );
+
+  const saveDailySale =
     async () => {
-
-      if (!amount) {
-
-        Alert.alert(
-          "Error",
-          "Enter sales amount"
-        );
-
-        return;
-
-      }
 
       try {
 
-        setLoading(true);
+        if (
+          totalSale <= 0
+        ) {
 
-        await addDoc(
-          collection(
-            db,
-            "sales"
-          ),
-          {
-            kitchen,
-            paymentMethod,
-            amount:
-              Number(amount),
-            notes,
-            createdAt:
-              new Date(),
-          }
-        );
+          Alert.alert(
+            "Error",
+            "Enter sales amount"
+          );
+
+          return;
+
+        }
+
+        await createSale({
+          date,
+
+          morningSale:
+            Number(
+              morningSale || 0
+            ),
+
+          afternoonSale:
+            Number(
+              afternoonSale || 0
+            ),
+
+          nightSale:
+            Number(
+              nightSale || 0
+            ),
+
+          totalSale,
+
+          paymentMethod,
+
+          note,
+        });
 
         Alert.alert(
           "Success",
-          "Sale Added Successfully"
+          "Daily Sales Saved"
         );
 
-        setAmount("");
-        setNotes("");
+        router.push(
+          "/sales" as any
+        );
 
       } catch (error: any) {
 
-        Alert.alert(
-          "Error",
-          error.message
+        console.log(
+          "SALE ERROR",
+          error
         );
 
-      } finally {
-
-        setLoading(false);
+        Alert.alert(
+          "Error",
+          String(error)
+        );
 
       }
 
@@ -117,246 +133,306 @@ export default function AddSaleScreen() {
 
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        style={styles.container}
+      >
 
-        <Text style={styles.logo}>
-          DAILY SALES
-        </Text>
-
-        <Text style={styles.subtitle}>
-          Global Restaurant ERP
-        </Text>
-
-      </View>
-
-      <View style={styles.form}>
-
-        <Text style={styles.label}>
-          Select Kitchen
-        </Text>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={
-            false
-          }
-          style={styles.row}
+        <View
+          style={styles.header}
         >
 
-          {kitchens.map((item) => (
+          <Text
+            style={styles.logo}
+          >
+            DAILY SALES
+          </Text>
 
-            <TouchableOpacity
-              key={item}
-              style={[
-                styles.optionButton,
-
-                kitchen === item &&
-                styles.activeButton,
-              ]}
-              onPress={() =>
-                setKitchen(item)
-              }
-            >
-
-              <Text style={styles.optionText}>
-                {item}
-              </Text>
-
-            </TouchableOpacity>
-
-          ))}
-
-        </ScrollView>
-
-        <Text style={styles.label}>
-          Payment Method
-        </Text>
-
-        <View style={styles.paymentRow}>
-
-          {paymentMethods.map(
-            (item) => (
-
-              <TouchableOpacity
-                key={item}
-                style={[
-                  styles.paymentButton,
-
-                  paymentMethod === item &&
-                  styles.activeButton,
-                ]}
-                onPress={() =>
-                  setPaymentMethod(
-                    item
-                  )
-                }
-              >
-
-                <Text
-                  style={
-                    styles.optionText
-                  }
-                >
-                  {item}
-                </Text>
-
-              </TouchableOpacity>
-
-            )
-          )}
+          <Text
+            style={styles.subtitle}
+          >
+            Shift Sales Entry
+          </Text>
 
         </View>
 
-        <Text style={styles.label}>
-          Total Sales Amount
-        </Text>
-
-        <TextInput
-          style={styles.input}
-          placeholder="€ 0"
-          keyboardType="numeric"
-          value={amount}
-          onChangeText={setAmount}
-        />
-
-        <Text style={styles.label}>
-          Notes
-        </Text>
-
-        <TextInput
-          style={styles.notesInput}
-          placeholder="Daily sales notes..."
-          multiline
-          value={notes}
-          onChangeText={setNotes}
-        />
-
-        <TouchableOpacity
-          style={styles.saveButton}
-          onPress={saveSale}
+        <View
+          style={styles.form}
         >
 
-          <Text style={styles.saveText}>
-            {loading
-              ? "Saving..."
-              : "SAVE SALE"}
+          <Text
+            style={styles.date}
+          >
+            Date: {date}
           </Text>
 
-        </TouchableOpacity>
+          <TextInput
+            style={styles.input}
+            placeholder="Morning Sale (€)"
+            keyboardType="numeric"
+            value={morningSale}
+            onChangeText={
+              setMorningSale
+            }
+          />
 
-      </View>
+          <TextInput
+            style={styles.input}
+            placeholder="Afternoon Sale (€)"
+            keyboardType="numeric"
+            value={afternoonSale}
+            onChangeText={
+              setAfternoonSale
+            }
+          />
 
-    </ScrollView>
+          <TextInput
+            style={styles.input}
+            placeholder="Night Sale (€)"
+            keyboardType="numeric"
+            value={nightSale}
+            onChangeText={
+              setNightSale
+            }
+          />
+
+          <Text
+            style={styles.label}
+          >
+            Payment Method
+          </Text>
+
+          <View
+            style={styles.paymentRow}
+          >
+
+            {[
+              "Cash",
+              "Card",
+              "MBWay",
+              "Other",
+            ].map(
+              (
+                item
+              ) => (
+
+                <TouchableOpacity
+                  key={item}
+                  style={[
+                    styles.paymentButton,
+
+                    paymentMethod ===
+                      item &&
+                      styles.activePayment,
+                  ]}
+                  onPress={() =>
+                    setPaymentMethod(
+                      item
+                    )
+                  }
+                >
+
+                  <Text
+                    style={[
+                      styles.paymentText,
+
+                      paymentMethod ===
+                        item &&
+                        styles.activePaymentText,
+                    ]}
+                  >
+                    {item}
+                  </Text>
+
+                </TouchableOpacity>
+
+              )
+            )}
+
+          </View>
+
+          <TextInput
+            style={[
+              styles.input,
+              styles.noteInput,
+            ]}
+            placeholder="Notes"
+            value={note}
+            onChangeText={
+              setNote
+            }
+            multiline
+          />
+
+          <View
+            style={styles.totalBox}
+          >
+
+            <Text
+              style={styles.totalLabel}
+            >
+              Total Sale
+            </Text>
+
+            <Text
+              style={styles.totalValue}
+            >
+              €{totalSale}
+            </Text>
+
+          </View>
+
+          <TouchableOpacity
+            style={styles.button}
+            onPress={
+              saveDailySale
+            }
+          >
+
+            <Text
+              style={styles.buttonText}
+            >
+              SAVE SALES
+            </Text>
+
+          </TouchableOpacity>
+
+        </View>
+
+      </ScrollView>
+
+    </AuthGuard>
 
   );
 
 }
 
-const styles = StyleSheet.create({
+const styles =
+  StyleSheet.create({
 
-  container: {
-    flex: 1,
-    backgroundColor: "#f4f7fb",
-  },
+    container: {
+      flex: 1,
+      backgroundColor:
+        "#eef2f7",
+    },
 
-  header: {
-    backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
-  },
+    header: {
+      backgroundColor:
+        "#00154f",
+      padding: 25,
+      borderBottomLeftRadius: 30,
+      borderBottomRightRadius: 30,
+    },
 
-  logo: {
-    color: "gold",
-    fontSize: 38,
-    fontWeight: "bold",
-    marginTop: 25,
-  },
+    logo: {
+      color: "gold",
+      fontSize: 32,
+      fontWeight: "bold",
+      marginTop: 25,
+    },
 
-  subtitle: {
-    color: "white",
-    fontSize: 18,
-    marginTop: 10,
-  },
+    subtitle: {
+      color: "#fff",
+      marginTop: 8,
+      fontSize: 16,
+    },
 
-  form: {
-    padding: 20,
-  },
+    form: {
+      padding: 20,
+    },
 
-  label: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginBottom: 12,
-    marginTop: 20,
-  },
+    date: {
+      fontSize: 18,
+      fontWeight: "bold",
+      color: "#00154f",
+      marginBottom: 20,
+    },
 
-  row: {
-    marginBottom: 10,
-  },
+    label: {
+      fontSize: 16,
+      fontWeight: "bold",
+      marginBottom: 10,
+      color: "#00154f",
+    },
 
-  paymentRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
+    input: {
+      backgroundColor:
+        "#fff",
+      padding: 18,
+      borderRadius: 15,
+      marginBottom: 15,
+      fontSize: 16,
+    },
 
-  optionButton: {
-    backgroundColor: "#dbe4ff",
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    borderRadius: 18,
-    marginRight: 10,
-  },
+    noteInput: {
+      height: 100,
+      textAlignVertical:
+        "top",
+    },
 
-  paymentButton: {
-    backgroundColor: "#dbe4ff",
-    padding: 16,
-    borderRadius: 18,
-    width: "31%",
-    alignItems: "center",
-  },
+    paymentRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      marginBottom: 15,
+    },
 
-  activeButton: {
-    backgroundColor: "#00154f",
-  },
+    paymentButton: {
+      backgroundColor:
+        "#fff",
+      paddingHorizontal: 15,
+      paddingVertical: 10,
+      borderRadius: 10,
+      marginRight: 10,
+      marginBottom: 10,
+    },
 
-  optionText: {
-    color: "black",
-    fontWeight: "bold",
-  },
+    activePayment: {
+      backgroundColor:
+        "#00154f",
+    },
 
-  input: {
-    backgroundColor: "white",
-    padding: 20,
-    borderRadius: 18,
-    fontSize: 20,
-  },
+    paymentText: {
+      color: "#00154f",
+      fontWeight: "600",
+    },
 
-  notesInput: {
-    backgroundColor: "white",
-    padding: 20,
-    borderRadius: 18,
-    height: 140,
-    textAlignVertical: "top",
-    fontSize: 18,
-  },
+    activePaymentText: {
+      color: "#fff",
+    },
 
-  saveButton: {
-    backgroundColor: "#00154f",
-    padding: 24,
-    borderRadius: 20,
-    alignItems: "center",
-    marginTop: 40,
-    marginBottom: 60,
-  },
+    totalBox: {
+      backgroundColor:
+        "#fff",
+      padding: 20,
+      borderRadius: 15,
+      marginBottom: 20,
+    },
 
-  saveText: {
-    color: "white",
-    fontSize: 22,
-    fontWeight: "bold",
-  },
+    totalLabel: {
+      fontSize: 16,
+      color: "#666",
+    },
 
-});
+    totalValue: {
+      fontSize: 32,
+      fontWeight: "bold",
+      color: "green",
+      marginTop: 10,
+    },
 
+    button: {
+      backgroundColor:
+        "#00154f",
+      padding: 18,
+      borderRadius: 15,
+      alignItems: "center",
+    },
+
+    buttonText: {
+      color: "#fff",
+      fontSize: 18,
+      fontWeight: "bold",
+    },
+
+  });

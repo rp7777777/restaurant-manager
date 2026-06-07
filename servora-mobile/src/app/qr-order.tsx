@@ -1,3 +1,5 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
   useState,
 } from "react";
@@ -7,587 +9,264 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TouchableOpacity,
   TextInput,
+  TouchableOpacity,
   Alert,
 } from "react-native";
 
-import {
-  addDoc,
-  collection,
-} from "firebase/firestore";
+export default function QrOrderScreen() {
 
-import {
-  db,
-} from "../firebase";
-
-const tables = [
-
-  "Table 1",
-  "Table 2",
-  "Table 3",
-  "Table 4",
-  "Table 5",
-  "Table 6",
-
-];
-
-const menuItems = [
-
-  {
-    id: 1,
-    name: "Salmon Sushi",
-    price: 24,
-  },
-
-  {
-    id: 2,
-    name: "Pepperoni Pizza",
-    price: 18,
-  },
-
-  {
-    id: 3,
-    name: "Chicken Burger",
-    price: 14,
-  },
-
-  {
-    id: 4,
-    name: "Fresh Beer",
-    price: 8,
-  },
-
-  {
-    id: 5,
-    name: "Latte Coffee",
-    price: 5,
-  },
-
-];
-
-export default function QROrderScreen() {
-
-  const [selectedTable,
-    setSelectedTable] =
-      useState("Table 1");
+  const [tableNumber,
+    setTableNumber] =
+      useState("");
 
   const [customerName,
     setCustomerName] =
       useState("");
 
-  const [notes,
-    setNotes] =
+  const [orderItems,
+    setOrderItems] =
       useState("");
 
-  const [cart,
-    setCart] =
+  const [orders,
+    setOrders] =
       useState<any[]>([]);
 
-  const addToCart =
-    (item: any) => {
-
-      const existing =
-        cart.find(
-          (cartItem) =>
-            cartItem.id === item.id
-        );
-
-      if (existing) {
-
-        const updated =
-          cart.map((cartItem) => {
-
-            if (
-              cartItem.id === item.id
-            ) {
-
-              return {
-                ...cartItem,
-                quantity:
-                  cartItem.quantity + 1,
-              };
-
-            }
-
-            return cartItem;
-
-          });
-
-        setCart(updated);
-
-      } else {
-
-        setCart([
-          ...cart,
-          {
-            ...item,
-            quantity: 1,
-          },
-        ]);
-
-      }
-
-    };
-
-  const removeItem =
-    (id: number) => {
-
-      const updated =
-        cart.filter(
-          (item) =>
-            item.id !== id
-        );
-
-      setCart(updated);
-
-    };
-
-  const getTotal =
+  const createOrder =
     () => {
 
-      return cart.reduce(
-        (
-          total,
-          item
-        ) =>
-
-          total +
-          item.price *
-            item.quantity,
-
-        0
-      );
-
-    };
-
-  const placeOrder =
-    async () => {
-
       if (
-        cart.length === 0
+        !tableNumber ||
+        !customerName ||
+        !orderItems
       ) {
 
         Alert.alert(
           "Error",
-          "Cart is empty"
+          "Fill all fields"
         );
 
         return;
 
       }
 
-      try {
+      const newOrder = {
 
-        await addDoc(
-          collection(
-            db,
-            "orders"
-          ),
-          {
-            tableNumber:
-              selectedTable,
+        id:
+          Date.now(),
 
-            customerName,
+        tableNumber,
 
-            notes,
+        customerName,
 
-            items: cart,
+        orderItems,
 
-            total:
-              getTotal(),
+      };
 
-            source:
-              "QR_ORDER",
+      setOrders([
+        newOrder,
+        ...orders,
+      ]);
 
-            status:
-              "PREPARING",
+      setTableNumber("");
+      setCustomerName("");
+      setOrderItems("");
 
-            createdAt:
-              new Date(),
-          }
-        );
-
-        Alert.alert(
-          "Success",
-          "QR Order Sent To Kitchen"
-        );
-
-        setCart([]);
-        setCustomerName("");
-        setNotes("");
-
-      } catch (error: any) {
-
-        Alert.alert(
-          "Error",
-          error.message
-        );
-
-      }
+      Alert.alert(
+        "Success",
+        "QR Order Created"
+      );
 
     };
 
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        style={styles.container}
+      >
 
-        <Text style={styles.logo}>
-          QR ORDER
-        </Text>
+        <View style={styles.header}>
 
-        <Text style={styles.subtitle}>
-          Scan & Order System
-        </Text>
+          <Text style={styles.logo}>
+            QR ORDER
+          </Text>
 
-      </View>
+          <Text style={styles.subtitle}>
+            QR Table Ordering System
+          </Text>
 
-      <View style={styles.form}>
+        </View>
 
-        <Text style={styles.label}>
-          Select Table
-        </Text>
+        <View style={styles.form}>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={
-            false
-          }
-          style={styles.tableRow}
-        >
+          <TextInput
+            style={styles.input}
+            placeholder="Table Number"
+            value={tableNumber}
+            onChangeText={
+              setTableNumber
+            }
+          />
 
-          {tables.map((item) => (
+          <TextInput
+            style={styles.input}
+            placeholder="Customer Name"
+            value={customerName}
+            onChangeText={
+              setCustomerName
+            }
+          />
 
-            <TouchableOpacity
-              key={item}
-              style={[
-
-                styles.tableButton,
-
-                selectedTable ===
-                  item &&
-                styles.activeTable,
-
-              ]}
-              onPress={() =>
-                setSelectedTable(
-                  item
-                )
-              }
-            >
-
-              <Text style={styles.tableText}>
-                {item}
-              </Text>
-
-            </TouchableOpacity>
-
-          ))}
-
-        </ScrollView>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Customer Name"
-          value={customerName}
-          onChangeText={
-            setCustomerName
-          }
-        />
-
-      </View>
-
-      <Text style={styles.sectionTitle}>
-        MENU
-      </Text>
-
-      <View style={styles.menuGrid}>
-
-        {menuItems.map((item) => (
+          <TextInput
+            style={styles.input}
+            placeholder="Order Items"
+            value={orderItems}
+            onChangeText={
+              setOrderItems
+            }
+          />
 
           <TouchableOpacity
-            key={item.id}
-            style={styles.menuCard}
-            onPress={() =>
-              addToCart(item)
-            }
+            style={styles.button}
+            onPress={createOrder}
           >
 
-            <Text style={styles.menuName}>
-              {item.name}
-            </Text>
-
-            <Text style={styles.price}>
-              €{item.price}
+            <Text style={styles.buttonText}>
+              CREATE ORDER
             </Text>
 
           </TouchableOpacity>
 
-        ))}
+        </View>
 
-      </View>
+        <View style={styles.listContainer}>
 
-      <Text style={styles.sectionTitle}>
-        CART
-      </Text>
+          {orders.map(
+            (
+              item
+            ) => (
 
-      <View style={styles.cartBox}>
-
-        {cart.map((item) => (
-
-          <View
-            key={item.id}
-            style={styles.cartItem}
-          >
-
-            <View>
-
-              <Text style={styles.cartName}>
-                {item.name}
-              </Text>
-
-              <Text style={styles.cartInfo}>
-                Qty:
-                {" "}
-                {item.quantity}
-              </Text>
-
-            </View>
-
-            <View>
-
-              <Text style={styles.cartPrice}>
-                €
-                {item.price *
-                  item.quantity}
-              </Text>
-
-              <TouchableOpacity
-                onPress={() =>
-                  removeItem(
-                    item.id
-                  )
-                }
+              <View
+                key={item.id}
+                style={styles.card}
               >
 
-                <Text style={styles.remove}>
-                  REMOVE
+                <Text style={styles.table}>
+                  Table:
+                  {" "}
+                  {item.tableNumber}
                 </Text>
 
-              </TouchableOpacity>
+                <Text style={styles.info}>
+                  Customer:
+                  {" "}
+                  {item.customerName}
+                </Text>
 
-            </View>
+                <Text style={styles.info}>
+                  Items:
+                  {" "}
+                  {item.orderItems}
+                </Text>
 
-          </View>
+              </View>
 
-        ))}
+            )
+          )}
 
-        <Text style={styles.total}>
-          TOTAL:
-          €{getTotal()}
-        </Text>
+        </View>
 
-        <TextInput
-          style={styles.notesInput}
-          placeholder="Special Notes..."
-          value={notes}
-          onChangeText={setNotes}
-          multiline
-        />
+      </ScrollView>
 
-        <TouchableOpacity
-          style={styles.orderButton}
-          onPress={placeOrder}
-        >
-
-          <Text style={styles.orderText}>
-            PLACE QR ORDER
-          </Text>
-
-        </TouchableOpacity>
-
-      </View>
-
-    </ScrollView>
+    </AuthGuard>
 
   );
 
 }
 
-const styles = StyleSheet.create({
+const styles =
+  StyleSheet.create({
 
-  container: {
-    flex: 1,
-    backgroundColor: "#f4f7fb",
-  },
+    container: {
+      flex: 1,
+      backgroundColor:
+        "#eef2f7",
+    },
 
-  header: {
-    backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
-  },
+    header: {
+      backgroundColor:
+        "#00154f",
+      padding: 35,
+      borderBottomLeftRadius: 35,
+      borderBottomRightRadius: 35,
+    },
 
-  logo: {
-    color: "gold",
-    fontSize: 40,
-    fontWeight: "bold",
-    marginTop: 25,
-  },
+    logo: {
+      color: "gold",
+      fontSize: 36,
+      fontWeight: "bold",
+      marginTop: 25,
+    },
 
-  subtitle: {
-    color: "white",
-    fontSize: 18,
-    marginTop: 10,
-  },
+    subtitle: {
+      color: "white",
+      fontSize: 18,
+      marginTop: 10,
+    },
 
-  form: {
-    padding: 20,
-  },
+    form: {
+      padding: 20,
+    },
 
-  label: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginBottom: 14,
-  },
+    input: {
+      backgroundColor:
+        "white",
+      padding: 18,
+      borderRadius: 18,
+      marginBottom: 18,
+      fontSize: 18,
+    },
 
-  tableRow: {
-    marginBottom: 22,
-  },
+    button: {
+      backgroundColor:
+        "#00154f",
+      padding: 22,
+      borderRadius: 18,
+      alignItems: "center",
+    },
 
-  tableButton: {
-    backgroundColor: "#dbe4ff",
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    borderRadius: 18,
-    marginRight: 12,
-  },
+    buttonText: {
+      color: "white",
+      fontSize: 18,
+      fontWeight: "bold",
+    },
 
-  activeTable: {
-    backgroundColor: "#00154f",
-  },
+    listContainer: {
+      padding: 20,
+      paddingBottom: 100,
+    },
 
-  tableText: {
-    color: "black",
-    fontWeight: "bold",
-  },
+    card: {
+      backgroundColor:
+        "white",
+      padding: 24,
+      borderRadius: 24,
+      marginBottom: 20,
+    },
 
-  input: {
-    backgroundColor: "white",
-    padding: 20,
-    borderRadius: 18,
-    fontSize: 18,
-  },
+    table: {
+      fontSize: 24,
+      fontWeight: "bold",
+      color: "#00154f",
+    },
 
-  sectionTitle: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginHorizontal: 20,
-    marginBottom: 20,
-  },
+    info: {
+      fontSize: 18,
+      marginTop: 12,
+      color: "#444",
+    },
 
-  menuGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-  },
-
-  menuCard: {
-    backgroundColor: "white",
-    width: "48%",
-    padding: 24,
-    borderRadius: 22,
-    marginBottom: 20,
-  },
-
-  menuName: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#00154f",
-  },
-
-  price: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "green",
-    marginTop: 18,
-  },
-
-  cartBox: {
-    backgroundColor: "white",
-    margin: 20,
-    padding: 24,
-    borderRadius: 24,
-    marginBottom: 80,
-  },
-
-  cartItem: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    borderBottomWidth: 1,
-    borderColor: "#ddd",
-    paddingVertical: 16,
-  },
-
-  cartName: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#00154f",
-  },
-
-  cartInfo: {
-    fontSize: 16,
-    marginTop: 6,
-    color: "#555",
-  },
-
-  cartPrice: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "green",
-  },
-
-  remove: {
-    color: "red",
-    marginTop: 8,
-    fontWeight: "bold",
-  },
-
-  total: {
-    fontSize: 30,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginTop: 24,
-  },
-
-  notesInput: {
-    backgroundColor: "#f4f4f4",
-    padding: 20,
-    borderRadius: 18,
-    marginTop: 24,
-    height: 120,
-    textAlignVertical: "top",
-    fontSize: 17,
-  },
-
-  orderButton: {
-    backgroundColor: "#00154f",
-    padding: 24,
-    borderRadius: 22,
-    alignItems: "center",
-    marginTop: 30,
-  },
-
-  orderText: {
-    color: "white",
-    fontSize: 22,
-    fontWeight: "bold",
-  },
-
-});
+  });
 

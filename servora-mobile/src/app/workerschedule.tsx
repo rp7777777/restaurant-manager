@@ -1,3 +1,5 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
   useEffect,
   useState,
@@ -8,323 +10,296 @@ import {
   Text,
   StyleSheet,
   ScrollView,
+  TextInput,
   TouchableOpacity,
   Alert,
 } from "react-native";
 
 import {
-  addDoc,
   collection,
+  addDoc,
   getDocs,
 } from "firebase/firestore";
 
 import {
   db,
+  auth,
 } from "../firebase";
-
-const weekDays = [
-
-  "Mon",
-  "Tue",
-  "Wed",
-  "Thu",
-  "Fri",
-  "Sat",
-  "Sun",
-
-];
-
-const shifts = [
-
-  "07:00-15:00",
-  "08:00-16:00",
-  "15:00-23:00",
-  "16:00-00:00",
-  "23:00-07:00",
-  "OFF",
-  "ABSENT",
-
-];
 
 export default function ScheduleScreen() {
 
-  const [workers, setWorkers] =
-    useState<any[]>([]);
+  const [employeeName,
+    setEmployeeName] =
+      useState("");
 
-  const [schedule, setSchedule] =
-    useState<any>({});
+  const [position,
+    setPosition] =
+      useState("");
 
-  const getWorkers =
+  const [workDate,
+    setWorkDate] =
+      useState("");
+
+  const [startTime,
+    setStartTime] =
+      useState("");
+
+  const [endTime,
+    setEndTime] =
+      useState("");
+
+  const [schedule,
+    setSchedule] =
+      useState<any[]>([]);
+
+  useEffect(() => {
+
+    loadSchedule();
+
+  }, []);
+
+  const loadSchedule =
     async () => {
 
-      try {
+      const user =
+        auth.currentUser;
 
-        const snapshot =
-          await getDocs(
-            collection(
-              db,
-              "workers"
-            )
-          );
+      if (!user) return;
 
-        const data: any[] = [];
-
-        snapshot.forEach(
-          (docItem) => {
-
-            data.push({
-              id: docItem.id,
-              ...(docItem.data() as any),
-            });
-
-          }
+      const snapshot =
+        await getDocs(
+          collection(
+            db,
+            "schedule"
+          )
         );
 
-        setWorkers(data);
+      const data:
+        any[] = [];
 
-      } catch (error) {
+      snapshot.forEach(
+        (document) => {
 
-        console.log(error);
+          const item =
+            document.data();
 
-      }
+          if (
+            item.userId ===
+            user.uid
+          ) {
 
-    };
+            data.push(item);
 
-  const updateShift =
-    (
-      workerId: string,
-      day: string,
-      shift: string
-    ) => {
+          }
 
-      setSchedule(
-        (prev: any) => ({
-
-          ...prev,
-
-          [workerId]: {
-
-            ...prev[workerId],
-
-            [day]: shift,
-
-          },
-
-        })
+        }
       );
+
+      setSchedule(data);
 
     };
 
   const saveSchedule =
     async () => {
 
-      try {
+      const user =
+        auth.currentUser;
 
-        await addDoc(
-          collection(
-            db,
-            "schedules"
-          ),
-          {
-            week:
-              new Date()
-                .toLocaleDateString(),
+      if (!user) return;
 
-            schedule,
-
-            createdAt:
-              new Date(),
-          }
-        );
-
-        Alert.alert(
-          "Success",
-          "Weekly Schedule Saved"
-        );
-
-      } catch (error: any) {
+      if (
+        !employeeName ||
+        !workDate ||
+        !startTime ||
+        !endTime
+      ) {
 
         Alert.alert(
           "Error",
-          error.message
+          "Fill all fields"
         );
+
+        return;
 
       }
 
+      await addDoc(
+
+        collection(
+          db,
+          "schedule"
+        ),
+
+        {
+
+          userId:
+            user.uid,
+
+          employeeName,
+
+          position,
+
+          workDate,
+
+          startTime,
+
+          endTime,
+
+          createdAt:
+            new Date(),
+
+        }
+
+      );
+
+      Alert.alert(
+        "Success",
+        "Schedule Saved"
+      );
+
+      setEmployeeName("");
+      setPosition("");
+      setWorkDate("");
+      setStartTime("");
+      setEndTime("");
+
+      loadSchedule();
+
     };
-
-  useEffect(() => {
-
-    getWorkers();
-
-  }, []);
 
   return (
 
-    <ScrollView
-      horizontal
-      style={styles.container}
-    >
+    <AuthGuard>
 
-      <View>
+      <ScrollView
+        style={styles.container}
+      >
 
         <View style={styles.header}>
 
           <Text style={styles.logo}>
-            WEEKLY SCHEDULE
+            Schedule
           </Text>
 
           <Text style={styles.subtitle}>
-            Global Restaurant ERP
+            Staff Duty Management
           </Text>
 
         </View>
 
-        <ScrollView>
+        <View style={styles.form}>
 
-          <View style={styles.table}>
+          <TextInput
+            style={styles.input}
+            placeholder="Employee Name"
+            value={employeeName}
+            onChangeText={
+              setEmployeeName
+            }
+          />
 
-            <View style={styles.tableHeader}>
+          <TextInput
+            style={styles.input}
+            placeholder="Position"
+            value={position}
+            onChangeText={
+              setPosition
+            }
+          />
 
-              <Text style={styles.headerCell}>
-                ID
-              </Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Work Date"
+            value={workDate}
+            onChangeText={
+              setWorkDate
+            }
+          />
 
-              <Text style={styles.headerCell}>
-                Name
-              </Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Start Time"
+            value={startTime}
+            onChangeText={
+              setStartTime
+            }
+          />
 
-              <Text style={styles.headerCell}>
-                Position
-              </Text>
-
-              {weekDays.map((day) => (
-
-                <Text
-                  key={day}
-                  style={
-                    styles.headerCell
-                  }
-                >
-                  {day}
-                </Text>
-
-              ))}
-
-            </View>
-
-            {workers.map((worker) => (
-
-              <View
-                key={worker.id}
-                style={styles.row}
-              >
-
-                <Text style={styles.cell}>
-                  {worker.serialNumber}
-                </Text>
-
-                <Text style={styles.cell}>
-                  {worker.name}
-                </Text>
-
-                <Text style={styles.cell}>
-                  {worker.position}
-                </Text>
-
-                {weekDays.map((day) => {
-
-                  const shift =
-                    schedule[
-                      worker.id
-                    ]?.[day] ||
-                    "";
-
-                  const isOff =
-                    shift ===
-                    "OFF";
-
-                  const isAbsent =
-                    shift ===
-                    "ABSENT";
-
-                  return (
-
-                    <ScrollView
-                      horizontal
-                      key={day}
-                    >
-
-                      {shifts.map(
-                        (item) => (
-
-                          <TouchableOpacity
-                            key={item}
-                            style={[
-
-                              styles.shiftButton,
-
-                              shift ===
-                                item &&
-                              styles.activeShift,
-
-                              isOff &&
-                              styles.offShift,
-
-                              isAbsent &&
-                              styles.absentShift,
-
-                            ]}
-                            onPress={() =>
-                              updateShift(
-                                worker.id,
-                                day,
-                                item
-                              )
-                            }
-                          >
-
-                            <Text
-                              style={
-                                styles.shiftText
-                              }
-                            >
-                              {item}
-                            </Text>
-
-                          </TouchableOpacity>
-
-                        )
-                      )}
-
-                    </ScrollView>
-
-                  );
-
-                })}
-
-              </View>
-
-            ))}
-
-          </View>
+          <TextInput
+            style={styles.input}
+            placeholder="End Time"
+            value={endTime}
+            onChangeText={
+              setEndTime
+            }
+          />
 
           <TouchableOpacity
-            style={styles.saveButton}
-            onPress={saveSchedule}
+            style={styles.button}
+            onPress={
+              saveSchedule
+            }
           >
 
-            <Text style={styles.saveText}>
-              SAVE WEEKLY SCHEDULE
+            <Text style={styles.buttonText}>
+              SAVE SCHEDULE
             </Text>
 
           </TouchableOpacity>
 
-        </ScrollView>
+        </View>
 
-      </View>
+        <View style={styles.scheduleContainer}>
 
-    </ScrollView>
+          <Text style={styles.sectionTitle}>
+            Staff Schedule
+          </Text>
+
+          {schedule.map(
+            (
+              item,
+              index
+            ) => (
+
+              <View
+                key={index}
+                style={styles.scheduleCard}
+              >
+
+                <Text style={styles.employee}>
+                  {item.employeeName}
+                </Text>
+
+                <Text style={styles.info}>
+                  Position:
+                  {" "}
+                  {item.position}
+                </Text>
+
+                <Text style={styles.info}>
+                  Date:
+                  {" "}
+                  {item.workDate}
+                </Text>
+
+                <Text style={styles.info}>
+                  Shift:
+                  {" "}
+                  {item.startTime}
+                  {" - "}
+                  {item.endTime}
+                </Text>
+
+              </View>
+
+            )
+          )}
+
+        </View>
+
+      </ScrollView>
+
+    </AuthGuard>
 
   );
 
@@ -334,94 +309,83 @@ const styles = StyleSheet.create({
 
   container: {
     flex: 1,
-    backgroundColor: "#f4f7fb",
+    backgroundColor: "#eef2f7",
   },
 
   header: {
     backgroundColor: "#00154f",
-    padding: 30,
+    padding: 28,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
   },
 
   logo: {
-    color: "gold",
     fontSize: 34,
     fontWeight: "bold",
+    color: "gold",
     marginTop: 20,
   },
 
   subtitle: {
-    color: "white",
-    fontSize: 18,
-    marginTop: 8,
+    color: "#fff",
+    marginTop: 10,
+    fontSize: 16,
   },
 
-  table: {
+  form: {
+    padding: 16,
+  },
+
+  input: {
+    backgroundColor: "#fff",
+    padding: 18,
+    borderRadius: 18,
+    marginBottom: 16,
+    fontSize: 16,
+  },
+
+  button: {
+    backgroundColor: "#00154f",
     padding: 20,
-  },
-
-  tableHeader: {
-    flexDirection: "row",
-    backgroundColor: "#00154f",
-  },
-
-  headerCell: {
-    color: "white",
-    fontWeight: "bold",
-    width: 120,
-    padding: 14,
-    textAlign: "center",
-  },
-
-  row: {
-    flexDirection: "row",
-    borderBottomWidth: 1,
-    borderColor: "#ddd",
-  },
-
-  cell: {
-    width: 120,
-    padding: 14,
-    textAlign: "center",
-    backgroundColor: "white",
-  },
-
-  shiftButton: {
-    backgroundColor: "#dbe4ff",
-    padding: 10,
-    margin: 4,
-    borderRadius: 10,
-  },
-
-  activeShift: {
-    backgroundColor: "#00154f",
-  },
-
-  offShift: {
-    backgroundColor: "yellow",
-  },
-
-  absentShift: {
-    backgroundColor: "red",
-  },
-
-  shiftText: {
-    color: "black",
-    fontWeight: "bold",
-    fontSize: 12,
-  },
-
-  saveButton: {
-    backgroundColor: "#00154f",
-    margin: 20,
-    padding: 24,
-    borderRadius: 20,
+    borderRadius: 18,
     alignItems: "center",
   },
 
-  saveText: {
-    color: "white",
+  buttonText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "bold",
+  },
+
+  scheduleContainer: {
+    padding: 16,
+    paddingBottom: 100,
+  },
+
+  sectionTitle: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#00154f",
+    marginBottom: 20,
+  },
+
+  scheduleCard: {
+    backgroundColor: "#fff",
+    padding: 20,
+    borderRadius: 20,
+    marginBottom: 14,
+  },
+
+  employee: {
     fontSize: 22,
     fontWeight: "bold",
+    color: "#00154f",
+  },
+
+  info: {
+    fontSize: 16,
+    color: "#555",
+    marginTop: 8,
   },
 
 });

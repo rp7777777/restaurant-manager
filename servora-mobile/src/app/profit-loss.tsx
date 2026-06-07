@@ -1,3 +1,5 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
   useEffect,
   useState,
@@ -8,133 +10,335 @@ import {
   Text,
   StyleSheet,
   ScrollView,
+  TextInput,
+  TouchableOpacity,
+  Alert,
 } from "react-native";
 
 import {
   collection,
+  addDoc,
   getDocs,
 } from "firebase/firestore";
 
-import { db } from "../firebase";
+import {
+  db,
+  auth,
+} from "../firebase";
 
 export default function ProfitLossScreen() {
 
-  const [totalSales, setTotalSales] =
-    useState(0);
+  const [revenue,
+    setRevenue] =
+      useState("");
 
-  const [totalExpenses, setTotalExpenses] =
-    useState(0);
+  const [expense,
+    setExpense] =
+      useState("");
 
-  const [profit, setProfit] =
-    useState(0);
+  const [note,
+    setNote] =
+      useState("");
 
-  const getData = async () => {
-
-    try {
-
-      const salesSnapshot = await getDocs(
-        collection(db, "sales")
-      );
-
-      let salesTotal = 0;
-
-      salesSnapshot.forEach((doc) => {
-
-        const data: any = doc.data();
-
-        salesTotal += Number(data.amount);
-
-      });
-
-      const expensesSnapshot = await getDocs(
-        collection(db, "expenses")
-      );
-
-      let expenseTotal = 0;
-
-      expensesSnapshot.forEach((doc) => {
-
-        const data: any = doc.data();
-
-        expenseTotal += Number(data.amount);
-
-      });
-
-      setTotalSales(salesTotal);
-
-      setTotalExpenses(expenseTotal);
-
-      setProfit(
-        salesTotal - expenseTotal
-      );
-
-    } catch (error) {
-
-      console.log(error);
-
-    }
-
-  };
+  const [records,
+    setRecords] =
+      useState<any[]>([]);
 
   useEffect(() => {
 
-    getData();
+    loadData();
 
   }, []);
 
+  const loadData =
+    async () => {
+
+      const user =
+        auth.currentUser;
+
+      if (!user) return;
+
+      const snapshot =
+        await getDocs(
+          collection(
+            db,
+            "profitloss"
+          )
+        );
+
+      const data:
+        any[] = [];
+
+      snapshot.forEach(
+        (doc) => {
+
+          const item =
+            doc.data();
+
+          if (
+            item.userId ===
+            user.uid
+          ) {
+
+            data.push(item);
+
+          }
+
+        }
+      );
+
+      setRecords(data);
+
+    };
+
+  const addRecord =
+    async () => {
+
+      const user =
+        auth.currentUser;
+
+      if (!user) return;
+
+      if (
+        !revenue ||
+        !expense
+      ) {
+
+        Alert.alert(
+          "Error",
+          "Fill all fields"
+        );
+
+        return;
+
+      }
+
+      const profit =
+
+        Number(revenue) -
+        Number(expense);
+
+      await addDoc(
+
+        collection(
+          db,
+          "profitloss"
+        ),
+
+        {
+
+          userId:
+            user.uid,
+
+          revenue,
+
+          expense,
+
+          profit,
+
+          note,
+
+          createdAt:
+            new Date(),
+
+        }
+
+      );
+
+      setRevenue("");
+      setExpense("");
+      setNote("");
+
+      loadData();
+
+    };
+
+  const totalRevenue =
+    records.reduce(
+      (
+        total,
+        item
+      ) =>
+
+        total +
+        Number(
+          item.revenue
+        ),
+
+      0
+    );
+
+  const totalExpense =
+    records.reduce(
+      (
+        total,
+        item
+      ) =>
+
+        total +
+        Number(
+          item.expense
+        ),
+
+      0
+    );
+
+  const totalProfit =
+    totalRevenue -
+    totalExpense;
+
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        style={styles.container}
+      >
 
-        <Text style={styles.title}>
-          PROFIT & LOSS
-        </Text>
+        <View style={styles.header}>
 
-        <Text style={styles.subtitle}>
-          Restaurant Financial Analytics
-        </Text>
+          <Text style={styles.title}>
+            Profit & Loss
+          </Text>
 
-      </View>
+          <Text style={styles.subtitle}>
+            Monthly Revenue Tracker
+          </Text>
 
-      <View style={styles.card}>
+        </View>
 
-        <Text style={styles.cardTitle}>
-          Total Sales
-        </Text>
+        <View style={styles.summary}>
 
-        <Text style={styles.greenText}>
-          €{totalSales}
-        </Text>
+          <View style={styles.card}>
+            <Text style={styles.cardLabel}>
+              Revenue
+            </Text>
 
-      </View>
+            <Text style={styles.green}>
+              €
+              {totalRevenue}
+            </Text>
+          </View>
 
-      <View style={styles.card}>
+          <View style={styles.card}>
+            <Text style={styles.cardLabel}>
+              Expenses
+            </Text>
 
-        <Text style={styles.cardTitle}>
-          Total Expenses
-        </Text>
+            <Text style={styles.red}>
+              €
+              {totalExpense}
+            </Text>
+          </View>
 
-        <Text style={styles.redText}>
-          €{totalExpenses}
-        </Text>
+          <View style={styles.card}>
+            <Text style={styles.cardLabel}>
+              Profit
+            </Text>
 
-      </View>
+            <Text style={styles.blue}>
+              €
+              {totalProfit}
+            </Text>
+          </View>
 
-      <View style={styles.card}>
+        </View>
 
-        <Text style={styles.cardTitle}>
-          Net Profit
-        </Text>
+        <View style={styles.form}>
 
-        <Text style={styles.blueText}>
-          €{profit}
-        </Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Revenue"
+            keyboardType="numeric"
+            value={revenue}
+            onChangeText={
+              setRevenue
+            }
+          />
 
-      </View>
+          <TextInput
+            style={styles.input}
+            placeholder="Expense"
+            keyboardType="numeric"
+            value={expense}
+            onChangeText={
+              setExpense
+            }
+          />
 
-    </ScrollView>
+          <TextInput
+            style={styles.input}
+            placeholder="Note"
+            value={note}
+            onChangeText={
+              setNote
+            }
+          />
+
+          <TouchableOpacity
+            style={styles.button}
+            onPress={
+              addRecord
+            }
+          >
+
+            <Text style={styles.buttonText}>
+              SAVE RECORD
+            </Text>
+
+          </TouchableOpacity>
+
+        </View>
+
+        <View style={styles.history}>
+
+          <Text style={styles.historyTitle}>
+            Monthly Records
+          </Text>
+
+          {records.map(
+            (
+              item,
+              index
+            ) => (
+
+              <View
+                key={index}
+                style={styles.record}
+              >
+
+                <Text style={styles.recordText}>
+                  Revenue:
+                  €
+                  {item.revenue}
+                </Text>
+
+                <Text style={styles.recordText}>
+                  Expense:
+                  €
+                  {item.expense}
+                </Text>
+
+                <Text style={styles.recordText}>
+                  Profit:
+                  €
+                  {item.profit}
+                </Text>
+
+                <Text style={styles.recordNote}>
+                  {item.note}
+                </Text>
+
+              </View>
+
+            )
+          )}
+
+        </View>
+
+      </ScrollView>
+
+    </AuthGuard>
 
   );
 
@@ -144,61 +348,121 @@ const styles = StyleSheet.create({
 
   container: {
     flex: 1,
-    backgroundColor: "#f4f7fb",
+    backgroundColor: "#eef2f7",
   },
 
   header: {
     backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
+    padding: 28,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
   },
 
   title: {
-    color: "gold",
     fontSize: 34,
     fontWeight: "bold",
-    marginTop: 25,
+    color: "gold",
+    marginTop: 20,
   },
 
   subtitle: {
-    color: "white",
-    fontSize: 18,
+    color: "#fff",
     marginTop: 10,
+    fontSize: 16,
+  },
+
+  summary: {
+    padding: 16,
   },
 
   card: {
-    backgroundColor: "white",
-    marginHorizontal: 20,
-    marginTop: 20,
-    padding: 25,
+    backgroundColor: "#fff",
+    padding: 22,
     borderRadius: 20,
-    elevation: 4,
+    marginBottom: 14,
   },
 
-  cardTitle: {
+  cardLabel: {
+    fontSize: 16,
+    color: "#666",
+  },
+
+  green: {
+    fontSize: 30,
+    fontWeight: "bold",
+    color: "green",
+    marginTop: 10,
+  },
+
+  red: {
+    fontSize: 30,
+    fontWeight: "bold",
+    color: "red",
+    marginTop: 10,
+  },
+
+  blue: {
+    fontSize: 30,
+    fontWeight: "bold",
+    color: "#00154f",
+    marginTop: 10,
+  },
+
+  form: {
+    padding: 16,
+  },
+
+  input: {
+    backgroundColor: "#fff",
+    padding: 18,
+    borderRadius: 18,
+    marginBottom: 16,
+    fontSize: 16,
+  },
+
+  button: {
+    backgroundColor: "#00154f",
+    padding: 20,
+    borderRadius: 18,
+    alignItems: "center",
+  },
+
+  buttonText: {
+    color: "#fff",
+    fontWeight: "bold",
+    fontSize: 18,
+  },
+
+  history: {
+    padding: 16,
+    paddingBottom: 100,
+  },
+
+  historyTitle: {
     fontSize: 24,
     fontWeight: "bold",
     color: "#00154f",
-    marginBottom: 15,
+    marginBottom: 20,
   },
 
-  greenText: {
-    color: "green",
-    fontSize: 32,
-    fontWeight: "bold",
+  record: {
+    backgroundColor: "#fff",
+    padding: 20,
+    borderRadius: 20,
+    marginBottom: 14,
   },
 
-  redText: {
-    color: "red",
-    fontSize: 32,
-    fontWeight: "bold",
+  recordText: {
+    fontSize: 16,
+    marginBottom: 8,
+    color: "#333",
   },
 
-  blueText: {
-    color: "#007bff",
-    fontSize: 32,
-    fontWeight: "bold",
+  recordNote: {
+    fontSize: 15,
+    color: "#666",
+    marginTop: 10,
   },
 
 });
+

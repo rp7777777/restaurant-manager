@@ -1,3 +1,5 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
   useEffect,
   useState,
@@ -14,429 +16,307 @@ import {
 } from "react-native";
 
 import {
-  addDoc,
   collection,
-  deleteDoc,
-  doc,
+  addDoc,
   getDocs,
 } from "firebase/firestore";
 
 import {
   db,
+  auth,
 } from "../firebase";
-
-const kitchens = [
-
-  "Main Kitchen",
-  "Bar",
-  "Bakery",
-  "Pizza",
-  "Sushi",
-  "Grill",
-  "Coffee",
-  "Dessert",
-
-];
 
 export default function InventoryScreen() {
 
-  const [ingredient, setIngredient] =
-    useState("");
+  const [itemName,
+    setItemName] =
+      useState("");
 
-  const [quantity, setQuantity] =
-    useState("");
+  const [quantity,
+    setQuantity] =
+      useState("");
 
-  const [minimumStock, setMinimumStock] =
-    useState("");
+  const [category,
+    setCategory] =
+      useState("");
 
-  const [supplier, setSupplier] =
-    useState("");
+  const [inventory,
+    setInventory] =
+      useState<any[]>([]);
 
-  const [expiryDate, setExpiryDate] =
-    useState("");
+  useEffect(() => {
 
-  const [kitchen, setKitchen] =
-    useState("Main Kitchen");
+    loadInventory();
 
-  const [inventory, setInventory] =
-    useState<any[]>([]);
+  }, []);
 
-  const getInventory =
+  const loadInventory =
     async () => {
 
-      try {
+      const user =
+        auth.currentUser;
 
-        const snapshot =
-          await getDocs(
-            collection(
-              db,
-              "inventory"
-            )
-          );
+      if (!user) return;
 
-        const data: any[] = [];
-
-        snapshot.forEach(
-          (docItem) => {
-
-            data.push({
-              id: docItem.id,
-              ...(docItem.data() as any),
-            });
-
-          }
+      const snapshot =
+        await getDocs(
+          collection(
+            db,
+            "inventory"
+          )
         );
 
-        data.reverse();
+      const data:
+        any[] = [];
 
-        setInventory(data);
+      snapshot.forEach(
+        (doc) => {
 
-      } catch (error) {
+          const item =
+            doc.data();
 
-        console.log(error);
+          if (
+            item.userId ===
+            user.uid
+          ) {
 
-      }
+            data.push(item);
+
+          }
+
+        }
+      );
+
+      setInventory(data);
 
     };
 
   const addInventory =
     async () => {
 
+      const user =
+        auth.currentUser;
+
+      if (!user) return;
+
       if (
-        !ingredient ||
-        !quantity
+        !itemName ||
+        !quantity ||
+        !category
       ) {
 
         Alert.alert(
           "Error",
-          "Fill required fields"
+          "Fill all fields"
         );
 
         return;
 
       }
 
-      try {
+      await addDoc(
 
-        await addDoc(
-          collection(
-            db,
-            "inventory"
-          ),
-          {
-            ingredient,
-            quantity:
-              Number(quantity),
+        collection(
+          db,
+          "inventory"
+        ),
 
-            minimumStock:
-              Number(
-                minimumStock
-              ),
+        {
 
-            supplier,
+          userId:
+            user.uid,
 
-            expiryDate,
+          itemName,
 
-            kitchen,
+          quantity,
 
-            createdAt:
-              new Date(),
-          }
-        );
+          category,
 
-        Alert.alert(
-          "Success",
-          "Inventory Added"
-        );
+          createdAt:
+            new Date(),
 
-        setIngredient("");
-        setQuantity("");
-        setMinimumStock("");
-        setSupplier("");
-        setExpiryDate("");
+        }
 
-        getInventory();
-
-      } catch (error: any) {
-
-        Alert.alert(
-          "Error",
-          error.message
-        );
-
-      }
-
-    };
-
-  const deleteInventory =
-    async (id: string) => {
-
-      Alert.alert(
-        "Delete Item",
-        "Are you sure?",
-        [
-
-          {
-            text: "Cancel",
-          },
-
-          {
-            text: "Delete",
-
-            style: "destructive",
-
-            onPress:
-              async () => {
-
-                try {
-
-                  await deleteDoc(
-                    doc(
-                      db,
-                      "inventory",
-                      id
-                    )
-                  );
-
-                  getInventory();
-
-                } catch (error) {
-
-                  console.log(error);
-
-                }
-
-              },
-          },
-
-        ]
       );
 
+      setItemName("");
+      setQuantity("");
+      setCategory("");
+
+      loadInventory();
+
     };
 
-  useEffect(() => {
+  const totalStock =
+    inventory.reduce(
+      (
+        total,
+        item
+      ) =>
 
-    getInventory();
+        total +
+        Number(
+          item.quantity
+        ),
 
-  }, []);
+      0
+    );
+
+  const lowStock =
+    inventory.filter(
+      (item) =>
+
+        Number(
+          item.quantity
+        ) < 5
+    );
 
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        style={styles.container}
+      >
 
-        <Text style={styles.logo}>
-          INVENTORY
-        </Text>
+        <View style={styles.header}>
 
-        <Text style={styles.subtitle}>
-          Smart Stock Management
-        </Text>
-
-      </View>
-
-      <View style={styles.form}>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Ingredient Name"
-          value={ingredient}
-          onChangeText={
-            setIngredient
-          }
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Current Quantity"
-          keyboardType="numeric"
-          value={quantity}
-          onChangeText={
-            setQuantity
-          }
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Minimum Stock Alert"
-          keyboardType="numeric"
-          value={minimumStock}
-          onChangeText={
-            setMinimumStock
-          }
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Supplier Name"
-          value={supplier}
-          onChangeText={
-            setSupplier
-          }
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Expiry Date"
-          value={expiryDate}
-          onChangeText={
-            setExpiryDate
-          }
-        />
-
-        <Text style={styles.label}>
-          Select Department
-        </Text>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={
-            false
-          }
-          style={styles.row}
-        >
-
-          {kitchens.map((item) => (
-
-            <TouchableOpacity
-              key={item}
-              style={[
-                styles.kitchenButton,
-
-                kitchen === item &&
-                styles.activeKitchen,
-              ]}
-              onPress={() =>
-                setKitchen(item)
-              }
-            >
-
-              <Text style={styles.kitchenText}>
-                {item}
-              </Text>
-
-            </TouchableOpacity>
-
-          ))}
-
-        </ScrollView>
-
-        <TouchableOpacity
-          style={styles.addButton}
-          onPress={addInventory}
-        >
-
-          <Text style={styles.addText}>
-            ADD INVENTORY
+          <Text style={styles.logo}>
+            Inventory
           </Text>
 
-        </TouchableOpacity>
+          <Text style={styles.subtitle}>
+            Restaurant Stock Management
+          </Text>
 
-      </View>
+        </View>
 
-      <View style={styles.listBox}>
+        <View style={styles.summaryContainer}>
 
-        <Text style={styles.listTitle}>
-          STOCK ITEMS
-        </Text>
+          <View style={styles.summaryCard}>
 
-        {inventory.map((item) => {
+            <Text style={styles.summaryLabel}>
+              Total Stock
+            </Text>
 
-          const lowStock =
-            Number(item.quantity) <=
-            Number(
-              item.minimumStock
-            );
+            <Text style={styles.summaryValue}>
+              {totalStock}
+            </Text>
 
-          return (
+          </View>
 
-            <View
-              key={item.id}
-              style={[
-                styles.itemCard,
+          <View style={styles.summaryCard}>
 
-                lowStock &&
-                styles.lowStockCard,
-              ]}
-            >
+            <Text style={styles.summaryLabel}>
+              Low Stock
+            </Text>
 
-              <View style={styles.topRow}>
+            <Text style={styles.lowStock}>
+              {lowStock.length}
+            </Text>
+
+          </View>
+
+        </View>
+
+        <View style={styles.form}>
+
+          <TextInput
+            style={styles.input}
+            placeholder="Item Name"
+            value={itemName}
+            onChangeText={
+              setItemName
+            }
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Quantity"
+            keyboardType="numeric"
+            value={quantity}
+            onChangeText={
+              setQuantity
+            }
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Category"
+            value={category}
+            onChangeText={
+              setCategory
+            }
+          />
+
+          <TouchableOpacity
+            style={styles.button}
+            onPress={
+              addInventory
+            }
+          >
+
+            <Text style={styles.buttonText}>
+              ADD INVENTORY
+            </Text>
+
+          </TouchableOpacity>
+
+        </View>
+
+        <View style={styles.inventoryContainer}>
+
+          <Text style={styles.sectionTitle}>
+            Inventory List
+          </Text>
+
+          {inventory.map(
+            (
+              item,
+              index
+            ) => (
+
+              <View
+                key={index}
+                style={styles.inventoryCard}
+              >
 
                 <Text style={styles.itemName}>
-                  {item.ingredient}
+                  {item.itemName}
                 </Text>
 
-                <TouchableOpacity
-                  style={
-                    styles.deleteButton
-                  }
-                  onPress={() =>
-                    deleteInventory(
-                      item.id
-                    )
-                  }
-                >
+                <Text style={styles.itemInfo}>
+                  Quantity:
+                  {" "}
+                  {item.quantity}
+                </Text>
 
-                  <Text
-                    style={
-                      styles.deleteText
-                    }
-                  >
-                    DELETE
+                <Text style={styles.itemInfo}>
+                  Category:
+                  {" "}
+                  {item.category}
+                </Text>
+
+                {Number(
+                  item.quantity
+                ) < 5 && (
+
+                  <Text style={styles.alert}>
+                    LOW STOCK ALERT
                   </Text>
 
-                </TouchableOpacity>
+                )}
 
               </View>
 
-              <Text style={styles.info}>
-                Quantity:
-                {" "}
-                {item.quantity}
-              </Text>
+            )
+          )}
 
-              <Text style={styles.info}>
-                Minimum:
-                {" "}
-                {item.minimumStock}
-              </Text>
+        </View>
 
-              <Text style={styles.info}>
-                Supplier:
-                {" "}
-                {item.supplier}
-              </Text>
+      </ScrollView>
 
-              <Text style={styles.info}>
-                Expiry:
-                {" "}
-                {item.expiryDate}
-              </Text>
-
-              <Text style={styles.info}>
-                Department:
-                {" "}
-                {item.kitchen}
-              </Text>
-
-              {lowStock && (
-
-                <Text style={styles.alert}>
-                  LOW STOCK ALERT
-                </Text>
-
-              )}
-
-            </View>
-
-          );
-
-        })}
-
-      </View>
-
-    </ScrollView>
+    </AuthGuard>
 
   );
 
@@ -446,141 +326,122 @@ const styles = StyleSheet.create({
 
   container: {
     flex: 1,
-    backgroundColor: "#f4f7fb",
+    backgroundColor: "#eef2f7",
   },
 
   header: {
     backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
+    padding: 28,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
   },
 
   logo: {
-    color: "gold",
-    fontSize: 38,
+    fontSize: 34,
     fontWeight: "bold",
-    marginTop: 25,
+    color: "gold",
+    marginTop: 20,
   },
 
   subtitle: {
-    color: "white",
-    fontSize: 18,
+    color: "#fff",
+    marginTop: 10,
+    fontSize: 16,
+  },
+
+  summaryContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    padding: 16,
+  },
+
+  summaryCard: {
+    width: "48%",
+    backgroundColor: "#fff",
+    padding: 24,
+    borderRadius: 20,
+  },
+
+  summaryLabel: {
+    fontSize: 16,
+    color: "#666",
+  },
+
+  summaryValue: {
+    fontSize: 30,
+    fontWeight: "bold",
+    color: "#00154f",
+    marginTop: 10,
+  },
+
+  lowStock: {
+    fontSize: 30,
+    fontWeight: "bold",
+    color: "red",
     marginTop: 10,
   },
 
   form: {
-    padding: 20,
+    padding: 16,
   },
 
   input: {
-    backgroundColor: "white",
+    backgroundColor: "#fff",
+    padding: 18,
+    borderRadius: 18,
+    marginBottom: 16,
+    fontSize: 16,
+  },
+
+  button: {
+    backgroundColor: "#00154f",
     padding: 20,
     borderRadius: 18,
+    alignItems: "center",
+  },
+
+  buttonText: {
+    color: "#fff",
     fontSize: 18,
-    marginBottom: 18,
+    fontWeight: "bold",
   },
 
-  label: {
-    fontSize: 20,
+  inventoryContainer: {
+    padding: 16,
+    paddingBottom: 100,
+  },
+
+  sectionTitle: {
+    fontSize: 24,
     fontWeight: "bold",
     color: "#00154f",
-    marginBottom: 12,
-  },
-
-  row: {
     marginBottom: 20,
   },
 
-  kitchenButton: {
-    backgroundColor: "#dbe4ff",
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    borderRadius: 18,
-    marginRight: 10,
-  },
-
-  activeKitchen: {
-    backgroundColor: "#00154f",
-  },
-
-  kitchenText: {
-    color: "black",
-    fontWeight: "bold",
-  },
-
-  addButton: {
-    backgroundColor: "#00154f",
-    padding: 24,
-    borderRadius: 20,
-    alignItems: "center",
-  },
-
-  addText: {
-    color: "white",
-    fontSize: 22,
-    fontWeight: "bold",
-  },
-
-  listBox: {
+  inventoryCard: {
+    backgroundColor: "#fff",
     padding: 20,
-    paddingBottom: 80,
-  },
-
-  listTitle: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginBottom: 20,
-  },
-
-  itemCard: {
-    backgroundColor: "white",
-    padding: 24,
-    borderRadius: 24,
-    marginBottom: 22,
-  },
-
-  lowStockCard: {
-    borderWidth: 3,
-    borderColor: "red",
-  },
-
-  topRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+    borderRadius: 20,
+    marginBottom: 14,
   },
 
   itemName: {
-    fontSize: 28,
+    fontSize: 22,
     fontWeight: "bold",
     color: "#00154f",
   },
 
-  deleteButton: {
-    backgroundColor: "red",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 14,
-  },
-
-  deleteText: {
-    color: "white",
-    fontWeight: "bold",
-  },
-
-  info: {
-    fontSize: 18,
-    marginTop: 12,
-    color: "#444",
+  itemInfo: {
+    fontSize: 16,
+    color: "#555",
+    marginTop: 8,
   },
 
   alert: {
-    marginTop: 18,
+    marginTop: 12,
     color: "red",
-    fontSize: 20,
     fontWeight: "bold",
+    fontSize: 15,
   },
 
 });

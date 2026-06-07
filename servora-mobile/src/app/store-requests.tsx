@@ -1,3 +1,5 @@
+import AuthGuard from "./auth-guard";
+
 import React, {
   useEffect,
   useState,
@@ -8,343 +10,259 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  TextInput,
   TouchableOpacity,
   Alert,
 } from "react-native";
 
 import {
-  addDoc,
   collection,
   getDocs,
-  updateDoc,
-  doc,
+  addDoc,
 } from "firebase/firestore";
 
 import {
   db,
+  auth,
 } from "../firebase";
 
 export default function StoreRequestsScreen() {
-
-  const [department,
-    setDepartment] =
-      useState("");
-
-  const [ingredient,
-    setIngredient] =
-      useState("");
-
-  const [quantity,
-    setQuantity] =
-      useState("");
 
   const [requests,
     setRequests] =
       useState<any[]>([]);
 
-  const loadRequests =
-    async () => {
-
-      try {
-
-        const snapshot =
-          await getDocs(
-            collection(
-              db,
-              "storeRequests"
-            )
-          );
-
-        const data: any[] = [];
-
-        snapshot.forEach(
-          (docItem) => {
-
-            data.push({
-              id: docItem.id,
-              ...(docItem.data() as any),
-            });
-
-          }
-        );
-
-        data.reverse();
-
-        setRequests(data);
-
-      } catch (error) {
-
-        console.log(error);
-
-      }
-
-    };
-
-  const sendRequest =
-    async () => {
-
-      if (
-        !department ||
-        !ingredient ||
-        !quantity
-      ) {
-
-        Alert.alert(
-          "Error",
-          "Fill all fields"
-        );
-
-        return;
-
-      }
-
-      try {
-
-        await addDoc(
-          collection(
-            db,
-            "storeRequests"
-          ),
-          {
-            department,
-            ingredient,
-            quantity,
-            status:
-              "PENDING",
-            createdAt:
-              new Date(),
-          }
-        );
-
-        Alert.alert(
-          "Success",
-          "Request Sent To Store"
-        );
-
-        setDepartment("");
-        setIngredient("");
-        setQuantity("");
-
-        loadRequests();
-
-      } catch (error: any) {
-
-        Alert.alert(
-          "Error",
-          error.message
-        );
-
-      }
-
-    };
-
-  const updateStatus =
-    async (
-      id: string,
-      status: string
-    ) => {
-
-      try {
-
-        await updateDoc(
-          doc(
-            db,
-            "storeRequests",
-            id
-          ),
-          {
-            status,
-          }
-        );
-
-        loadRequests();
-
-      } catch (error) {
-
-        console.log(error);
-
-      }
-
-    };
-
   useEffect(() => {
 
-    loadRequests();
+    generateTomorrowRequests();
 
   }, []);
 
+  const generateTomorrowRequests =
+    async () => {
+
+      const user =
+        auth.currentUser;
+
+      if (!user) return;
+
+      const inventorySnapshot =
+        await getDocs(
+          collection(
+            db,
+            "inventory"
+          )
+        );
+
+      const autoRequests:
+        any[] = [];
+
+      inventorySnapshot.forEach(
+        (document) => {
+
+          const item =
+            document.data();
+
+          if (
+            item.userId ===
+            user.uid
+          ) {
+
+            const currentStock =
+              Number(
+                item.currentStock || 0
+              );
+
+            const tomorrowNeed =
+              Number(
+                item.tomorrowNeed || 0
+              );
+
+            const minimumStock =
+              Number(
+                item.minimumStock || 0
+              );
+
+            const required =
+              tomorrowNeed -
+              currentStock;
+
+            if (
+
+              currentStock <
+              minimumStock ||
+
+              required > 0
+
+            ) {
+
+              autoRequests.push({
+
+                itemName:
+                  item.itemName,
+
+                currentStock,
+
+                tomorrowNeed,
+
+                minimumStock,
+
+                requestAmount:
+                  required > 0
+                    ? required
+                    : minimumStock,
+
+              });
+
+            }
+
+          }
+
+        }
+      );
+
+      setRequests(
+        autoRequests
+      );
+
+    };
+
+  const saveRequest =
+    async (item: any) => {
+
+      const user =
+        auth.currentUser;
+
+      if (!user) return;
+
+      await addDoc(
+
+        collection(
+          db,
+          "storeRequests"
+        ),
+
+        {
+
+          userId:
+            user.uid,
+
+          itemName:
+            item.itemName,
+
+          currentStock:
+            item.currentStock,
+
+          tomorrowNeed:
+            item.tomorrowNeed,
+
+          requestAmount:
+            item.requestAmount,
+
+          status:
+            "PENDING",
+
+          createdAt:
+            new Date(),
+
+        }
+
+      );
+
+      Alert.alert(
+        "Success",
+        "Store Request Sent"
+      );
+
+    };
+
   return (
 
-    <ScrollView style={styles.container}>
+    <AuthGuard>
 
-      <View style={styles.header}>
+      <ScrollView
+        style={styles.container}
+      >
 
-        <Text style={styles.logo}>
-          STORE REQUESTS
-        </Text>
+        <View style={styles.header}>
 
-        <Text style={styles.subtitle}>
-          Kitchen To Store System
-        </Text>
-
-      </View>
-
-      <View style={styles.form}>
-
-        <TextInput
-          style={styles.input}
-          placeholder="Department"
-          value={department}
-          onChangeText={
-            setDepartment
-          }
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Ingredient"
-          value={ingredient}
-          onChangeText={
-            setIngredient
-          }
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Quantity"
-          keyboardType="numeric"
-          value={quantity}
-          onChangeText={
-            setQuantity
-          }
-        />
-
-        <TouchableOpacity
-          style={styles.sendButton}
-          onPress={sendRequest}
-        >
-
-          <Text style={styles.sendText}>
-            SEND REQUEST
+          <Text style={styles.logo}>
+            STORE REQUESTS
           </Text>
 
-        </TouchableOpacity>
+          <Text style={styles.subtitle}>
+            Tomorrow Required Inventory
+          </Text>
 
-      </View>
+        </View>
 
-      <View style={styles.listBox}>
+        {requests.length === 0 && (
 
-        <Text style={styles.listTitle}>
-          REQUEST HISTORY
-        </Text>
+          <Text style={styles.empty}>
+            No Store Requests
+          </Text>
 
-        {requests.map((item) => (
+        )}
 
-          <View
-            key={item.id}
-            style={styles.card}
-          >
+        {requests.map(
+          (
+            item,
+            index
+          ) => (
 
-            <Text style={styles.department}>
-              {item.department}
-            </Text>
-
-            <Text style={styles.info}>
-              Ingredient:
-              {" "}
-              {item.ingredient}
-            </Text>
-
-            <Text style={styles.info}>
-              Quantity:
-              {" "}
-              {item.quantity}
-            </Text>
-
-            <Text
-              style={[
-
-                styles.status,
-
-                item.status ===
-                  "APPROVED" &&
-                styles.approved,
-
-                item.status ===
-                  "REJECTED" &&
-                styles.rejected,
-
-                item.status ===
-                  "PENDING" &&
-                styles.pending,
-
-              ]}
+            <View
+              key={index}
+              style={styles.card}
             >
 
-              {item.status}
+              <Text style={styles.itemName}>
+                {item.itemName}
+              </Text>
 
-            </Text>
+              <Text style={styles.info}>
+                Current Stock:
+                {" "}
+                {item.currentStock}
+              </Text>
 
-            <View style={styles.buttonRow}>
+              <Text style={styles.info}>
+                Tomorrow Need:
+                {" "}
+                {item.tomorrowNeed}
+              </Text>
+
+              <Text style={styles.info}>
+                Minimum Stock:
+                {" "}
+                {item.minimumStock}
+              </Text>
+
+              <Text style={styles.request}>
+                BUY:
+                {" "}
+                {item.requestAmount}
+              </Text>
 
               <TouchableOpacity
-                style={[
-                  styles.actionButton,
-                  styles.approveButton,
-                ]}
+                style={styles.button}
                 onPress={() =>
-                  updateStatus(
-                    item.id,
-                    "APPROVED"
-                  )
+                  saveRequest(item)
                 }
               >
 
                 <Text style={styles.buttonText}>
-                  APPROVE
-                </Text>
-
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.actionButton,
-                  styles.rejectButton,
-                ]}
-                onPress={() =>
-                  updateStatus(
-                    item.id,
-                    "REJECTED"
-                  )
-                }
-              >
-
-                <Text style={styles.buttonText}>
-                  REJECT
+                  SEND REQUEST
                 </Text>
 
               </TouchableOpacity>
 
             </View>
 
-            <Text style={styles.date}>
+          )
+        )}
 
-              {
-                item.createdAt
-                  ?.toDate?.()
-                  ?.toLocaleString?.()
-              }
+      </ScrollView>
 
-            </Text>
-
-          </View>
-
-        ))}
-
-      </View>
-
-    </ScrollView>
+    </AuthGuard>
 
   );
 
@@ -359,129 +277,69 @@ const styles = StyleSheet.create({
 
   header: {
     backgroundColor: "#00154f",
-    padding: 35,
-    borderBottomLeftRadius: 35,
-    borderBottomRightRadius: 35,
+    padding: 28,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
   },
 
   logo: {
-    color: "gold",
-    fontSize: 36,
+    fontSize: 34,
     fontWeight: "bold",
-    marginTop: 25,
+    color: "gold",
+    marginTop: 20,
   },
 
   subtitle: {
-    color: "white",
-    fontSize: 18,
-    marginTop: 10,
+    color: "#fff",
+    marginTop: 8,
+    fontSize: 16,
   },
 
-  form: {
-    padding: 20,
-  },
-
-  input: {
-    backgroundColor: "white",
-    padding: 20,
-    borderRadius: 18,
-    fontSize: 18,
-    marginBottom: 18,
-  },
-
-  sendButton: {
-    backgroundColor: "#00154f",
-    padding: 24,
-    borderRadius: 20,
-    alignItems: "center",
-  },
-
-  sendText: {
-    color: "white",
+  empty: {
     fontSize: 22,
-    fontWeight: "bold",
-  },
-
-  listBox: {
-    padding: 20,
-    paddingBottom: 100,
-  },
-
-  listTitle: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#00154f",
-    marginBottom: 20,
+    textAlign: "center",
+    marginTop: 60,
+    color: "#555",
   },
 
   card: {
-    backgroundColor: "white",
-    padding: 24,
-    borderRadius: 24,
-    marginBottom: 20,
+    backgroundColor: "#fff",
+    margin: 16,
+    padding: 22,
+    borderRadius: 22,
   },
 
-  department: {
-    fontSize: 26,
+  itemName: {
+    fontSize: 24,
     fontWeight: "bold",
     color: "#00154f",
   },
 
   info: {
-    fontSize: 18,
-    marginTop: 12,
-    color: "#444",
+    fontSize: 17,
+    marginTop: 10,
+    color: "#555",
   },
 
-  status: {
-    marginTop: 18,
-    fontSize: 18,
-    fontWeight: "bold",
-  },
-
-  approved: {
-    color: "green",
-  },
-
-  rejected: {
+  request: {
+    fontSize: 24,
     color: "red",
+    fontWeight: "bold",
+    marginTop: 18,
   },
 
-  pending: {
-    color: "#ff9800",
-  },
-
-  buttonRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 24,
-  },
-
-  actionButton: {
-    width: "48%",
+  button: {
+    backgroundColor: "#00154f",
     padding: 18,
-    borderRadius: 18,
+    borderRadius: 16,
     alignItems: "center",
-  },
-
-  approveButton: {
-    backgroundColor: "green",
-  },
-
-  rejectButton: {
-    backgroundColor: "red",
+    marginTop: 20,
   },
 
   buttonText: {
-    color: "white",
+    color: "#fff",
     fontWeight: "bold",
-    fontSize: 16,
-  },
-
-  date: {
-    marginTop: 18,
-    color: "gray",
-    fontSize: 14,
+    fontSize: 17,
   },
 
 });
