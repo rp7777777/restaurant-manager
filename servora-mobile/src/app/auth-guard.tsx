@@ -1,108 +1,181 @@
-import React, {
-  useEffect,
-  useState,
-} from "react";
+// ============================================
+// SERVORA ERP — Auth Guard
+// Role-based route protection
+// ============================================
 
-import {
-  View,
-  ActivityIndicator,
-} from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, ActivityIndicator, StyleSheet } from "react-native";
+import { useRouter, usePathname } from "expo-router";
+import { onAuthStateChanged } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "../firebase";
 
-import {
-  useRouter,
-} from "expo-router";
+// ── Public routes — no auth needed ─────────
+const PUBLIC_ROUTES = [
+  "/",
+  "/login",
+  "/register",
+  "/forgot-password",
+  "/email-verification",
+];
 
-import {
-  onAuthStateChanged,
-} from "firebase/auth";
+// ── Role-based allowed routes ───────────────
+const ROLE_ROUTES: Record<string, string[]> = {
+  MANAGER: [
+    "/dashboard",
+    "/analytics",
+    "/profit-loss",
+    "/monthly-report",
+    "/employees",
+    "/workerschedule",
+    "/payroll",
+    "/payroll-history",
+    "/salary-slip",
+    "/attendance-pro",
+    "/expenses",
+    "/purchase-orders",
+    "/suppliers",
+    "/branches",
+    "/restaurants",
+    "/users",
+    "/roles",
+    "/audit-log",
+    "/settings",
+    "/backup",
+    "/notifications",
+    "/stock-alert",
+    "/billing",
+    "/workers",
+    "/excel-table",
+    "/haccp",
+  ],
+  CHEF: [
+    "/kitchen",
+    "/ingredient-order",
+    "/notifications",
+  ],
+  STORE: [
+    "/store-requests",
+    "/inventory",
+    "/stock-alert",
+    "/purchase-orders",
+    "/notifications",
+  ],
+  SALESMAN: [
+    "/add-sale",
+    "/sales",
+    "/notifications",
+  ],
+  OWNER: [], // Owner gets all routes
+};
 
-import {
-  auth,
-} from "../firebase";
+// ── Default home per role ───────────────────
+export const ROLE_HOME: Record<string, string> = {
+  MANAGER: "/dashboard",
+  CHEF: "/kitchen",
+  STORE: "/store-requests",
+  SALESMAN: "/add-sale",
+  OWNER: "/dashboard",
+};
 
-export default function AuthGuard({
-
-  children,
-
-}: any) {
-
-  const router =
-    useRouter();
-
-  const [loading,
-    setLoading] =
-      useState(true);
-
-  useEffect(() => {
-
-    const unsubscribe =
-
-      onAuthStateChanged(
-
-        auth,
-
-        (user) => {
-
-          if (
-            !user
-          ) {
-
-            router.replace(
-              "/login"
-            );
-
-          } else if (
-            !user.emailVerified
-          ) {
-
-            router.replace(
-              "/email-verification"
-            );
-
-          }
-
-          setLoading(
-            false
-          );
-
-        }
-
-      );
-
-    return unsubscribe;
-
-  }, []);
-
-  if (loading) {
-
-    return (
-
-      <View
-        style={{
-
-          flex: 1,
-
-          justifyContent:
-            "center",
-
-          alignItems:
-            "center",
-
-        }}
-      >
-
-        <ActivityIndicator
-          size="large"
-          color="#00154f"
-        />
-
-      </View>
-
-    );
-
-  }
-
-  return children;
-
+interface Props {
+  children: React.ReactNode;
+  allowedRoles?: string[];
 }
 
+export default function AuthGuard({ children, allowedRoles }: Props) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [loading, setLoading] = useState(true);
+  const [authorized, setAuthorized] = useState(false);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      // Not logged in
+      if (!user) {
+        if (!PUBLIC_ROUTES.includes(pathname)) {
+          router.replace("/login" as any);
+        }
+        setLoading(false);
+        setAuthorized(true);
+        return;
+      }
+
+      // Email not verified
+      if (!user.emailVerified) {
+        router.replace("/email-verification" as any);
+        setLoading(false);
+        return;
+      }
+
+      // Get user role from Firestore
+      try {
+        const userDoc = await getDoc(doc(db, "users", user.uid));
+        const userRole: string = userDoc.exists()
+          ? (userDoc.data().role ?? "SALESMAN")
+          : "SALESMAN";
+
+        //Role loaded successfully
+
+        // If specific roles required for this screen
+        if (allowedRoles && allowedRoles.length > 0) {
+          if (
+            !allowedRoles.includes(userRole) &&
+            userRole !== "OWNER"
+          ) {
+            // Redirect to their home
+            router.replace(
+              (ROLE_HOME[userRole] ?? "/dashboard") as any
+            );
+            setLoading(false);
+            return;
+          }
+        }
+
+        // Check route permission
+        if (!PUBLIC_ROUTES.includes(pathname)) {
+          const allowed =
+            userRole === "OWNER" ||
+            (ROLE_ROUTES[userRole] ?? []).includes(pathname);
+
+          if (!allowed) {
+            router.replace(
+              (ROLE_HOME[userRole] ?? "/dashboard") as any
+            );
+            setLoading(false);
+            return;
+          }
+        }
+
+        setAuthorized(true);
+      } catch {
+        setAuthorized(true);
+      }
+
+      setLoading(false);
+    });
+
+    return unsub;
+  }, [pathname]);
+
+  if (loading) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator size="large" color="#00154f" />
+      </View>
+    );
+  }
+
+  if (!authorized) return null;
+
+  return <>{children}</>;
+}
+
+const styles = StyleSheet.create({
+  loading: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#eef2f7",
+  },
+});
