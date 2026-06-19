@@ -1,6 +1,6 @@
 // ============================================
 // SERVORA ERP — Theme & Language System
-// Enterprise-grade i18n + theming
+// ✅ error field added to all themes
 // ============================================
 
 export type ThemeName = "navyDark" | "purpleDark" | "light";
@@ -21,76 +21,80 @@ export const THEMES: Record<ThemeName, {
   border: string;
   primary: string;
   accent: string;
+  error: string;  // ✅ added
   navBg: string;
   navText: string;
 }> = {
   navyDark: {
-    name: "Navy Dark",
-    bg: "#eef2f7",
-    surface: "#ffffff",
-    card: "#ffffff",
-    sidebar: "#00154f",
-    sidebarText: "rgba(255,255,255,0.8)",
-    sidebarActive: "rgba(255,215,0,0.15)",
+    name:              "Navy Dark",
+    bg:                "#eef2f7",
+    surface:           "#ffffff",
+    card:              "#ffffff",
+    sidebar:           "#00154f",
+    sidebarText:       "rgba(255,255,255,0.8)",
+    sidebarActive:     "rgba(255,215,0,0.15)",
     sidebarActiveText: "#FFD700",
-    sidebarSection: "rgba(255,255,255,0.3)",
-    text: "#1a1a2e",
-    textSecondary: "#64748b",
-    border: "rgba(255,255,255,0.1)",
-    primary: "#00154f",
-    accent: "#FFD700",
-    navBg: "#00154f",
-    navText: "#ffffff",
+    sidebarSection:    "rgba(255,255,255,0.3)",
+    text:              "#1a1a2e",
+    textSecondary:     "#64748b",
+    border:            "rgba(255,255,255,0.1)",
+    primary:           "#00154f",
+    accent:            "#FFD700",
+    error:             "#ef4444",  // ✅
+    navBg:             "#00154f",
+    navText:           "#ffffff",
   },
   purpleDark: {
-    name: "Purple Dark",
-    bg: "#0f0f1a",
-    surface: "#1a1a2e",
-    card: "#16213e",
-    sidebar: "#1a1a2e",
-    sidebarText: "rgba(255,255,255,0.75)",
-    sidebarActive: "rgba(124,58,237,0.25)",
+    name:              "Purple Dark",
+    bg:                "#0f0f1a",
+    surface:           "#1a1a2e",
+    card:              "#16213e",
+    sidebar:           "#1a1a2e",
+    sidebarText:       "rgba(255,255,255,0.75)",
+    sidebarActive:     "rgba(124,58,237,0.25)",
     sidebarActiveText: "#a78bfa",
-    sidebarSection: "rgba(255,255,255,0.25)",
-    text: "#f1f5f9",
-    textSecondary: "#94a3b8",
-    border: "rgba(255,255,255,0.08)",
-    primary: "#7c3aed",
-    accent: "#a78bfa",
-    navBg: "#1a1a2e",
-    navText: "#f1f5f9",
+    sidebarSection:    "rgba(255,255,255,0.25)",
+    text:              "#f1f5f9",
+    textSecondary:     "#94a3b8",
+    border:            "rgba(255,255,255,0.08)",
+    primary:           "#7c3aed",
+    accent:            "#a78bfa",
+    error:             "#ef4444",  // ✅
+    navBg:             "#1a1a2e",
+    navText:           "#f1f5f9",
   },
   light: {
-    name: "Light",
-    bg: "#f8fafc",
-    surface: "#ffffff",
-    card: "#ffffff",
-    sidebar: "#1e293b",
-    sidebarText: "rgba(255,255,255,0.8)",
-    sidebarActive: "rgba(59,130,246,0.15)",
+    name:              "Light",
+    bg:                "#f8fafc",
+    surface:           "#ffffff",
+    card:              "#ffffff",
+    sidebar:           "#1e293b",
+    sidebarText:       "rgba(255,255,255,0.8)",
+    sidebarActive:     "rgba(59,130,246,0.15)",
     sidebarActiveText: "#60a5fa",
-    sidebarSection: "rgba(255,255,255,0.3)",
-    text: "#0f172a",
-    textSecondary: "#64748b",
-    border: "#e2e8f0",
-    primary: "#1e40af",
-    accent: "#3b82f6",
-    navBg: "#1e293b",
-    navText: "#ffffff",
+    sidebarSection:    "rgba(255,255,255,0.3)",
+    text:              "#0f172a",
+    textSecondary:     "#64748b",
+    border:            "#e2e8f0",
+    primary:           "#1e40af",
+    accent:            "#3b82f6",
+    error:             "#ef4444",  // ✅
+    navBg:             "#1e293b",
+    navText:           "#ffffff",
   },
 };
 
 export const LANGUAGES: Record<LanguageCode, { name: string; flag: string; rtl: boolean }> = {
-  en: { name: "English", flag: "🇬🇧", rtl: false },
-  np: { name: "नेपाली", flag: "🇳🇵", rtl: false },
-  pt: { name: "Português", flag: "🇵🇹", rtl: false },
-  es: { name: "Español", flag: "🇪🇸", rtl: false },
-  fr: { name: "Français", flag: "🇫🇷", rtl: false },
-  ar: { name: "العربية", flag: "🇸🇦", rtl: true },
-  zh: { name: "中文", flag: "🇨🇳", rtl: false },
-  hi: { name: "हिन्दी", flag: "🇮🇳", rtl: false },
-  de: { name: "Deutsch", flag: "🇩🇪", rtl: false },
-  it: { name: "Italiano", flag: "🇮🇹", rtl: false },
+  en: { name: "English",    flag: "🇬🇧", rtl: false },
+  np: { name: "नेपाली",      flag: "🇳🇵", rtl: false },
+  pt: { name: "Português",  flag: "🇵🇹", rtl: false },
+  es: { name: "Español",    flag: "🇪🇸", rtl: false },
+  fr: { name: "Français",   flag: "🇫🇷", rtl: false },
+  ar: { name: "العربية",    flag: "🇸🇦", rtl: true  },
+  zh: { name: "中文",        flag: "🇨🇳", rtl: false },
+  hi: { name: "हिन्दी",      flag: "🇮🇳", rtl: false },
+  de: { name: "Deutsch",    flag: "🇩🇪", rtl: false },
+  it: { name: "Italiano",   flag: "🇮🇹", rtl: false },
 };
 
 export const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {

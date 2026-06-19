@@ -29,3 +29,4 @@ export async function printReport(
     console.log(error);
   }
 }
+export default {};

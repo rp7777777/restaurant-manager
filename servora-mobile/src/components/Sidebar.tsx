@@ -30,6 +30,7 @@ const MENU_SECTIONS: { titleKey: string; items: MenuItem[] }[] = [
       { labelKey: "inventory",   icon: "inventory",      route: "/inventory-module" },
       { labelKey: "kitchen",     icon: "restaurant",     route: "/kitchen-module" },
       { labelKey: "store",       icon: "store",          route: "/store-module" },
+      { labelKey: "employees",   icon: "badge",          route: "/employees-module" },
     ],
   },
   {
@@ -43,7 +44,7 @@ const MENU_SECTIONS: { titleKey: string; items: MenuItem[] }[] = [
   {
     titleKey: "system",
     items: [
-      { labelKey: "settings", icon: "settings", route: "/settings" },
+      { labelKey: "settings", icon: "settings", route: "/settings-module" },
     ],
   },
 ];

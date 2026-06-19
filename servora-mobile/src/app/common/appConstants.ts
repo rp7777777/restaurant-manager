@@ -121,3 +121,4 @@ export const APP_SETTINGS = {
     true,
 
 };
+export default {};

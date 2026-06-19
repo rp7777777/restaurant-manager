@@ -46,3 +46,4 @@ export async function verifySession() {
   return !!user;
 
 }
+export default {};

@@ -151,3 +151,4 @@ export async function exportPDF(
   }
 
 }
+export default {};

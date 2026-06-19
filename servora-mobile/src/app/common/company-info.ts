@@ -162,3 +162,4 @@ Promise<CompanyInfo> {
   }
 
 }
+export default {};

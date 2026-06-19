@@ -76,3 +76,4 @@ export const logLogin = () =>
 
 export const logLogout = () =>
   saveAuditLog("AUTH", "LOGOUT", auth.currentUser?.uid ?? "");
+export default {};
