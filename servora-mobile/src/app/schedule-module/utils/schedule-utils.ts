@@ -1,5 +1,11 @@
 // ============================================
 // SERVORA ERP — Schedule Utils
+// ✅ Updated to new EmployeeDB fields
+// ✅ employeeNumber (not employeeNo)
+// ✅ firstName + lastName (not fullName)
+// ✅ monthlySalary (not basicSalary)
+// ✅ taxRate/ssRate — null not undefined
+// ✅ EmployeeSnapshot explicit return type
 // ✅ No circular dependency
 // ✅ 7.5h → 16:30 correct time calc
 // ✅ Negative hours protection
@@ -9,8 +15,8 @@
 import {
   EmployeeSchedule,
   DaySchedule,
-  EmployeeSnapshot,
   RestaurantSnapshot,
+  EmployeeSnapshot,
 } from "../types/schedule-types";
 import { RestaurantSettings } from "../types/restaurant-types";
 import { SCHEDULE_CONFIG } from "../constants/schedule-config";
@@ -31,18 +37,18 @@ export function buildDefaultDays(
   normalDailyHours?: number,
   defaultShiftStart?: string
 ): Record<string, DaySchedule> {
-  const safeHours = Math.max(0, normalDailyHours ?? SCHEDULE_CONFIG.NORMAL_DAILY_HOURS);
+  const safeHours  = Math.max(0, normalDailyHours ?? SCHEDULE_CONFIG.NORMAL_DAILY_HOURS);
   const shiftStart = defaultShiftStart ?? SCHEDULE_CONFIG.DEFAULT_START_TIME;
 
-  const parts = shiftStart.split(":");
+  const parts  = shiftStart.split(":");
   const startH = parseInt(parts[0], 10) || 9;
   const startM = parseInt(parts[1], 10) || 0;
 
-  const totalMinutes = startH * 60 + startM + Math.round(safeHours * 60);
+  const totalMinutes      = startH * 60 + startM + Math.round(safeHours * 60);
   const normalizedMinutes = totalMinutes % (24 * 60);
-  const endH = Math.floor(normalizedMinutes / 60);
-  const endM = normalizedMinutes % 60;
-  const endTime =
+  const endH              = Math.floor(normalizedMinutes / 60);
+  const endM              = normalizedMinutes % 60;
+  const endTime           =
     String(endH).padStart(2, "0") + ":" +
     String(endM).padStart(2, "0");
 
@@ -60,15 +66,17 @@ export function buildDefaultDays(
   return days;
 }
 
+// ✅ null not undefined — Firestore safe
+// ✅ explicit return type
 export function buildEmployeeSnapshot(employee: EmployeeDB): EmployeeSnapshot {
   return {
-    basicSalary:  employee.basicSalary,
+    basicSalary:  employee.monthlySalary,
     hourlyRate:   employee.hourlyRate,
-    overtimeRate: employee.overtimeRate,
-    holidayRate:  employee.holidayRate,
-    nightRate:    employee.nightRate,
-    taxRate:      employee.taxRate,
-    ssRate:       employee.ssRate,
+    overtimeRate: 0,
+    holidayRate:  0,
+    nightRate:    0,
+    taxRate:      employee.taxRate ?? null,
+    ssRate:       employee.ssRate  ?? null,
   };
 }
 
@@ -104,10 +112,10 @@ export function buildScheduleData(
   const stats = buildWeekSummary(days, weekDates);
 
   return {
-    employeeId:         employee.id,
-    employeeNo:         employee.employeeNo,
-    employeeName:       employee.fullName,
-    position:           employee.position,
+    employeeId:   employee.id,
+    employeeNo:   employee.employeeNumber,
+    employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
+    position:     employee.position,
     weekStart,
     days,
     restaurantId,

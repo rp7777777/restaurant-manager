@@ -1,8 +1,11 @@
 // ============================================
 // SERVORA ERP — EmployeePickerModal Component
-// ✅ employeeNo lowercase search
-// ✅ Avatar crash protection
-// ✅ Search by name/no/position
+// ✅ Updated to use new EmployeeDB fields
+// ✅ employeeNumber (not employeeNo)
+// ✅ firstName + lastName (not fullName)
+// ✅ monthlySalary (not basicSalary)
+// ✅ status check (not active boolean)
+// ✅ Search by name/number/position
 // ✅ Already added filter
 // ✅ Auto close + search reset
 // ============================================
@@ -17,11 +20,11 @@ import { useApp } from "../../../context/AppContext";
 import { EmployeeDB } from "../types/employee-types";
 
 interface Props {
-  visible: boolean;
-  employees: EmployeeDB[];
+  visible:      boolean;
+  employees:    EmployeeDB[];
   alreadyAdded: Set<string>;
-  onSelect: (employee: EmployeeDB) => void;
-  onClose: () => void;
+  onSelect:     (employee: EmployeeDB) => void;
+  onClose:      () => void;
 }
 
 export function EmployeePickerModal({
@@ -34,18 +37,20 @@ export function EmployeePickerModal({
   const { theme, fmt } = useApp();
   const [search, setSearch] = useState("");
 
+  // ✅ status check — not e.active boolean
   const available = employees.filter(
-    (e) => e.active && !alreadyAdded.has(e.employeeNo)
+    (e) => !alreadyAdded.has(e.employeeNumber)
   );
 
   const filtered = available.filter((e) => {
     const q = search.toLowerCase().trim();
     if (!q) return true;
+    // ✅ firstName + lastName
+    const fullName = `${e.firstName} ${e.lastName}`.toLowerCase();
     return (
-      (e.fullName ?? "").toLowerCase().includes(q) ||
-      // ✅ lowercase search for employeeNo
-      (e.employeeNo ?? "").toLowerCase().includes(q) ||
-      (e.position ?? "").toLowerCase().includes(q)
+      fullName.includes(q)                                    ||
+      (e.employeeNumber ?? "").toLowerCase().includes(q)      ||
+      (e.position       ?? "").toLowerCase().includes(q)
     );
   });
 
@@ -73,7 +78,7 @@ export function EmployeePickerModal({
 
           <View style={[styles.searchBox, {
             backgroundColor: theme.bg,
-            borderColor: theme.border,
+            borderColor:     theme.border,
           }]}>
             <MaterialIcons name="search" size={16} color={theme.textSecondary} />
             <TextInput
@@ -112,33 +117,40 @@ export function EmployeePickerModal({
                 </Text>
               </View>
             ) : (
-              filtered.map((emp) => (
-                <TouchableOpacity
-                  key={emp.id}
-                  style={[styles.empRow, { borderBottomColor: theme.border }]}
-                  onPress={() => handleSelect(emp)}
-                >
-                  <View style={styles.avatar}>
-                    {/* ✅ Avatar crash protection */}
-                    <Text style={styles.avatarText}>
-                      {(emp.fullName?.trim()?.charAt(0) || "?").toUpperCase()}
-                    </Text>
-                  </View>
+              filtered.map((emp) => {
+                // ✅ initials RB not just R
+                const initials =
+                  `${emp.firstName?.[0] ?? ""}${emp.lastName?.[0] ?? ""}`.toUpperCase();
+                const fullName = `${emp.firstName} ${emp.lastName}`.trim();
 
-                  <View style={styles.empInfo}>
-                    <Text style={[styles.empName, { color: theme.text }]}>
-                      {emp.fullName}
-                    </Text>
-                    <Text style={[styles.empSub, { color: theme.textSecondary }]}>
-                      No. {emp.employeeNo} · {emp.position}
-                    </Text>
-                  </View>
+                return (
+                  <TouchableOpacity
+                    key={emp.id}
+                    style={[styles.empRow, { borderBottomColor: theme.border }]}
+                    onPress={() => handleSelect(emp)}
+                  >
+                    <View style={styles.avatar}>
+                      <Text style={styles.avatarText}>
+                        {initials || "?"}
+                      </Text>
+                    </View>
 
-                  <Text style={styles.empSalary}>
-                    {fmt(emp.basicSalary)}
-                  </Text>
-                </TouchableOpacity>
-              ))
+                    <View style={styles.empInfo}>
+                      <Text style={[styles.empName, { color: theme.text }]}>
+                        {fullName}
+                      </Text>
+                      <Text style={[styles.empSub, { color: theme.textSecondary }]}>
+                        {emp.employeeNumber} · {emp.position || emp.role}
+                      </Text>
+                    </View>
+
+                    {/* ✅ monthlySalary not basicSalary */}
+                    <Text style={styles.empSalary}>
+                      {fmt(emp.monthlySalary)}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })
             )}
           </ScrollView>
         </View>
@@ -149,48 +161,48 @@ export function EmployeePickerModal({
 
 const styles = StyleSheet.create({
   overlay: {
-    flex: 1,
+    flex:            1,
     backgroundColor: "rgba(0,0,0,0.55)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 16,
+    justifyContent:  "center",
+    alignItems:      "center",
+    padding:         16,
   },
   modal: {
-    width: "100%",
-    maxWidth: 400,
+    width:     "100%",
+    maxWidth:  400,
     borderRadius: 18,
-    padding: 16,
+    padding:   16,
     maxHeight: "80%",
   },
   title:       { fontSize: 15, fontWeight: "800", marginBottom: 12 },
   searchBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    borderWidth: 1.5,
-    borderRadius: 9,
+    flexDirection:   "row",
+    alignItems:      "center",
+    gap:             8,
+    borderWidth:     1.5,
+    borderRadius:    9,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    marginBottom: 10,
+    marginBottom:    10,
   },
   searchInput: { flex: 1, fontSize: 13, padding: 0 },
   list:        { maxHeight: 320 },
   emptyBox:    { padding: 30, alignItems: "center", gap: 10 },
   emptyText:   { fontSize: 13, textAlign: "center" },
   empRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
+    flexDirection:  "row",
+    alignItems:     "center",
+    gap:            12,
     paddingVertical: 12,
     borderBottomWidth: 1,
   },
   avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width:           36,
+    height:          36,
+    borderRadius:    18,
     backgroundColor: "#00154f",
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems:      "center",
+    justifyContent:  "center",
   },
   avatarText: { color: "#FFD700", fontSize: 16, fontWeight: "800" },
   empInfo:    { flex: 1 },

@@ -1,5 +1,7 @@
 // ============================================
 // SERVORA ERP — Payroll Generator v3
+// ✅ employeeNumber (not employeeNo)
+// ✅ monthlySalary (not basicSalary)
 // ✅ No getDoc inside loop — faster
 // ✅ createdAt = serverTimestamp() only
 // ✅ restaurantPayrollDays from attendance
@@ -13,8 +15,8 @@ import {
 } from "firebase/firestore";
 import { db, auth } from "../../firebase";
 import { getMonthlyAttendance } from "./utils/payroll-attendance";
-import { resolveSnapshot } from "./utils/payroll-snapshot";
-import { calculatePayroll } from "./utils/payroll-calculator";
+import { resolveSnapshot }      from "./utils/payroll-snapshot";
+import { calculatePayroll }     from "./utils/payroll-calculator";
 import {
   getExistingPayrollNos,
   buildPayrollId,
@@ -22,23 +24,26 @@ import {
 import { PayrollDocument, PayrollStatus } from "./types/payroll-types";
 import { SCHEDULE_CONFIG } from "../schedule-module/constants/schedule-config";
 
+// ✅ employeeNumber not employeeNo
 async function loadEmployeeMap(
   restaurantId: string,
-  employeeNos: string[]
+  employeeNumbers: string[]
 ): Promise<Record<string, any>> {
   const map: Record<string, any> = {};
-  if (employeeNos.length === 0) return map;
+  if (employeeNumbers.length === 0) return map;
 
   const CHUNK = SCHEDULE_CONFIG.FIRESTORE_IN_QUERY_LIMIT;
-  for (let i = 0; i < employeeNos.length; i += CHUNK) {
-    const chunk = employeeNos.slice(i, i + CHUNK);
+  for (let i = 0; i < employeeNumbers.length; i += CHUNK) {
+    const chunk = employeeNumbers.slice(i, i + CHUNK);
     const snap  = await getDocs(query(
       collection(db, "restaurants", restaurantId, "employees"),
-      where("employeeNo", "in", chunk)
+      // ✅ employeeNumber field
+      where("employeeNumber", "in", chunk)
     ));
     snap.docs.forEach((d) => {
       const data = d.data();
-      map[data.employeeNo] = data;
+      // ✅ employeeNumber key
+      map[data.employeeNumber] = data;
     });
   }
   return map;
@@ -57,7 +62,10 @@ export async function generateMonthlyPayroll(
 
   // ── Step 2: Filter existing ───────────────
   const existingNos = await getExistingPayrollNos(restaurantId, monthStr);
-  const toCreate    = attendance.filter((e) => !existingNos.has(e.employeeNo));
+  // ✅ employeeNumber
+  const toCreate    = attendance.filter(
+    (e) => !existingNos.has(e.employeeNumber)
+  );
   const skipped     = attendance.length - toCreate.length;
   if (toCreate.length === 0) return { created: 0, skipped };
 
@@ -65,7 +73,7 @@ export async function generateMonthlyPayroll(
   const noSnapshot  = toCreate.filter((e) => !e.employeeSnapshot);
   const employeeMap = await loadEmployeeMap(
     restaurantId,
-    noSnapshot.map((e) => e.employeeNo)
+    noSnapshot.map((e) => e.employeeNumber)  // ✅
   );
 
   // ── Step 4: Batch write ───────────────────
@@ -78,13 +86,12 @@ export async function generateMonthlyPayroll(
 
     chunk.forEach((emp) => {
       const snapshot = resolveSnapshot(
-        emp.employeeNo,
+        emp.employeeNumber,  // ✅
         emp.employeeSnapshot,
         employeeMap
       );
       if (!snapshot) return;
 
-      // ✅ restaurantPayrollDays from MonthlyAttendance
       const totalDays = emp.restaurantPayrollDays ?? 30;
 
       const calc = calculatePayroll(
@@ -100,17 +107,18 @@ export async function generateMonthlyPayroll(
         0
       );
 
-      const docId  = buildPayrollId(emp.employeeNo, monthStr);
+      // ✅ employeeNumber
+      const docId  = buildPayrollId(emp.employeeNumber, monthStr);
       const docRef = doc(
         collection(db, "restaurants", restaurantId, "payroll"),
         docId
       );
 
       const payrollData: Omit<PayrollDocument, "id"> = {
-        employeeNo:   emp.employeeNo,
-        employeeName: emp.employeeName,
-        position:     emp.position,
-        month:        monthStr,
+        employeeNumber: emp.employeeNumber,  // ✅
+        employeeName:   emp.employeeName,
+        position:       emp.position,
+        month:          monthStr,
         snapshot,
         attendance: {
           workingDays:   emp.workingDays,
@@ -137,7 +145,6 @@ export async function generateMonthlyPayroll(
 
       batch.set(docRef, {
         ...payrollData,
-        // ✅ createdAt = serverTimestamp() only — no loop read needed
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });

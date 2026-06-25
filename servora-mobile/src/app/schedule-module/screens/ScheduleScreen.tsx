@@ -91,19 +91,24 @@ export default function ScheduleScreen() {
   });
 
   // ── Add employee ──────────────────────────
-  const handleAddEmployee = async (emp: EmployeeDB) => {
-    if (!restaurantId) return;
-    setSaving(true);
-    try {
-      await createSchedule(restaurantId, emp, selectedWeek);
-    } catch (err: any) {
-      Alert.alert("Error", err?.message ?? "Failed to add employee");
-    } finally {
-      setSaving(false);
-      setShowEmpPicker(false);
-    }
-  };
-
+const handleAddEmployee = async (emp: EmployeeDB) => {
+  console.log("🔥 Adding:", emp.employeeNumber, emp.firstName, restaurantId);
+  if (!restaurantId) {
+    console.log("❌ No restaurantId!");
+    return;
+  }
+  setSaving(true);
+  try {
+    await createSchedule(restaurantId, emp, selectedWeek);
+    console.log("✅ Schedule created!");
+  } catch (err: any) {
+    console.log("❌ Error:", err?.message);
+    Alert.alert("Error", err?.message ?? "Failed to add employee");
+  } finally {
+    setSaving(false);
+    setShowEmpPicker(false);
+  }
+};
   // ── Cell editor ───────────────────────────
   const openCell = (
     scheduleId: string, dayKey: string, current: DaySchedule

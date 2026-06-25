@@ -41,15 +41,14 @@ export interface WeekSummary {
 }
 
 export interface EmployeeSnapshot {
-  basicSalary: number;
-  hourlyRate: number;
+  basicSalary:  number;
+  hourlyRate:   number;
   overtimeRate: number;
-  holidayRate: number;
-  nightRate: number;
-  taxRate: number;
-  ssRate: number;
+  holidayRate:  number;
+  nightRate:    number;
+  taxRate?:     number | null;  // ✅ null accept garxa
+  ssRate?:      number | null;  // ✅ null accept garxa
 }
-
 export interface RestaurantSnapshot {
   currency: string;
   currencySymbol: string;

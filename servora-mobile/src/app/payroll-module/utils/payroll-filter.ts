@@ -20,9 +20,9 @@ export function filterPayrolls(
 
     // Search filter
     const matchSearch = !q ||
-      (p.employeeName ?? "").toLowerCase().includes(q) ||
-      (p.employeeNo   ?? "").toLowerCase().includes(q) ||
-      (p.position     ?? "").toLowerCase().includes(q);
+  (p.employeeName   ?? "").toLowerCase().includes(q) ||
+  (p.employeeNumber ?? "").toLowerCase().includes(q) || // ✅
+  (p.position       ?? "").toLowerCase().includes(q);
 
     return matchStatus && matchSearch;
   });

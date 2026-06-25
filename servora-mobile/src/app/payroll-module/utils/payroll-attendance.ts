@@ -1,5 +1,6 @@
 // ============================================
 // SERVORA ERP — Payroll Attendance Utils
+// ✅ employeeNumber (not employeeNo)
 // ✅ NORMAL_DAILY_HOURS — not hardcoded
 // ✅ restaurantSnapshot bata normalDailyHours
 // ✅ Safe month parsing — malformed date check
@@ -30,7 +31,6 @@ function getOverlappingWeeks(year: number, month: number): string[] {
   return weeks;
 }
 
-// ✅ Safe month check — malformed dates rejected
 function isInMonth(dateStr: string, year: number, month: number): boolean {
   const parts = dateStr.split("-");
   if (parts.length !== 3) return false;
@@ -51,7 +51,6 @@ export async function getMonthlyAttendance(
 ): Promise<MonthlyAttendance[]> {
   const weeks = getOverlappingWeeks(year, month);
 
-  // ✅ Parallel reads
   const weekSnaps = await Promise.all(
     weeks.map((week) =>
       getDocs(query(
@@ -61,52 +60,48 @@ export async function getMonthlyAttendance(
     )
   );
 
+  // ✅ employeeNumber not employeeNo
   const empMap: Record<string, MonthlyAttendance> = {};
 
   weekSnaps.forEach((snap) => {
     snap.docs.forEach((docSnap) => {
       const s  = docSnap.data() as any;
-      const no = s.employeeNo ?? "";
+      // ✅ employeeNumber
+      const no = s.employeeNumber ?? s.employeeNo ?? "";
       if (!no) return;
 
-      // ✅ No snapshot = skip here
-      // payroll-generator will fallback to Employee DB
       if (!s.employeeSnapshot && !empMap[no]?.employeeSnapshot) return;
 
       if (!empMap[no]) {
         empMap[no] = {
-        employeeNo:           no,
-        employeeName:         s.employeeName ?? "",
-        position:             s.position ?? s.category ?? "",
-        employeeSnapshot:     s.employeeSnapshot,
-        // ✅ restaurantSnapshot bata payrollMonthDays
-        restaurantPayrollDays: s.restaurantSnapshot?.payrollMonthDays ?? 30,
-        allowances:           [],
-        totalHours:           0,
-        overtimeHours:        0,
-        nightHours:           0,
-        workingDays:          0,
-        absentDays:           0,
-        holidayDays:          0,
-        holidayHours:         0,
-        sickDays:             0,
-        vacationDays:         0,
-        trainingHours:        0,
-      };
-     }
+          employeeNumber:       no,  // ✅
+          employeeName:         s.employeeName ?? "",
+          position:             s.position ?? s.category ?? "",
+          employeeSnapshot:     s.employeeSnapshot,
+          restaurantPayrollDays: s.restaurantSnapshot?.payrollMonthDays ?? 30,
+          allowances:           [],
+          totalHours:           0,
+          overtimeHours:        0,
+          nightHours:           0,
+          workingDays:          0,
+          absentDays:           0,
+          holidayDays:          0,
+          holidayHours:         0,
+          sickDays:             0,
+          vacationDays:         0,
+          trainingHours:        0,
+        };
+      }
 
-      // ✅ Most recent snapshot wins
       if (s.employeeSnapshot) {
         empMap[no].employeeSnapshot = s.employeeSnapshot;
       }
 
-      // ✅ Restaurant normalDailyHours from snapshot
       const normalDailyHours =
         s.restaurantSnapshot?.normalDailyHours ??
         SCHEDULE_CONFIG.NORMAL_DAILY_HOURS;
 
       Object.entries(s.days || {}).forEach(([dateStr, dayData]: [string, any]) => {
-        // ✅ Safe month check
         if (!isInMonth(dateStr, year, month)) return;
 
         const emp   = empMap[no];

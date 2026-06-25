@@ -1,5 +1,6 @@
 // ============================================
 // SERVORA ERP — Payroll Repository
+// ✅ employeeNumber (not employeeNo)
 // ✅ setDoc — deterministic ID
 // ✅ createdAt preserved on update
 // ✅ Lock protection on delete
@@ -22,11 +23,12 @@ const col = (restaurantId: string) =>
 const payrollDoc = (restaurantId: string, docId: string) =>
   doc(db, "restaurants", restaurantId, "payroll", docId);
 
+// ✅ employeeNumber not employeeNo
 export function buildPayrollId(
-  employeeNo: string,
+  employeeNumber: string,
   monthStr: string
 ): string {
-  return employeeNo + "_" + monthStr.replace(/[^a-zA-Z0-9-]/g, "_");
+  return employeeNumber + "_" + monthStr.replace(/[^a-zA-Z0-9-]/g, "_");
 }
 
 const STATUS_ORDER: Record<PayrollStatus, number> = {
@@ -70,6 +72,7 @@ export async function getPayrollsByMonth(
   }));
 }
 
+// ✅ employeeNumber not employeeNo
 export async function getExistingPayrollNos(
   restaurantId: string,
   month: string
@@ -77,10 +80,11 @@ export async function getExistingPayrollNos(
   const snap = await getDocs(
     query(col(restaurantId), where("month", "==", month))
   );
-  return new Set(snap.docs.map((d) => d.data().employeeNo as string));
+  return new Set(
+    snap.docs.map((d) => d.data().employeeNumber as string)
+  );
 }
 
-// ✅ createdAt preserved on update
 export async function savePayroll(
   restaurantId: string,
   docId: string,
@@ -97,7 +101,6 @@ export async function savePayroll(
   });
 }
 
-// ✅ Status flow — backwards blocked
 export async function updatePayrollStatus(
   restaurantId: string,
   docId: string,
@@ -122,13 +125,11 @@ export async function updatePayrollStatus(
   });
 }
 
-// ✅ lockPayroll — PAID status protected
 export async function lockPayroll(
   restaurantId: string,
   docId: string
 ): Promise<void> {
   const snap = await getDoc(payrollDoc(restaurantId, docId));
-  // ✅ Already PAID — don't downgrade
   if (snap.data()?.payrollStatus === "PAID") return;
 
   await updateDoc(payrollDoc(restaurantId, docId), {
@@ -145,7 +146,6 @@ export async function markPayrollPaid(
   await updatePayrollStatus(restaurantId, docId, "PAID");
 }
 
-// ✅ Lock protection — locked payroll cannot be deleted
 export async function deletePayroll(
   restaurantId: string,
   docId: string

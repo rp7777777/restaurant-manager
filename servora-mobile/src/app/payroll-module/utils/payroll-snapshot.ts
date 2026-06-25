@@ -1,5 +1,7 @@
 // ============================================
 // SERVORA ERP — Payroll Snapshot Utils
+// ✅ monthlySalary (not basicSalary)
+// ✅ employeeNumber (not employeeNo)
 // ✅ isValidSnapshot — NaN/Infinity check
 // ✅ No Firestore query — caller provides map
 // ✅ Schedule snapshot wins — DB fallback
@@ -9,7 +11,8 @@ import { PayrollSnapshot } from "../types/payroll-types";
 import { SCHEDULE_CONFIG } from "../../schedule-module/constants/schedule-config";
 
 export function buildPayrollSnapshot(data: any): PayrollSnapshot {
-  const basicSalary = data.basicSalary ?? 0;
+  // ✅ monthlySalary not basicSalary
+  const basicSalary = data.monthlySalary ?? data.basicSalary ?? 0;
   return {
     basicSalary,
     hourlyRate:   data.hourlyRate ?? (
@@ -25,7 +28,7 @@ export function buildPayrollSnapshot(data: any): PayrollSnapshot {
   };
 }
 
-// ✅ NaN + Infinity check — not just typeof
+// ✅ NaN + Infinity check
 export function isValidSnapshot(snapshot: any): snapshot is PayrollSnapshot {
   return (
     snapshot != null &&
@@ -39,19 +42,16 @@ export function isValidSnapshot(snapshot: any): snapshot is PayrollSnapshot {
   );
 }
 
-// ✅ Resolve from employeeMap — no Firestore query!
-// Caller (payroll-generator) loads employeeMap once
+// ✅ employeeNumber not employeeNo
 export function resolveSnapshot(
-  employeeNo: string,
+  employeeNumber: string,
   scheduleSnapshot?: PayrollSnapshot,
   employeeMap?: Record<string, any>
 ): PayrollSnapshot | null {
-  // ✅ Schedule snapshot — most accurate
   if (scheduleSnapshot && isValidSnapshot(scheduleSnapshot)) {
     return scheduleSnapshot;
   }
-  // ✅ Employee DB fallback — from pre-loaded map
-  const empData = employeeMap?.[employeeNo];
+  const empData = employeeMap?.[employeeNumber];
   if (empData) {
     const fallback = buildPayrollSnapshot(empData);
     if (isValidSnapshot(fallback)) return fallback;
