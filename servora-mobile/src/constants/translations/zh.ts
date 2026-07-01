@@ -103,6 +103,28 @@ const zh: Translation = {
   profitLoss:         "损益",
   monthlyReport:      "月度报告",
   executiveDashboard: "管理驾驶舱",
+
+  // ── Sales Entry ───────────────────────────
+  dailySales:          "每日销售",
+  history:             "历史记录",
+  editSale:            "编辑销售",
+  newEntry:            "新增记录",
+  shift:               "班次",
+  amount:              "金额",
+  noteOptional:        "备注（可选）",
+  updateSale:          "更新销售",
+  saveSale:            "保存销售",
+  cancelEdit:          "取消编辑",
+  todaysTotal:         "今日合计",
+  fullHistory:         "完整记录",
+  todaysEntries:       "今日记录",
+  noSalesToday:        "今日暂无销售记录",
+  selectShift:         "选择班次",
+  lockShift:           "锁定班次",
+  locked:              "已锁定",
+  lock:                "锁定",
+  addNote:             "????...",
+  paymentMethod:       "????",
 };
 
 export default zh;

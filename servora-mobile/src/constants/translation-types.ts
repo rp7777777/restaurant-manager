@@ -40,7 +40,28 @@ export interface TranslationKeys {
   branches:           string;
   analytics:          string;
   pos:                string;
-
+  
+  // ── Sales Entry ───────────────────────────
+  dailySales:          string;
+  history:             string;
+  editSale:            string;
+  newEntry:            string;
+  shift:               string;
+  amount:              string;
+  noteOptional:        string;
+  updateSale:          string;
+  saveSale:            string;
+  cancelEdit:          string;
+  todaysTotal:         string;
+  fullHistory:         string;
+  todaysEntries:       string;
+  noSalesToday:        string;
+  selectShift:         string;
+  lockShift:           string;
+  locked:              string;
+  lock:                string;
+  addNote:             string;
+  paymentMethod:       string;
   // ── Auth ─────────────────────────────────
   login:              string;
   logout:             string;

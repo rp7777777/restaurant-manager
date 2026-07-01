@@ -102,6 +102,28 @@ const ko: Translation = {
   profitLoss:         "손익",
   monthlyReport:      "월별 보고서",
   executiveDashboard: "경영 대시보드",
+
+  // ── Sales Entry ───────────────────────────
+  dailySales:          "일일 매출",
+  history:             "기록",
+  editSale:            "매출 수정",
+  newEntry:            "새 항목",
+  shift:               "교대",
+  amount:              "금액",
+  noteOptional:        "메모 (선택사항)",
+  updateSale:          "매출 업데이트",
+  saveSale:            "매출 저장",
+  cancelEdit:          "수정 취소",
+  todaysTotal:         "오늘 합계",
+  fullHistory:         "전체 기록",
+  todaysEntries:       "오늘 항목",
+  noSalesToday:        "오늘 매출 없음",
+  selectShift:         "교대 선택",
+  lockShift:           "교대 잠금",
+  locked:              "잠김",
+  lock:                "잠금",
+  addNote:             "?? ??...",
+  paymentMethod:       "?? ??",
 };
 
 export default ko;

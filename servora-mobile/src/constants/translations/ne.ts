@@ -103,6 +103,28 @@ const ne: Translation = {
   profitLoss:         "नाफा र नोक्सान",
   monthlyReport:      "मासिक रिपोर्ट",
   executiveDashboard: "कार्यकारी ड्यासबोर्ड",
+
+  // ── Sales Entry ───────────────────────────
+  dailySales:          "दैनिक बिक्री",
+  history:             "इतिहास",
+  editSale:            "बिक्री सम्पादन",
+  newEntry:            "नयाँ प्रविष्टि",
+  shift:               "सिफ्ट",
+  amount:              "रकम",
+  noteOptional:        "नोट (ऐच्छिक)",
+  updateSale:          "बिक्री अपडेट",
+  saveSale:            "बिक्री सेभ",
+  cancelEdit:          "सम्पादन रद्द",
+  todaysTotal:         "आजको कुल",
+  fullHistory:         "पूर्ण इतिहास",
+  todaysEntries:       "आजका प्रविष्टिहरू",
+  noSalesToday:        "आज कुनै बिक्री छैन",
+  selectShift:         "सिफ्ट छान्नुस्",
+  lockShift:           "सिफ्ट लक गर्नुस्",
+  locked:              "लक भयो",
+  lock:                "लक",
+  addNote:             "??? ???????...",
+  paymentMethod:       "???????? ????",
 };
 
 export default ne;

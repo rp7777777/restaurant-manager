@@ -102,6 +102,28 @@ const de: Translation = {
   profitLoss:         "Gewinn und Verlust",
   monthlyReport:      "Monatsbericht",
   executiveDashboard: "Führungs-Dashboard",
+
+  // ── Sales Entry ───────────────────────────
+  dailySales:          "Tagesumsatz",
+  history:             "Verlauf",
+  editSale:            "Verkauf bearbeiten",
+  newEntry:            "Neuer Eintrag",
+  shift:               "Schicht",
+  amount:              "Betrag",
+  noteOptional:        "Notiz (Optional)",
+  updateSale:          "Verkauf aktualisieren",
+  saveSale:            "Verkauf speichern",
+  cancelEdit:          "Bearbeitung abbrechen",
+  todaysTotal:         "Heutiger Gesamtumsatz",
+  fullHistory:         "Vollständiger Verlauf",
+  todaysEntries:       "Heutige Einträge",
+  noSalesToday:        "Heute keine Verkäufe",
+  selectShift:         "Schicht auswählen",
+  lockShift:           "Schicht sperren",
+  locked:              "Gesperrt",
+  lock:                "Sperren",
+  addNote:             "Notiz hinzuf�gen...",
+  paymentMethod:       "Zahlungsmethode",
 };
 
 export default de;

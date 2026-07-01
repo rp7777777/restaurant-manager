@@ -102,6 +102,28 @@ const da: Translation = {
   profitLoss:         "Gevinst og tab",
   monthlyReport:      "Månedlig rapport",
   executiveDashboard: "Leder-dashboard",
+
+  // ── Sales Entry ───────────────────────────
+  dailySales:          "Dagligt Salg",
+  history:             "Historik",
+  editSale:            "Rediger Salg",
+  newEntry:            "Ny Indtastning",
+  shift:               "Vagt",
+  amount:              "Beløb",
+  noteOptional:        "Note (Valgfri)",
+  updateSale:          "Opdater Salg",
+  saveSale:            "Gem Salg",
+  cancelEdit:          "Annuller Redigering",
+  todaysTotal:         "Dagens Total",
+  fullHistory:         "Fuld Historik",
+  todaysEntries:       "Dagens Indtastninger",
+  noSalesToday:        "Ingen salg i dag",
+  selectShift:         "Vælg Vagt",
+  lockShift:           "Lås Vagt",
+  locked:              "Låst",
+  lock:                "Lås",
+  addNote:             "Tilf�j note...",
+  paymentMethod:       "Betalingsmetode",
 };
 
 export default da;

@@ -102,6 +102,28 @@ const ja: Translation = {
   profitLoss:         "損益",
   monthlyReport:      "月次レポート",
   executiveDashboard: "経営ダッシュボード",
+
+  // ── Sales Entry ───────────────────────────
+  dailySales:          "日次売上",
+  history:             "履歴",
+  editSale:            "売上編集",
+  newEntry:            "新規入力",
+  shift:               "シフト",
+  amount:              "金額",
+  noteOptional:        "メモ（任意）",
+  updateSale:          "売上更新",
+  saveSale:            "売上保存",
+  cancelEdit:          "編集キャンセル",
+  todaysTotal:         "本日の合計",
+  fullHistory:         "全履歴",
+  todaysEntries:       "本日の入力",
+  noSalesToday:        "本日の売上はありません",
+  selectShift:         "シフト選択",
+  lockShift:           "シフトをロック",
+  locked:              "ロック済み",
+  lock:                "ロック",
+  addNote:             "?????...",
+  paymentMethod:       "????",
 };
 
 export default ja;

@@ -102,6 +102,28 @@ const it: Translation = {
   profitLoss:         "Profitti e Perdite",
   monthlyReport:      "Report Mensile",
   executiveDashboard: "Dashboard Esecutivo",
+
+  // ── Sales Entry ───────────────────────────
+  dailySales:          "Vendite Giornaliere",
+  history:             "Cronologia",
+  editSale:            "Modifica Vendita",
+  newEntry:            "Nuova Voce",
+  shift:               "Turno",
+  amount:              "Importo",
+  noteOptional:        "Nota (Opzionale)",
+  updateSale:          "Aggiorna Vendita",
+  saveSale:            "Salva Vendita",
+  cancelEdit:          "Annulla Modifica",
+  todaysTotal:         "Totale di Oggi",
+  fullHistory:         "Cronologia Completa",
+  todaysEntries:       "Voci di Oggi",
+  noSalesToday:        "Nessuna vendita oggi",
+  selectShift:         "Seleziona Turno",
+  lockShift:           "Blocca Turno",
+  locked:              "Bloccato",
+  lock:                "Blocca",
+  addNote:             "Aggiungi nota...",
+  paymentMethod:       "Metodo di Pagamento",
 };
 
 export default it;

@@ -103,6 +103,29 @@ const ar: Translation = {
   profitLoss:         "الأرباح والخسائر",
   monthlyReport:      "التقرير الشهري",
   executiveDashboard: "لوحة تحكم تنفيذية",
+
+  // ── Sales Entry ───────────────────────────
+  dailySales:          "المبيعات اليومية",
+  history:             "السجل",
+  editSale:            "تعديل البيع",
+  newEntry:            "إدخال جديد",
+  shift:               "الوردية",
+  amount:              "المبلغ",
+  noteOptional:        "ملاحظة (اختياري)",
+  updateSale:          "تحديث البيع",
+  saveSale:            "حفظ البيع",
+  cancelEdit:          "إلغاء التعديل",
+  todaysTotal:         "إجمالي اليوم",
+  fullHistory:         "السجل الكامل",
+  todaysEntries:       "إدخالات اليوم",
+  noSalesToday:        "لا توجد مبيعات اليوم",
+  selectShift:         "اختر الوردية",
+  lockShift:           "قفل الوردية",
+  locked:              "مقفل",
+  lock:                "قفل",
+  addNote:             "??? ??????...",
+  paymentMethod:       "????? ?????",
+
 };
 
 export default ar;

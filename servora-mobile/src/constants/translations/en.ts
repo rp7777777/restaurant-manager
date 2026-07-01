@@ -104,6 +104,28 @@ const en: Translation = {
   profitLoss:         "Profit & Loss",
   monthlyReport:      "Monthly Report",
   executiveDashboard: "Executive Dashboard",
+
+  // ── Sales Entry ───────────────────────────
+  dailySales:          "Daily Sales",
+  history:             "History",
+  editSale:            "Edit Sale",
+  newEntry:            "New Entry",
+  shift:               "Shift",
+  amount:              "Amount",
+  noteOptional:        "Note (Optional)",
+  updateSale:          "Update Sale",
+  saveSale:            "Save Sale",
+  cancelEdit:          "Cancel Edit",
+  todaysTotal:         "Today's Total",
+  fullHistory:         "Full History",
+  todaysEntries:       "Today's Entries",
+  noSalesToday:        "No sales recorded today",
+  selectShift:         "Select Shift",
+  lockShift:           "Lock Shift",
+  locked:              "Locked",
+  lock:                "Lock",
+  addNote:             "Add note...",
+  paymentMethod: "Payment Method",
 };
 
 export default en;

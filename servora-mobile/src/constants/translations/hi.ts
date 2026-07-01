@@ -102,6 +102,28 @@ const hi: Translation = {
   profitLoss:         "लाभ और हानि",
   monthlyReport:      "मासिक रिपोर्ट",
   executiveDashboard: "कार्यकारी डैशबोर्ड",
+
+  // ── Sales Entry ───────────────────────────
+  dailySales:          "दैनिक बिक्री",
+  history:             "इतिहास",
+  editSale:            "बिक्री संपादित करें",
+  newEntry:            "नई प्रविष्टि",
+  shift:               "शिफ्ट",
+  amount:              "राशि",
+  noteOptional:        "नोट (वैकल्पिक)",
+  updateSale:          "बिक्री अपडेट करें",
+  saveSale:            "बिक्री सहेजें",
+  cancelEdit:          "संपादन रद्द करें",
+  todaysTotal:         "आज का कुल",
+  fullHistory:         "पूरा इतिहास",
+  todaysEntries:       "आज की प्रविष्टियां",
+  noSalesToday:        "आज कोई बिक्री नहीं",
+  selectShift:         "शिफ्ट चुनें",
+  lockShift:           "शिफ्ट लॉक करें",
+  locked:              "लॉक है",
+  lock:                "लॉक",
+  addNote:             "??? ??????...",
+  paymentMethod:       "?????? ????",
 };
 
 export default hi;
