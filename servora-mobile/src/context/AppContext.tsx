@@ -3,22 +3,30 @@
 // ✅ Leave pay rates added
 // ✅ Break policy complete
 // ✅ Worldwide ready
+// ✅ New translation system — 14 languages
+// ✅ t() — type-safe keyof TranslationKeys
+// ✅ restaurant.language — validated auto sync
+// ✅ contextValue — useMemo
+// ✅ language: LanguageCode — type-safe
+// ✅ DEFAULT_RESTAURANT — Object.freeze
+// FROZEN
 // ============================================
 
 import React, {
   createContext, useContext, useState,
-  useCallback, useEffect, ReactNode,
+  useCallback, useEffect, useMemo, ReactNode,
 } from "react";
 import {
   doc, getDoc, setDoc,
   onSnapshot, serverTimestamp,
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
-import { auth, db } from "../firebase";
+import { auth, db }          from "../firebase";
+import { ThemeName, THEMES } from "../constants/theme";
 import {
-  ThemeName, LanguageCode,
-  THEMES, TRANSLATIONS,
-} from "../constants/theme";
+  LanguageCode, TranslationKeys,
+}                            from "../constants/translation-types";
+import { TRANSLATIONS }      from "../constants/translations/index";
 
 export interface RestaurantInfo {
   id: string;
@@ -35,7 +43,8 @@ export interface RestaurantInfo {
   defaultTaxRate: number;
   defaultSSRate: number;
   payrollMonthDays: number;
-  language: string;
+  // ✅ LanguageCode — type-safe
+  language: LanguageCode;
   settingsVersion: number;
   normalDailyHours: number;
   normalWeeklyHours: number;
@@ -44,7 +53,6 @@ export interface RestaurantInfo {
   defaultBreakMinutes: number;
   autoDeductBreak: boolean;
   autoDeductBreakAfterHours: number;
-  // ✅ Leave pay rates
   sickLeavePayRate: number;
   vacationPayRate: number;
   trainingPayRate: number;
@@ -68,7 +76,8 @@ interface AppContextType {
   setTheme: (name: ThemeName) => void;
   lang: LanguageCode;
   setLang: (code: LanguageCode) => void;
-  t: (key: string) => string;
+  // ✅ type-safe
+  t: (key: keyof TranslationKeys) => string;
   userProfile: UserProfile | null;
   userLoading: boolean;
   restaurant: RestaurantInfo | null;
@@ -90,7 +99,6 @@ interface AppContextType {
   defaultBreakMinutes: number;
   autoDeductBreak: boolean;
   autoDeductBreakAfterHours: number;
-  // ✅ Leave pay rates
   sickLeavePayRate: number;
   vacationPayRate: number;
   trainingPayRate: number;
@@ -100,7 +108,8 @@ interface AppContextType {
   refreshRestaurant: () => Promise<void>;
 }
 
-const DEFAULT_RESTAURANT: RestaurantInfo = {
+// ✅ Object.freeze — immutable
+const DEFAULT_RESTAURANT = Object.freeze<RestaurantInfo>({
   id: "",
   name: "Servora ERP",
   address: "",
@@ -124,14 +133,13 @@ const DEFAULT_RESTAURANT: RestaurantInfo = {
   defaultBreakMinutes: 30,
   autoDeductBreak: true,
   autoDeductBreakAfterHours: 6,
-  // ✅ Leave defaults
   sickLeavePayRate:     50,
   vacationPayRate:      100,
   trainingPayRate:      100,
   publicHolidayPayRate: 200,
   dayOffDoPayRate:      100,
   dayOffDcPayRate:      0,
-};
+});
 
 const AppContext = createContext<AppContextType>({
   themeName: "navyDark",
@@ -139,7 +147,7 @@ const AppContext = createContext<AppContextType>({
   setTheme: () => {},
   lang: "en",
   setLang: () => {},
-  t: (key) => key,
+  t: (key) => key as string,
   userProfile: null,
   userLoading: true,
   restaurant: null,
@@ -180,14 +188,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const theme = THEMES[themeName];
 
+  // ✅ t() — type-safe
   const t = useCallback(
-    (key: string): string =>
-      TRANSLATIONS[lang]?.[key] ?? TRANSLATIONS["en"]?.[key] ?? key,
+    (key: keyof TranslationKeys): string =>
+      TRANSLATIONS[lang]?.[key]
+      ?? TRANSLATIONS["en"]?.[key]
+      ?? (key as string),
     [lang]
   );
 
   const setTheme = useCallback((name: ThemeName) => setThemeName(name), []);
   const setLang  = useCallback((code: LanguageCode) => setLangState(code), []);
+
+  // ✅ restaurant.language — validated auto sync
+  // no cast needed — language already LanguageCode
+  useEffect(() => {
+    if (restaurant?.language && restaurant.language in TRANSLATIONS) {
+      setLangState(restaurant.language);
+    }
+  }, [restaurant?.language]);
 
   useEffect(() => {
     if (!restaurantId) return;
@@ -265,9 +284,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const currencyCode   = restaurant?.currency       ?? "EUR";
   const currencySymbol = restaurant?.currencySymbol ?? "€";
-  const locale         = restaurant?.language && restaurant?.country
-    ? restaurant.language + "-" + restaurant.country
-    : "en-IE";
+
+  // ✅ locale — useMemo
+  const locale = useMemo(() =>
+    restaurant?.language && restaurant?.country
+      ? restaurant.language + "-" + restaurant.country
+      : "en-IE",
+    [restaurant?.language, restaurant?.country]
+  );
 
   const fmt = useCallback(
     (amount: number): string => {
@@ -288,39 +312,49 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [locale]
   );
 
+  // ✅ contextValue — useMemo
+  const contextValue = useMemo(() => ({
+    themeName, theme, setTheme,
+    lang, setLang, t,
+    userProfile, userLoading,
+    restaurant,
+    restaurantId,
+    currencyCode,
+    currencySymbol,
+    currency:                  currencySymbol,
+    fmt,
+    formatNumber,
+    settings:                  restaurant,
+    defaultTaxRate:             restaurant?.defaultTaxRate             ?? 11,
+    defaultSSRate:              restaurant?.defaultSSRate              ?? 11,
+    timezone:                   restaurant?.timezone                   ?? "Europe/Lisbon",
+    dateFormat:                 restaurant?.dateFormat                 ?? "DD/MM/YYYY",
+    payrollMonthDays:           restaurant?.payrollMonthDays           ?? 30,
+    normalDailyHours:           restaurant?.normalDailyHours           ?? 8,
+    normalWeeklyHours:          restaurant?.normalWeeklyHours          ?? 40,
+    paymentType:                restaurant?.paymentType                ?? "MONTHLY",
+    defaultBreakMinutes:        restaurant?.defaultBreakMinutes        ?? 30,
+    autoDeductBreak:            restaurant?.autoDeductBreak            ?? true,
+    autoDeductBreakAfterHours:  restaurant?.autoDeductBreakAfterHours  ?? 6,
+    sickLeavePayRate:     restaurant?.sickLeavePayRate     ?? 50,
+    vacationPayRate:      restaurant?.vacationPayRate      ?? 100,
+    trainingPayRate:      restaurant?.trainingPayRate      ?? 100,
+    publicHolidayPayRate: restaurant?.publicHolidayPayRate ?? 200,
+    dayOffDoPayRate:      restaurant?.dayOffDoPayRate      ?? 100,
+    dayOffDcPayRate:      restaurant?.dayOffDcPayRate      ?? 0,
+    refreshRestaurant,
+  }), [
+    themeName, theme, setTheme,
+    lang, setLang, t,
+    userProfile, userLoading,
+    restaurant, restaurantId,
+    currencyCode, currencySymbol,
+    fmt, formatNumber,
+    refreshRestaurant,
+  ]);
+
   return (
-    <AppContext.Provider value={{
-      themeName, theme, setTheme,
-      lang, setLang, t,
-      userProfile, userLoading,
-      restaurant,
-      restaurantId,
-      currencyCode,
-      currencySymbol,
-      currency:                  currencySymbol,
-      fmt,
-      formatNumber,
-      settings:                  restaurant,
-      defaultTaxRate:             restaurant?.defaultTaxRate             ?? 11,
-      defaultSSRate:              restaurant?.defaultSSRate              ?? 11,
-      timezone:                   restaurant?.timezone                   ?? "Europe/Lisbon",
-      dateFormat:                 restaurant?.dateFormat                 ?? "DD/MM/YYYY",
-      payrollMonthDays:           restaurant?.payrollMonthDays           ?? 30,
-      normalDailyHours:           restaurant?.normalDailyHours           ?? 8,
-      normalWeeklyHours:          restaurant?.normalWeeklyHours          ?? 40,
-      paymentType:                restaurant?.paymentType                ?? "MONTHLY",
-      defaultBreakMinutes:        restaurant?.defaultBreakMinutes        ?? 30,
-      autoDeductBreak:            restaurant?.autoDeductBreak            ?? true,
-      autoDeductBreakAfterHours:  restaurant?.autoDeductBreakAfterHours  ?? 6,
-      // ✅ Leave pay rates
-      sickLeavePayRate:     restaurant?.sickLeavePayRate     ?? 50,
-      vacationPayRate:      restaurant?.vacationPayRate      ?? 100,
-      trainingPayRate:      restaurant?.trainingPayRate      ?? 100,
-      publicHolidayPayRate: restaurant?.publicHolidayPayRate ?? 200,
-      dayOffDoPayRate:      restaurant?.dayOffDoPayRate      ?? 100,
-      dayOffDcPayRate:      restaurant?.dayOffDcPayRate      ?? 0,
-      refreshRestaurant,
-    }}>
+    <AppContext.Provider value={contextValue}>
       {children}
     </AppContext.Provider>
   );

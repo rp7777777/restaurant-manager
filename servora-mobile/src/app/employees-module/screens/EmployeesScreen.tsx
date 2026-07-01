@@ -286,10 +286,10 @@ export default function EmployeesScreen() {
 const styles = StyleSheet.create({
   container:     { flex: 1 },
   header:        { paddingTop: Platform.OS === "web" ? 28 : 50, paddingBottom: 24, paddingHorizontal: 20 },
-  headerRow:     { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  headerRow:     { flexDirection: "row", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 },
   headerTitle:   { color: "#FFD700", fontSize: 24, fontWeight: "900", letterSpacing: 1 },
   headerSub:     { color: "rgba(255,255,255,0.65)", fontSize: 12, marginTop: 3 },
-  headerActions: { flexDirection: "row", gap: 10, alignItems: "center" },
+ headerActions:  { flexDirection: "row", alignItems: "center", gap: 10 },
   headerBtn:     { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   addBtn:        { width: 40, height: 40, borderRadius: 20, backgroundColor: "#FFD700", alignItems: "center", justifyContent: "center" },
   body:          { padding: 14, paddingBottom: 40 },

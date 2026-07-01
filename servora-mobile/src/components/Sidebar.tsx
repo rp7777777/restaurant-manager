@@ -24,23 +24,24 @@ const MENU_SECTIONS: { titleKey: string; items: MenuItem[] }[] = [
   {
     titleKey: "operations",
     items: [
-      { labelKey: "salesEntry",  icon: "point-of-sale",  route: "/add-sale" },
-      { labelKey: "salesList",   icon: "list-alt",       route: "/sales-list" },
-      { labelKey: "expenses",    icon: "receipt",        route: "/expenses" },
-      { labelKey: "inventory",   icon: "inventory",      route: "/inventory-module" },
-      { labelKey: "kitchen",     icon: "restaurant",     route: "/kitchen-module" },
-      { labelKey: "store",       icon: "store",          route: "/store-module" },
-      { labelKey: "employees",   icon: "badge",          route: "/employees-module" },
-      // ✅ Attendance added
+      { labelKey: "salesEntry",  icon: "point-of-sale",  route: "/add-sale"          },
+      { labelKey: "salesList",   icon: "list-alt",       route: "/sales-list"        },
+      { labelKey: "expenses",    icon: "receipt",        route: "/expenses"          },
+      { labelKey: "inventory",   icon: "inventory",      route: "/inventory-module"  },
+      { labelKey: "kitchen",     icon: "restaurant",     route: "/kitchen-module"    },
+      { labelKey: "store",       icon: "store",          route: "/store-module"      },
+      { labelKey: "employees",   icon: "badge",          route: "/employees-module"  },
       { labelKey: "attendance",  icon: "fact-check",     route: "/attendance-module" },
     ],
   },
   {
     titleKey: "finance",
     items: [
-      { labelKey: "payroll",  icon: "payments",       route: "/payroll-module" },
-      { labelKey: "schedule", icon: "calendar-month", route: "/schedule-module" },
-      { labelKey: "reports",  icon: "bar-chart",      route: "/analytics" },
+      { labelKey: "payroll",    icon: "payments",       route: "/payroll-module"      },
+      { labelKey: "schedule",   icon: "calendar-month", route: "/schedule-module"     },
+      // ✅ Labour Cost added
+      { labelKey: "labourCost", icon: "trending-up",    route: "/labour-cost-module"  },
+      { labelKey: "reports",    icon: "bar-chart",      route: "/analytics"           },
     ],
   },
   {
@@ -62,8 +63,8 @@ export default function Sidebar({ onClose }: Props) {
 
   const handleLogout = async () => {
     try {
-      const { auth } = await import("../firebase");
-      const { signOut } = await import("firebase/auth");
+      const { auth }     = await import("../firebase");
+      const { signOut }  = await import("firebase/auth");
       await signOut(auth);
     } catch (_) {}
     router.replace("/login" as any);
@@ -78,7 +79,9 @@ export default function Sidebar({ onClose }: Props) {
           <MaterialIcons name="restaurant" size={22} color={theme.accent} />
         </View>
         <View style={styles.logoTextWrap}>
-          <Text style={[styles.logoText, { color: theme.accent }]}>SERVORA ERP</Text>
+          <Text style={[styles.logoText, { color: theme.accent }]}>
+            SERVORA ERP
+          </Text>
           <Text style={[styles.logoSub, { color: theme.sidebarSection }]}>
             {t("appSubtitle")}
           </Text>
@@ -110,7 +113,9 @@ export default function Sidebar({ onClose }: Props) {
                   <MaterialIcons
                     name={item.icon}
                     size={19}
-                    color={isActive ? theme.sidebarActiveText : theme.sidebarText}
+                    color={isActive
+                      ? theme.sidebarActiveText
+                      : theme.sidebarText}
                   />
                   <Text
                     style={[
@@ -155,7 +160,7 @@ export default function Sidebar({ onClose }: Props) {
 
 const styles = StyleSheet.create({
   container: {
-    flex:    1,
+    flex:       1,
     paddingTop: Platform.OS === "web" ? 0 : 44,
   },
   logoContainer: {
@@ -197,14 +202,14 @@ const styles = StyleSheet.create({
     paddingLeft:   10,
   },
   menuItem: {
-    flexDirection:  "row",
-    alignItems:     "center",
-    gap:            10,
+    flexDirection:     "row",
+    alignItems:        "center",
+    gap:               10,
     paddingVertical:   9,
     paddingHorizontal: 10,
-    borderRadius:   9,
-    marginBottom:   1,
-    position:       "relative",
+    borderRadius:      9,
+    marginBottom:      1,
+    position:          "relative",
   },
   menuText: {
     fontSize: 13,
@@ -219,15 +224,15 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   logoutBtn: {
-    flexDirection: "row",
-    alignItems:    "center",
-    gap:           10,
-    margin:        12,
-    padding:       12,
+    flexDirection:   "row",
+    alignItems:      "center",
+    gap:             10,
+    margin:          12,
+    padding:         12,
     backgroundColor: "rgba(255,107,107,0.1)",
-    borderRadius:  10,
-    borderWidth:   1,
-    borderColor:   "rgba(255,107,107,0.25)",
+    borderRadius:    10,
+    borderWidth:     1,
+    borderColor:     "rgba(255,107,107,0.25)",
   },
   logoutText: {
     color:      "#ff6b6b",
