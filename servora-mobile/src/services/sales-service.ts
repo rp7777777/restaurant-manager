@@ -9,7 +9,7 @@ import {
   serverTimestamp, Timestamp, getDoc,
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
-import { logCreate, logEdit, logDelete } from "../security/audit-service";
+import { logCreate, logEdit, logDelete } from "../app/security/audit-service";
 import { updateDashboardStats } from "./dashboard-service";
 
 // ── Types ────────────────────────────────────

@@ -9,7 +9,7 @@ import {
   serverTimestamp, increment,
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
-import { logCreate, logEdit, logDelete } from "../security/audit-service";
+import { logCreate, logEdit, logDelete } from "../app/security/audit-service";
 
 // ── Types ────────────────────────────────────
 export interface InventoryItem {
