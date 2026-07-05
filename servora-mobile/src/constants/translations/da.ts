@@ -122,8 +122,25 @@ const da: Translation = {
   lockShift:           "Lås Vagt",
   locked:              "Låst",
   lock:                "Lås",
-  addNote:             "Tilf�j note...",
+  addNote:             "Tilføj note...",
   paymentMethod:       "Betalingsmetode",
+
+  // ── Sales Entry (Add Sale module) ─────────
+  editEntry:            "Rediger Post",
+  entryName:            "Postnavn",
+  entryNamePlaceholder: "f.eks. Frokostrykke, Leveringsparti...",
+  entry:                "post",
+  entries:              "poster",
+  noEntriesYet:         "Ingen poster endnu",
+  saving:               "Gemmer...",
+  cancel:               "Annuller",
+  deleteEntry:          "Slet Post",
+  deleteEntryConfirm:   "Er du sikker på, at du vil slette denne post?",
+  delete:               "Slet",
+  unlockShift:          "Lås Vagt Op",
+  unlockShiftConfirm:   "Lås denne vagt op til redigering?",
+  lockShiftConfirm:     "Lås denne vagt? Poster kan ikke redigeres efter låsning.",
+  error:                "Fejl",
 };
 
 export default da;

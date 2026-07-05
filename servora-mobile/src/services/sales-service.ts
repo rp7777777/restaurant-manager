@@ -1,50 +1,68 @@
 // ============================================
 // SERVORA ERP — Sales Service
 // Multi-tenant Firestore operations
+// Single gateway for all sales data access
+//
+// TODO: Move dashboard aggregation to Cloud Functions
+//       for stronger write-consistency guarantees.
+// TODO: Split writeBatch into chunks of 500 if a
+//       shift ever exceeds 500 entries in one day.
+// TODO: Firestore composite indexes required for:
+//       - date + shift + locked (lockShift/unlockShift)
+//       - date + createdAt orderBy (subscribeTodaySales/getSalesByDate)
+//       - date range + orderBy (getSalesByMonth)
+//       Console will show an auto-create link on first run.
 // ============================================
 
 import {
   collection, addDoc, updateDoc, deleteDoc,
-  doc, onSnapshot, query, orderBy, where,
-  serverTimestamp, Timestamp, getDoc,
+  doc, getDoc, getDocs, onSnapshot, query,
+  where, orderBy, serverTimestamp,
+  writeBatch,
+  QueryDocumentSnapshot, DocumentData,
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
+import { COL, RCOL } from "../constants/firestore-collections";
 import { logCreate, logEdit, logDelete } from "../app/security/audit-service";
 import { updateDashboardStats } from "./dashboard-service";
-
-// ── Types ────────────────────────────────────
-export interface SaleItem {
-  id?: string;
-  date: string;
-  morningSale: number;
-  afternoonSale: number;
-  nightSale: number;
-  totalSale: number;
-  paymentMethod: string;
-  note: string;
-  createdAt?: unknown;
-  updatedAt?: unknown;
-  userId?: string;
-  restaurantId?: string;
-}
-
-// ── Helpers ──────────────────────────────────
-function getRestaurantId(): string {
-  return auth.currentUser?.uid ?? "";
-}
+import {
+  SaleEntry, Shift,
+  CreateSaleInput, UpdateSaleInput,
+} from "../app/sales-module/types/sales-types";
 
 function salesCollection(restaurantId: string) {
-  return collection(db, "restaurants", restaurantId, "sales");
+  return collection(db, COL.RESTAURANTS, restaurantId, RCOL.SALES);
 }
 
-// ── Create ───────────────────────────────────
-export async function createSale(sale: Omit<SaleItem, "id" | "createdAt" | "updatedAt">): Promise<string> {
-  const restaurantId = getRestaurantId();
-  if (!restaurantId) throw new Error("Not authenticated");
+function saleDoc(restaurantId: string, saleId: string) {
+  return doc(db, COL.RESTAURANTS, restaurantId, RCOL.SALES, saleId);
+}
+
+function mapQueryDoc(d: QueryDocumentSnapshot<DocumentData>): SaleEntry {
+  return { id: d.id, ...(d.data() as Omit<SaleEntry, "id">) };
+}
+
+function nextMonthStr(monthStr: string): string {
+  const [year, month] = monthStr.split("-").map(Number);
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  return `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
+}
+
+export async function createSale(
+  restaurantId: string,
+  input: CreateSaleInput
+): Promise<string> {
+  if (!restaurantId) throw new Error("Restaurant not configured");
+
+  const user = auth.currentUser;
+  if (!user) throw new Error("User not authenticated");
 
   const data = {
-    ...sale,
-    userId: auth.currentUser!.uid,
+    ...input,
+    entryName: input.entryName?.trim() ?? "",
+    locked: false,
+    userId: user.uid,
     restaurantId,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -52,93 +70,196 @@ export async function createSale(sale: Omit<SaleItem, "id" | "createdAt" | "upda
 
   const docRef = await addDoc(salesCollection(restaurantId), data);
 
-  // Update aggregate stats
-  await updateDashboardStats(restaurantId, "sales", sale.totalSale, "add");
+  await updateDashboardStats(restaurantId, "sales", input.amount, "add");
 
   await logCreate("SALES", docRef.id, {
-    date: sale.date,
-    totalSale: sale.totalSale,
-    paymentMethod: sale.paymentMethod,
+    date: input.date,
+    shift: input.shift,
+    amount: input.amount,
+    paymentMethod: input.paymentMethod,
   });
 
   return docRef.id;
 }
 
-// ── Update ───────────────────────────────────
 export async function updateSale(
+  restaurantId: string,
   saleId: string,
-  oldSale: SaleItem,
-  updatedFields: Partial<SaleItem>
+  oldSale: SaleEntry,
+  updates: UpdateSaleInput
 ): Promise<void> {
-  const restaurantId = getRestaurantId();
-  if (!restaurantId) throw new Error("Not authenticated");
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
 
-  const saleRef = doc(db, "restaurants", restaurantId, "sales", saleId);
+  const currentSnap = await getDoc(saleDoc(restaurantId, saleId));
+  if (!currentSnap.exists()) throw new Error("Sale entry not found");
+  const currentData = currentSnap.data() as Omit<SaleEntry, "id">;
+  if (currentData.locked) throw new Error("This entry is locked and cannot be edited");
 
-  await updateDoc(saleRef, {
-    ...updatedFields,
+  const cleanUpdates = {
+    ...updates,
+    ...(updates.entryName !== undefined && { entryName: updates.entryName.trim() }),
     updatedAt: serverTimestamp(),
-  });
+  };
 
-  // Update stats if totalSale changed
-  if (updatedFields.totalSale !== undefined && oldSale.totalSale !== undefined) {
-    const diff = updatedFields.totalSale - oldSale.totalSale;
-    await updateDashboardStats(restaurantId, "sales", diff, "add");
+  await updateDoc(saleDoc(restaurantId, saleId), cleanUpdates);
+
+  if (updates.amount !== undefined && oldSale.amount !== undefined) {
+    const diff = updates.amount - oldSale.amount;
+    if (diff !== 0) {
+      await updateDashboardStats(restaurantId, "sales", diff, "add");
+    }
   }
 
-  await logEdit("SALES", saleId, oldSale as unknown as Record<string, unknown>, updatedFields as unknown as Record<string, unknown>);
+  await logEdit(
+    "SALES",
+    saleId,
+    oldSale as unknown as Record<string, unknown>,
+    updates as unknown as Record<string, unknown>
+  );
 }
 
-// ── Delete ───────────────────────────────────
-export async function deleteSale(saleId: string, saleData: SaleItem): Promise<void> {
-  const restaurantId = getRestaurantId();
-  if (!restaurantId) throw new Error("Not authenticated");
+export async function deleteSale(
+  restaurantId: string,
+  saleId: string,
+  saleData: SaleEntry
+): Promise<void> {
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
 
-  await deleteDoc(doc(db, "restaurants", restaurantId, "sales", saleId));
+  const currentSnap = await getDoc(saleDoc(restaurantId, saleId));
+  if (!currentSnap.exists()) throw new Error("Sale entry not found");
+  const currentData = currentSnap.data() as Omit<SaleEntry, "id">;
+  if (currentData.locked) throw new Error("This entry is locked and cannot be deleted");
 
-  // Subtract from stats
-  await updateDashboardStats(restaurantId, "sales", saleData.totalSale, "subtract");
+  await deleteDoc(saleDoc(restaurantId, saleId));
+
+  await updateDashboardStats(restaurantId, "sales", saleData.amount, "subtract");
 
   await logDelete("SALES", saleId, saleData as unknown as Record<string, unknown>);
 }
 
-// ── Real-time listener ───────────────────────
-export function subscribeSales(
+export async function getSaleById(
   restaurantId: string,
-  callback: (sales: SaleItem[]) => void,
+  saleId: string
+): Promise<SaleEntry | null> {
+  const snap = await getDoc(saleDoc(restaurantId, saleId));
+  if (!snap.exists()) return null;
+  return { id: snap.id, ...(snap.data() as Omit<SaleEntry, "id">) };
+}
+
+export function subscribeTodaySales(
+  restaurantId: string,
+  date: string,
+  callback: (sales: SaleEntry[]) => void,
   onError?: (err: Error) => void
 ): () => void {
-  const q = query(salesCollection(restaurantId), orderBy("createdAt", "desc"));
+  if (!restaurantId) {
+    callback([]);
+    return () => {};
+  }
+
+  const q = query(
+    salesCollection(restaurantId),
+    where("date", "==", date),
+    orderBy("createdAt", "asc")
+  );
 
   return onSnapshot(
     q,
-    (snap) => {
-      const sales: SaleItem[] = snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<SaleItem, "id">),
-      }));
-      callback(sales);
-    },
+    (snap) => callback(snap.docs.map(mapQueryDoc)),
     (err) => onError?.(err)
   );
 }
 
-// ── Today's sales listener ───────────────────
-export function subscribeTodaySales(
+export async function getSalesByDate(
   restaurantId: string,
-  callback: (total: number) => void
-): () => void {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  date: string
+): Promise<SaleEntry[]> {
+  if (!restaurantId) return [];
 
   const q = query(
     salesCollection(restaurantId),
-    where("createdAt", ">=", Timestamp.fromDate(today))
+    where("date", "==", date),
+    orderBy("createdAt", "asc")
   );
 
-  return onSnapshot(q, (snap) => {
-    let total = 0;
-    snap.forEach((d) => { total += Number(d.data().totalSale ?? 0); });
-    callback(total);
+  const snap = await getDocs(q);
+  return snap.docs.map(mapQueryDoc);
+}
+
+export async function getSalesByMonth(
+  restaurantId: string,
+  monthStr: string
+): Promise<SaleEntry[]> {
+  if (!restaurantId) return [];
+
+  const start = `${monthStr}-01`;
+  const end = `${nextMonthStr(monthStr)}-01`;
+
+  const q = query(
+    salesCollection(restaurantId),
+    where("date", ">=", start),
+    where("date", "<", end),
+    orderBy("date", "asc")
+  );
+
+  const snap = await getDocs(q);
+  return snap.docs.map(mapQueryDoc);
+}
+
+export async function lockShift(
+  restaurantId: string,
+  date: string,
+  shift: Shift
+): Promise<void> {
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
+
+  const q = query(
+    salesCollection(restaurantId),
+    where("date", "==", date),
+    where("shift", "==", shift),
+    where("locked", "==", false)
+  );
+
+  const snap = await getDocs(q);
+  if (snap.empty) return;
+
+  const batch = writeBatch(db);
+  snap.docs.forEach((d) => {
+    batch.update(d.ref, { locked: true, updatedAt: serverTimestamp() });
   });
+
+  await batch.commit();
+
+  await logEdit("SALES", `${date}-${shift}`, { locked: false }, { locked: true });
+}
+
+export async function unlockShift(
+  restaurantId: string,
+  date: string,
+  shift: Shift
+): Promise<void> {
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
+
+  const q = query(
+    salesCollection(restaurantId),
+    where("date", "==", date),
+    where("shift", "==", shift),
+    where("locked", "==", true)
+  );
+
+  const snap = await getDocs(q);
+  if (snap.empty) return;
+
+  const batch = writeBatch(db);
+  snap.docs.forEach((d) => {
+    batch.update(d.ref, { locked: false, updatedAt: serverTimestamp() });
+  });
+
+  await batch.commit();
+
+  await logEdit("SALES", `${date}-${shift}`, { locked: true }, { locked: false });
 }

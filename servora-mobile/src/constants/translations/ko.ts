@@ -122,8 +122,25 @@ const ko: Translation = {
   lockShift:           "교대 잠금",
   locked:              "잠김",
   lock:                "잠금",
-  addNote:             "?? ??...",
-  paymentMethod:       "?? ??",
+  addNote:             "메모 추가...",
+  paymentMethod:       "결제 방법",
+
+  // ── Sales Entry (Add Sale module) ─────────
+  editEntry:            "항목 수정",
+  entryName:            "항목 이름",
+  entryNamePlaceholder: "예: 점심 러시, 배달 묶음...",
+  entry:                "항목",
+  entries:              "항목",
+  noEntriesYet:         "아직 항목이 없습니다",
+  saving:               "저장 중...",
+  cancel:               "취소",
+  deleteEntry:          "항목 삭제",
+  deleteEntryConfirm:   "이 항목을 삭제하시겠습니까?",
+  delete:               "삭제",
+  unlockShift:          "교대 잠금 해제",
+  unlockShiftConfirm:   "편집을 위해 이 교대의 잠금을 해제하시겠습니까?",
+  lockShiftConfirm:     "이 교대를 잠그시겠습니까? 잠금 후에는 항목을 수정할 수 없습니다.",
+  error:                "오류",
 };
 
 export default ko;

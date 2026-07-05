@@ -124,6 +124,23 @@ const it: Translation = {
   lock:                "Blocca",
   addNote:             "Aggiungi nota...",
   paymentMethod:       "Metodo di Pagamento",
+
+  // ── Sales Entry (Add Sale module) ─────────
+  editEntry:            "Modifica Voce",
+  entryName:            "Nome Voce",
+  entryNamePlaceholder: "es. Punta pranzo, Lotto consegne...",
+  entry:                "voce",
+  entries:              "voci",
+  noEntriesYet:         "Ancora nessuna voce",
+  saving:               "Salvataggio...",
+  cancel:               "Annulla",
+  deleteEntry:          "Elimina Voce",
+  deleteEntryConfirm:   "Sei sicuro di voler eliminare questa voce?",
+  delete:               "Elimina",
+  unlockShift:          "Sblocca Turno",
+  unlockShiftConfirm:   "Sbloccare questo turno per la modifica?",
+  lockShiftConfirm:     "Bloccare questo turno? Le voci non potranno essere modificate dopo il blocco.",
+  error:                "Errore",
 };
 
 export default it;

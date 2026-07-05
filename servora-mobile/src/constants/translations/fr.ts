@@ -133,6 +133,23 @@ const fr: Translation = {
   lock:                "Verrouiller",
   addNote:             "Ajouter une note...",
   paymentMethod:       "Mode de Paiement",
+
+  // ── Sales Entry (Add Sale module) ─────────
+  editEntry:            "Modifier l'Entrée",
+  entryName:            "Nom de l'Entrée",
+  entryNamePlaceholder: "ex. Rush du midi, Lot de livraison...",
+  entry:                "entrée",
+  entries:              "entrées",
+  noEntriesYet:         "Aucune entrée pour le moment",
+  saving:               "Enregistrement...",
+  cancel:               "Annuler",
+  deleteEntry:          "Supprimer l'Entrée",
+  deleteEntryConfirm:   "Êtes-vous sûr de vouloir supprimer cette entrée ?",
+  delete:               "Supprimer",
+  unlockShift:          "Déverrouiller le Service",
+  unlockShiftConfirm:   "Déverrouiller ce service pour modification ?",
+  lockShiftConfirm:     "Verrouiller ce service ? Les entrées ne pourront plus être modifiées après verrouillage.",
+  error:                "Erreur",
 };
 
 export default fr;

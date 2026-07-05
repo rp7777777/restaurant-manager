@@ -129,7 +129,24 @@ const pt: Translation = {
   locked:              "Bloqueado",
   lock:                "Bloquear",
   addNote:             "Adicionar nota...",
-  paymentMethod:       "M�todo de Pagamento",
+  paymentMethod:       "Método de Pagamento",
+
+  // ── Sales Entry (Add Sale module) ─────────
+  editEntry:            "Editar Entrada",
+  entryName:            "Nome da Entrada",
+  entryNamePlaceholder: "ex. Pico do almoço, Lote de entrega...",
+  entry:                "entrada",
+  entries:              "entradas",
+  noEntriesYet:         "Ainda sem entradas",
+  saving:               "Guardando...",
+  cancel:               "Cancelar",
+  deleteEntry:          "Excluir Entrada",
+  deleteEntryConfirm:   "Tem certeza que deseja excluir esta entrada?",
+  delete:               "Excluir",
+  unlockShift:          "Desbloquear Turno",
+  unlockShiftConfirm:   "Desbloquear este turno para edição?",
+  lockShiftConfirm:     "Bloquear este turno? As entradas não poderão ser editadas após o bloqueio.",
+  error:                "Erro",
 };
 
 export default pt;

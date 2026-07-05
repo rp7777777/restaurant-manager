@@ -122,8 +122,25 @@ const hi: Translation = {
   lockShift:           "शिफ्ट लॉक करें",
   locked:              "लॉक है",
   lock:                "लॉक",
-  addNote:             "??? ??????...",
-  paymentMethod:       "?????? ????",
+  addNote:             "नोट जोड़ें...",
+  paymentMethod:       "भुगतान विधि",
+
+  // ── Sales Entry (Add Sale module) ─────────
+  editEntry:            "प्रविष्टि संपादित करें",
+  entryName:            "प्रविष्टि नाम",
+  entryNamePlaceholder: "जैसे: लंच रश, डिलीवरी बैच...",
+  entry:                "प्रविष्टि",
+  entries:              "प्रविष्टियाँ",
+  noEntriesYet:         "अभी तक कोई प्रविष्टि नहीं",
+  saving:               "सहेजा जा रहा है...",
+  cancel:               "रद्द करें",
+  deleteEntry:          "प्रविष्टि हटाएं",
+  deleteEntryConfirm:   "क्या आप वाकई इस प्रविष्टि को हटाना चाहते हैं?",
+  delete:               "हटाएं",
+  unlockShift:          "शिफ्ट अनलॉक करें",
+  unlockShiftConfirm:   "संपादन के लिए इस शिफ्ट को अनलॉक करें?",
+  lockShiftConfirm:     "इस शिफ्ट को लॉक करें? लॉक करने के बाद प्रविष्टियाँ संपादित नहीं की जा सकतीं।",
+  error:                "त्रुटि",
 };
 
 export default hi;

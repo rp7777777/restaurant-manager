@@ -122,8 +122,25 @@ const de: Translation = {
   lockShift:           "Schicht sperren",
   locked:              "Gesperrt",
   lock:                "Sperren",
-  addNote:             "Notiz hinzuf�gen...",
+  addNote:             "Notiz hinzufügen...",
   paymentMethod:       "Zahlungsmethode",
+
+  // ── Sales Entry (Add Sale module) ─────────
+  editEntry:            "Eintrag bearbeiten",
+  entryName:            "Eintragsname",
+  entryNamePlaceholder: "z.B. Mittagsandrang, Lieferungscharge...",
+  entry:                "Eintrag",
+  entries:              "Einträge",
+  noEntriesYet:         "Noch keine Einträge",
+  saving:               "Wird gespeichert...",
+  cancel:               "Abbrechen",
+  deleteEntry:          "Eintrag löschen",
+  deleteEntryConfirm:   "Möchten Sie diesen Eintrag wirklich löschen?",
+  delete:               "Löschen",
+  unlockShift:          "Schicht entsperren",
+  unlockShiftConfirm:   "Diese Schicht zur Bearbeitung entsperren?",
+  lockShiftConfirm:     "Diese Schicht sperren? Einträge können nach der Sperrung nicht mehr bearbeitet werden.",
+  error:                "Fehler",
 };
 
 export default de;

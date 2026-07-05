@@ -126,6 +126,23 @@ const en: Translation = {
   lock:                "Lock",
   addNote:             "Add note...",
   paymentMethod: "Payment Method",
+
+  // ── Sales Entry (Add Sale module) ─────────
+  editEntry:            "Edit Entry",
+  entryName:            "Entry Name",
+  entryNamePlaceholder: "e.g. Lunch rush, Delivery batch...",
+  entry:                "entry",
+  entries:              "entries",
+  noEntriesYet:         "No entries yet",
+  saving:               "Saving...",
+  cancel:               "Cancel",
+  deleteEntry:          "Delete Entry",
+  deleteEntryConfirm:   "Are you sure you want to delete this entry?",
+  delete:               "Delete",
+  unlockShift:          "Unlock Shift",
+  unlockShiftConfirm:   "Unlock this shift for editing?",
+  lockShiftConfirm:     "Lock this shift? Entries cannot be edited after locking.",
+  error:                "Error",
 };
 
 export default en;

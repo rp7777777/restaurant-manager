@@ -123,8 +123,25 @@ const ne: Translation = {
   lockShift:           "सिफ्ट लक गर्नुस्",
   locked:              "लक भयो",
   lock:                "लक",
-  addNote:             "??? ???????...",
-  paymentMethod:       "???????? ????",
+  addNote:             "टिप्पणी थप्नुहोस्...",
+  paymentMethod:       "भुक्तानी विधि",
+
+  // ── Sales Entry (Add Sale module) ─────────
+  editEntry:            "प्रविष्टि सम्पादन गर्नुहोस्",
+  entryName:            "प्रविष्टि नाम",
+  entryNamePlaceholder: "जस्तै: दिउँसो भीड, डेलिभरी ब्याच...",
+  entry:                "प्रविष्टि",
+  entries:              "प्रविष्टिहरू",
+  noEntriesYet:         "अझै कुनै प्रविष्टि छैन",
+  saving:               "सुरक्षित गर्दै...",
+  cancel:               "रद्द गर्नुहोस्",
+  deleteEntry:          "प्रविष्टि मेट्नुहोस्",
+  deleteEntryConfirm:   "तपाईं यो प्रविष्टि मेट्न निश्चित हुनुहुन्छ?",
+  delete:               "मेट्नुहोस्",
+  unlockShift:          "शिफ्ट अनलक गर्नुहोस्",
+  unlockShiftConfirm:   "सम्पादनको लागि यो शिफ्ट अनलक गर्ने हो?",
+  lockShiftConfirm:     "यो शिफ्ट लक गर्ने हो? लक गरेपछि प्रविष्टिहरू सम्पादन गर्न मिल्दैन।",
+  error:                "त्रुटि",
 };
 
 export default ne;

@@ -62,6 +62,24 @@ export interface TranslationKeys {
   lock:                string;
   addNote:             string;
   paymentMethod:       string;
+
+  // ── Sales Entry (Add Sale module) ─────────
+  editEntry:            string;
+  entryName:            string;
+  entryNamePlaceholder: string;
+  entry:                string;
+  entries:              string;
+  noEntriesYet:         string;
+  saving:               string;
+  cancel:               string;
+  deleteEntry:          string;
+  deleteEntryConfirm:   string;
+  delete:               string;
+  unlockShift:          string;
+  unlockShiftConfirm:   string;
+  lockShiftConfirm:     string;
+  error:                string;
+
   // ── Auth ─────────────────────────────────
   login:              string;
   logout:             string;

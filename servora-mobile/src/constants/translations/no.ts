@@ -124,6 +124,23 @@ const no: Translation = {
   lock:                "Lås",
   addNote:             "Legg til notat...",
   paymentMethod:       "Betalingsmetode",
+
+  // ── Sales Entry (Add Sale module) ─────────
+  editEntry:            "Rediger Oppføring",
+  entryName:            "Oppføringsnavn",
+  entryNamePlaceholder: "f.eks. Lunsjrush, Leveringsparti...",
+  entry:                "oppføring",
+  entries:              "oppføringer",
+  noEntriesYet:         "Ingen oppføringer ennå",
+  saving:               "Lagrer...",
+  cancel:               "Avbryt",
+  deleteEntry:          "Slett Oppføring",
+  deleteEntryConfirm:   "Er du sikker på at du vil slette denne oppføringen?",
+  delete:               "Slett",
+  unlockShift:          "Lås Opp Vakt",
+  unlockShiftConfirm:   "Låse opp denne vakten for redigering?",
+  lockShiftConfirm:     "Låse denne vakten? Oppføringer kan ikke redigeres etter låsing.",
+  error:                "Feil",
 };
 
 export default no;

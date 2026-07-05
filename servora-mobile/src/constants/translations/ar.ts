@@ -123,9 +123,25 @@ const ar: Translation = {
   lockShift:           "قفل الوردية",
   locked:              "مقفل",
   lock:                "قفل",
-  addNote:             "??? ??????...",
-  paymentMethod:       "????? ?????",
+  addNote:             "إضافة ملاحظة...",
+  paymentMethod:       "طريقة الدفع",
 
+  // ── Sales Entry (Add Sale module) ─────────
+  editEntry:            "تعديل الإدخال",
+  entryName:            "اسم الإدخال",
+  entryNamePlaceholder: "مثال: ازدحام الغداء، دفعة توصيل...",
+  entry:                "إدخال",
+  entries:              "إدخالات",
+  noEntriesYet:         "لا توجد إدخالات حتى الآن",
+  saving:               "جاري الحفظ...",
+  cancel:               "إلغاء",
+  deleteEntry:          "حذف الإدخال",
+  deleteEntryConfirm:   "هل أنت متأكد أنك تريد حذف هذا الإدخال؟",
+  delete:               "حذف",
+  unlockShift:          "إلغاء قفل الوردية",
+  unlockShiftConfirm:   "إلغاء قفل هذه الوردية للتعديل؟",
+  lockShiftConfirm:     "قفل هذه الوردية؟ لا يمكن تعديل الإدخالات بعد القفل.",
+  error:                "خطأ",
 };
 
 export default ar;

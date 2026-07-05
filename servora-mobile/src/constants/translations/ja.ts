@@ -122,8 +122,25 @@ const ja: Translation = {
   lockShift:           "シフトをロック",
   locked:              "ロック済み",
   lock:                "ロック",
-  addNote:             "?????...",
-  paymentMethod:       "????",
+  addNote:             "メモを追加...",
+  paymentMethod:       "支払方法",
+
+  // ── Sales Entry (Add Sale module) ─────────
+  editEntry:            "エントリを編集",
+  entryName:            "エントリ名",
+  entryNamePlaceholder: "例：ランチラッシュ、配達バッチ...",
+  entry:                "エントリ",
+  entries:              "エントリ",
+  noEntriesYet:         "まだエントリがありません",
+  saving:               "保存中...",
+  cancel:               "キャンセル",
+  deleteEntry:          "エントリを削除",
+  deleteEntryConfirm:   "このエントリを削除してもよろしいですか？",
+  delete:               "削除",
+  unlockShift:          "シフトのロック解除",
+  unlockShiftConfirm:   "編集のためこのシフトのロックを解除しますか？",
+  lockShiftConfirm:     "このシフトをロックしますか？ロック後はエントリを編集できません。",
+  error:                "エラー",
 };
 
 export default ja;

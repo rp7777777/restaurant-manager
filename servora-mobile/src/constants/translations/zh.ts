@@ -123,8 +123,25 @@ const zh: Translation = {
   lockShift:           "锁定班次",
   locked:              "已锁定",
   lock:                "锁定",
-  addNote:             "????...",
-  paymentMethod:       "????",
+  addNote:             "添加备注...",
+  paymentMethod:       "付款方式",
+
+  // ── Sales Entry (Add Sale module) ─────────
+  editEntry:            "编辑条目",
+  entryName:            "条目名称",
+  entryNamePlaceholder: "例如：午餐高峰、外卖批次...",
+  entry:                "条目",
+  entries:              "条目",
+  noEntriesYet:         "暂无条目",
+  saving:               "保存中...",
+  cancel:               "取消",
+  deleteEntry:          "删除条目",
+  deleteEntryConfirm:   "您确定要删除此条目吗？",
+  delete:               "删除",
+  unlockShift:          "解锁班次",
+  unlockShiftConfirm:   "解锁此班次以进行编辑？",
+  lockShiftConfirm:     "锁定此班次？锁定后条目将无法编辑。",
+  error:                "错误",
 };
 
 export default zh;
