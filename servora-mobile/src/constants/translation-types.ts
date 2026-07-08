@@ -79,6 +79,10 @@ export interface TranslationKeys {
   unlockShiftConfirm:   string;
   lockShiftConfirm:     string;
   error:                string;
+  morning:              string;
+  afternoon:            string;
+  night:                string;
+
 
   // ── Auth ─────────────────────────────────
   login:              string;

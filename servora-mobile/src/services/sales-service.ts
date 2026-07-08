@@ -7,18 +7,24 @@
 //       for stronger write-consistency guarantees.
 // TODO: Split writeBatch into chunks of 500 if a
 //       shift ever exceeds 500 entries in one day.
-// TODO: Firestore composite indexes required for:
-//       - date + shift + locked (lockShift/unlockShift)
-//       - date + createdAt orderBy (subscribeTodaySales/getSalesByDate)
-//       - date range + orderBy (getSalesByMonth)
-//       Console will show an auto-create link on first run.
+// NOTE: createSale()'s shift-entry-count check uses a
+//       non-transactional query inside runTransaction —
+//       Firestore transactions only track single-document
+//       reads (transaction.get(docRef)), not queries. This
+//       means two near-simultaneous creates on the same
+//       shift could both pass the count check in a rare
+//       race. Accepted as low-risk for this use case
+//       (single POS terminal per shift in practice). A
+//       fully atomic fix would require a separate per-shift
+//       counter document tracked via transaction.get/.set.
+// FROZEN
 // ============================================
 
 import {
   collection, addDoc, updateDoc, deleteDoc,
   doc, getDoc, getDocs, onSnapshot, query,
   where, orderBy, serverTimestamp,
-  writeBatch,
+  writeBatch, runTransaction,
   QueryDocumentSnapshot, DocumentData,
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
@@ -29,6 +35,7 @@ import {
   SaleEntry, Shift,
   CreateSaleInput, UpdateSaleInput,
 } from "../app/sales-module/types/sales-types";
+import { MAX_ENTRIES_PER_SHIFT } from "../app/sales-module/utils/sale-validation";
 
 function salesCollection(restaurantId: string) {
   return collection(db, COL.RESTAURANTS, restaurantId, RCOL.SALES);
@@ -49,6 +56,8 @@ function nextMonthStr(monthStr: string): string {
   return `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
 }
 
+// ── Create — best-effort transaction: verifies lock + entry count before write.
+//    See file header NOTE re: query-based reads inside transactions. ──
 export async function createSale(
   restaurantId: string,
   input: CreateSaleInput
@@ -58,30 +67,53 @@ export async function createSale(
   const user = auth.currentUser;
   if (!user) throw new Error("User not authenticated");
 
-  const data = {
-    ...input,
-    entryName: input.entryName?.trim() ?? "",
-    locked: false,
-    userId: user.uid,
-    restaurantId,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  };
+  const newRef = doc(salesCollection(restaurantId));
 
-  const docRef = await addDoc(salesCollection(restaurantId), data);
+  await runTransaction(db, async (transaction) => {
+    const q = query(
+      salesCollection(restaurantId),
+      where("date", "==", input.date),
+      where("shift", "==", input.shift)
+    );
+    const existingSnap = await getDocs(q);
+    const existingEntries = existingSnap.docs.map((d) => d.data() as Omit<SaleEntry, "id">);
+
+    const shiftLocked = existingEntries.some((e) => e.locked);
+    if (shiftLocked) {
+      throw new Error(`${input.shift} shift is already locked.`);
+    }
+
+    if (existingEntries.length >= MAX_ENTRIES_PER_SHIFT) {
+      throw new Error(`${input.shift} shift already has ${MAX_ENTRIES_PER_SHIFT} entries. Maximum reached.`);
+    }
+
+    const data = {
+      ...input,
+      entryName: input.entryName?.trim() ?? "",
+      locked: false,
+      userId: user.uid,
+      restaurantId,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+
+    transaction.set(newRef, data);
+  });
 
   await updateDashboardStats(restaurantId, "sales", input.amount, "add");
 
-  await logCreate("SALES", docRef.id, {
+  await logCreate("SALES", newRef.id, {
     date: input.date,
     shift: input.shift,
     amount: input.amount,
     paymentMethod: input.paymentMethod,
   });
 
-  return docRef.id;
+  return newRef.id;
 }
 
+// ── Update — runTransaction: read + locked-check + write happen atomically,
+//    closing the race window between check and write ──
 export async function updateSale(
   restaurantId: string,
   saleId: string,
@@ -91,18 +123,23 @@ export async function updateSale(
   if (!restaurantId) throw new Error("Restaurant not configured");
   if (!auth.currentUser) throw new Error("User not authenticated");
 
-  const currentSnap = await getDoc(saleDoc(restaurantId, saleId));
-  if (!currentSnap.exists()) throw new Error("Sale entry not found");
-  const currentData = currentSnap.data() as Omit<SaleEntry, "id">;
-  if (currentData.locked) throw new Error("This entry is locked and cannot be edited");
+  const ref = saleDoc(restaurantId, saleId);
 
-  const cleanUpdates = {
-    ...updates,
-    ...(updates.entryName !== undefined && { entryName: updates.entryName.trim() }),
-    updatedAt: serverTimestamp(),
-  };
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists()) throw new Error("Sale entry not found");
 
-  await updateDoc(saleDoc(restaurantId, saleId), cleanUpdates);
+    const currentData = snap.data() as Omit<SaleEntry, "id">;
+    if (currentData.locked) throw new Error("This entry is locked and cannot be edited");
+
+    const cleanUpdates = {
+      ...updates,
+      ...(updates.entryName !== undefined && { entryName: updates.entryName.trim() }),
+      updatedAt: serverTimestamp(),
+    };
+
+    transaction.update(ref, cleanUpdates);
+  });
 
   if (updates.amount !== undefined && oldSale.amount !== undefined) {
     const diff = updates.amount - oldSale.amount;
@@ -119,6 +156,7 @@ export async function updateSale(
   );
 }
 
+// ── Delete — runTransaction: read + locked-check + delete happen atomically ──
 export async function deleteSale(
   restaurantId: string,
   saleId: string,
@@ -127,12 +165,17 @@ export async function deleteSale(
   if (!restaurantId) throw new Error("Restaurant not configured");
   if (!auth.currentUser) throw new Error("User not authenticated");
 
-  const currentSnap = await getDoc(saleDoc(restaurantId, saleId));
-  if (!currentSnap.exists()) throw new Error("Sale entry not found");
-  const currentData = currentSnap.data() as Omit<SaleEntry, "id">;
-  if (currentData.locked) throw new Error("This entry is locked and cannot be deleted");
+  const ref = saleDoc(restaurantId, saleId);
 
-  await deleteDoc(saleDoc(restaurantId, saleId));
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists()) throw new Error("Sale entry not found");
+
+    const currentData = snap.data() as Omit<SaleEntry, "id">;
+    if (currentData.locked) throw new Error("This entry is locked and cannot be deleted");
+
+    transaction.delete(ref);
+  });
 
   await updateDashboardStats(restaurantId, "sales", saleData.amount, "subtract");
 

@@ -1,13 +1,15 @@
 // ============================================
 // SERVORA ERP — Sales List / History
 // Monthly view + Jan-Dec tabs + Daily details
+// Now with Edit/Delete for past-date entries
+// FROZEN
 // ============================================
 
 import React, { useEffect, useState, useCallback } from "react";
 import {
   View, Text, StyleSheet, ScrollView,
   TouchableOpacity, ActivityIndicator,
-  Modal, Platform, RefreshControl,
+  Modal, Platform, RefreshControl, Alert,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import {
@@ -19,6 +21,16 @@ import { useApp } from "../../context/AppContext";
 import PaymentSummary from "./components/PaymentSummary";
 import SalesByShift from "./components/SalesByShift";
 import SalesPrintView from "./components/SalesPrintView";
+import { SaleForm } from "../sales-module/components/SaleForm";
+import {
+  updateSale,
+  deleteSale,
+} from "../../services/sales-service";
+import type {
+  SaleEntry as ModuleSaleEntry,
+  Shift,
+  PaymentMethod,
+} from "../sales-module/types/sales-types";
 
 // ── Types ────────────────────────────────────
 interface SaleEntry {
@@ -28,6 +40,7 @@ interface SaleEntry {
   amount: number;
   paymentMethod: string;
   note: string;
+  entryName?: string;
   locked: boolean;
   createdAt?: unknown;
 }
@@ -49,9 +62,32 @@ const MONTH_NAMES = [
   "July","August","September","October","November","December",
 ];
 
+// ── Safe date parsing — s.date is a "YYYY-MM-DD" string,
+//    but defensively handle Timestamp and missing values too ──
+function parseSaleDate(date: unknown): Date {
+  if (!date) return new Date(0);
+  if (date instanceof Timestamp) return date.toDate();
+  return new Date(String(date));
+}
+
+// ── Convert local SaleEntry -> module SaleEntry (for SaleForm props) ──
+function toModuleSaleEntry(sale: SaleEntry, restaurantId: string): ModuleSaleEntry {
+  return {
+    id: sale.id,
+    date: sale.date,
+    shift: sale.shift as Shift,
+    amount: sale.amount,
+    paymentMethod: sale.paymentMethod as PaymentMethod,
+    entryName: sale.entryName ?? sale.note ?? "",
+    locked: sale.locked,
+    userId: "",
+    restaurantId,
+  };
+}
+
 // ── Main Screen ──────────────────────────────
 export default function SalesListScreen() {
-  const { theme, fmt, restaurantId, userProfile } = useApp();
+  const { theme, fmt, t, restaurantId, userProfile } = useApp();
 
   const currentYear = new Date().getFullYear();
   const currentMonth = new Date().getMonth();
@@ -68,11 +104,21 @@ export default function SalesListScreen() {
   const [printDate, setPrintDate] = useState<string>("");
   const [paperSize, setPaperSize] = useState<"A4" | "A5" | "A6">("A4");
 
+  // Edit modal state
+  const [editingSale, setEditingSale] = useState<SaleEntry | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+
   const isManager = ["MANAGER", "OWNER"].includes(userProfile?.role ?? "");
 
   // ── Load all sales for year ──────────────
   useEffect(() => {
-    if (!restaurantId) return;
+    if (!restaurantId) {
+      setAllSales([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
 
     const yearStart = new Date(selectedYear, 0, 1);
     const yearEnd = new Date(selectedYear, 11, 31, 23, 59, 59);
@@ -104,7 +150,7 @@ export default function SalesListScreen() {
   // ── Filter by selected month ─────────────
   const monthSales = allSales.filter((s) => {
     if (!s.date) return false;
-    const d = new Date(s.date);
+    const d = parseSaleDate(s.date);
     return d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
   });
 
@@ -121,7 +167,7 @@ export default function SalesListScreen() {
       total: entries.reduce((sum, e) => sum + Number(e.amount), 0),
       entries,
     }))
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    .sort((a, b) => parseSaleDate(b.date).getTime() - parseSaleDate(a.date).getTime());
 
   // ── Monthly totals ────────────────────────
   const monthlyTotal = monthSales.reduce((sum, s) => sum + Number(s.amount), 0);
@@ -131,7 +177,7 @@ export default function SalesListScreen() {
   const monthlySummary = MONTHS.map((_, idx) => {
     const sales = allSales.filter((s) => {
       if (!s.date) return false;
-      const d = new Date(s.date);
+      const d = parseSaleDate(s.date);
       return d.getMonth() === idx && d.getFullYear() === selectedYear;
     });
     return {
@@ -150,11 +196,95 @@ export default function SalesListScreen() {
   );
 
   const formatDate = (d: string) =>
-    new Date(d).toLocaleDateString("en-GB", {
+    parseSaleDate(d).toLocaleDateString("en-GB", {
       weekday: "short", day: "numeric", month: "short",
     });
 
-  const onRefresh = useCallback(() => setRefreshing(true), []);
+  // ── Refresh — Firestore onSnapshot is already realtime,
+  //    this just gives visual feedback for pull-to-refresh gesture ──
+  useEffect(() => {
+    if (!refreshing) return;
+    const timer = setTimeout(() => setRefreshing(false), 500);
+    return () => clearTimeout(timer);
+  }, [refreshing]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+  }, []);
+
+  // ── Edit handlers ─────────────────────────
+  const handleEditRequest = useCallback((sale: SaleEntry) => {
+    setEditingSale(sale);
+  }, []);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditingSale(null);
+  }, []);
+
+  const handleSaveEdit = useCallback(
+    async (input: {
+      shift: Shift;
+      amount: string;
+      paymentMethod: PaymentMethod;
+      entryName: string;
+    }) => {
+      if (!editingSale || !editingSale.id || !restaurantId) return;
+
+      const amountNum = Number(input.amount);
+      if (isNaN(amountNum) || amountNum <= 0) {
+        Alert.alert(t("error"), "Enter a valid amount");
+        return;
+      }
+
+      setSavingEdit(true);
+      try {
+        const oldModuleSale = toModuleSaleEntry(editingSale, restaurantId);
+
+        await updateSale(restaurantId, editingSale.id, oldModuleSale, {
+          amount: amountNum,
+          paymentMethod: input.paymentMethod,
+          entryName: input.entryName,
+        });
+
+        setEditingSale(null);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to update sale";
+        Alert.alert(t("error"), message);
+      } finally {
+        setSavingEdit(false);
+      }
+    },
+    [editingSale, restaurantId, t]
+  );
+
+  // ── Delete handler ─────────────────────────
+  const handleDeleteRequest = useCallback(
+    (sale: SaleEntry) => {
+      if (!sale.id || !restaurantId) return;
+
+      Alert.alert(
+        t("deleteEntry"),
+        t("deleteEntryConfirm"),
+        [
+          { text: t("cancel"), style: "cancel" },
+          {
+            text: t("delete"),
+            style: "destructive",
+            onPress: async () => {
+              try {
+                const moduleSale = toModuleSaleEntry(sale, restaurantId);
+                await deleteSale(restaurantId, sale.id!, moduleSale);
+              } catch (err) {
+                const message = err instanceof Error ? err.message : "Failed to delete sale";
+                Alert.alert(t("error"), message);
+              }
+            },
+          },
+        ]
+      );
+    },
+    [restaurantId, t]
+  );
 
   // ── Print modal ───────────────────────────
   if (showPrint) {
@@ -170,6 +300,14 @@ export default function SalesListScreen() {
         paperSize={paperSize}
         onPaperSizeChange={setPaperSize}
       />
+    );
+  }
+
+  if (!restaurantId) {
+    return (
+      <View style={[styles.root, { backgroundColor: theme.bg }]}>
+        <ActivityIndicator color={theme.primary} style={{ marginTop: 40 }} />
+      </View>
     );
   }
 
@@ -254,7 +392,7 @@ export default function SalesListScreen() {
                     <Text
                       style={[
                         styles.monthTabTotal,
-                        { color: active ? "rgba(255,255,255,0.85)" : "#10b981" },
+                        { color: active ? "#fff" : theme.textSecondary },
                       ]}
                     >
                       {fmt(monthlySummary[idx].total)}
@@ -265,7 +403,7 @@ export default function SalesListScreen() {
             })}
           </ScrollView>
 
-          {/* Monthly Summary */}
+          {/* Month Summary */}
           <View style={[styles.monthSummary, { backgroundColor: theme.card }]}>
             <View style={styles.monthSummaryRow}>
               <View>
@@ -281,14 +419,14 @@ export default function SalesListScreen() {
                   {monthlyTxCount} entries
                 </Text>
                 <TouchableOpacity
-                  style={[styles.monthPrintBtn, { borderColor: theme.primary }]}
+                  style={[styles.monthPrintBtn, { borderColor: theme.border }]}
                   onPress={() => {
                     setPrintDate("");
                     setShowPrint(true);
                   }}
                 >
-                  <MaterialIcons name="print" size={14} color={theme.primary} />
-                  <Text style={[styles.monthPrintBtnText, { color: theme.primary }]}>
+                  <MaterialIcons name="print" size={13} color={theme.textSecondary} />
+                  <Text style={[styles.monthPrintBtnText, { color: theme.textSecondary }]}>
                     Print Month
                   </Text>
                 </TouchableOpacity>
@@ -395,6 +533,8 @@ export default function SalesListScreen() {
               <SalesByShift
                 sales={selectedDaySales}
                 isManager={isManager}
+                onEdit={handleEditRequest}
+                onDelete={handleDeleteRequest}
               />
               <PaymentSummary sales={selectedDaySales} />
             </View>
@@ -402,6 +542,36 @@ export default function SalesListScreen() {
 
         </View>
       </ScrollView>
+
+      {/* Edit Modal */}
+      <Modal
+        visible={!!editingSale}
+        animationType="slide"
+        transparent
+        onRequestClose={handleCancelEdit}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: theme.bg }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: theme.text }]}>
+                {t("editEntry")}
+              </Text>
+              <TouchableOpacity onPress={handleCancelEdit}>
+                <MaterialIcons name="close" size={22} color={theme.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            {editingSale && (
+              <SaleForm
+                editingSale={toModuleSaleEntry(editingSale, restaurantId)}
+                defaultShift={editingSale.shift as Shift}
+                saving={savingEdit}
+                onSave={handleSaveEdit}
+                onCancelEdit={handleCancelEdit}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -539,4 +709,25 @@ const styles = StyleSheet.create({
   },
   dayDetailTitle: { fontSize: 14, fontWeight: "700" },
   dayDetailTotal: { fontSize: 18, fontWeight: "900" },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  modalContent: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 16,
+    maxHeight: "85%",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+  },
 });

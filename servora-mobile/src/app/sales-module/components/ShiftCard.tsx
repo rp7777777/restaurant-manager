@@ -1,6 +1,7 @@
 // ============================================
 // SERVORA ERP — Shift Card Component
 // Full shift UI: header, total, breakdown, lock, entries
+// FROZEN
 // ============================================
 
 import React from "react";
@@ -8,7 +9,7 @@ import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useApp } from "../../../context/AppContext";
 import { SaleEntry, Shift, PaymentMethod } from "../types/sales-types";
-import { SHIFT_ICONS, SHIFT_LABELS } from "../constants/shifts";
+import { SHIFT_ICONS } from "../constants/shifts";
 import { SHIFT_COLORS, SHIFT_TINT_BG } from "../constants/shift-colors";
 import { SaleEntryCard } from "./SaleEntryCard";
 import { EmptyState } from "./EmptyState";
@@ -38,6 +39,7 @@ export function ShiftCard({
 
   const color = SHIFT_COLORS[shift];
   const tintBg = SHIFT_TINT_BG[shift];
+  const shiftKey = shift.toLowerCase() as "morning" | "afternoon" | "night";
 
   return (
     <View
@@ -54,10 +56,10 @@ export function ShiftCard({
           </View>
           <View>
             <Text style={[styles.shiftName, { color: theme.text }]}>
-              {t[shift.toLowerCase() as keyof typeof t] as string ?? SHIFT_LABELS[shift]}
+              {t(shiftKey)}
             </Text>
             <Text style={[styles.entryCount, { color: theme.textSecondary }]}>
-              {entries.length} {entries.length === 1 ? (t.entry ?? "entry") : (t.entries ?? "entries")}
+              {entries.length} {entries.length === 1 ? t("entry") : t("entries")}
             </Text>
           </View>
         </View>
@@ -110,7 +112,7 @@ export function ShiftCard({
           color={locked ? theme.error : theme.textSecondary}
         />
         <Text style={[styles.lockText, { color: locked ? theme.error : theme.textSecondary }]}>
-          {locked ? (t.locked ?? "Locked") : (t.lockShift ?? "Lock Shift")}
+          {locked ? t("locked") : t("lockShift")}
         </Text>
       </TouchableOpacity>
     </View>

@@ -1,6 +1,7 @@
 // ============================================
 // SERVORA ERP — useSales Hook
 // Central state + business logic for Sales Entry screen
+// FROZEN
 // ============================================
 
 import { useState, useEffect, useCallback, useMemo } from "react";
@@ -82,7 +83,8 @@ export function useSales() {
       }
 
       const shiftLocked = checkShiftLocked(sales, input.shift);
-      const validation = validateSaleEntry(input, shiftLocked, !!editingSale);
+      const currentShiftEntryCount = getShiftEntries(sales, input.shift).length;
+      const validation = validateSaleEntry(input, shiftLocked, !!editingSale, currentShiftEntryCount);
       if (!validation.valid) {
         return { success: false, error: validation.error };
       }

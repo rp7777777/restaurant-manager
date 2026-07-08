@@ -1,6 +1,7 @@
 // ============================================
 // SERVORA ERP — Sale Form Component
 // New Entry form: shift + amount + payment + entry name
+// FROZEN
 // ============================================
 
 import React, { useState, useEffect } from "react";
@@ -53,8 +54,24 @@ export function SaleForm({
     }
   }, [editingSale, defaultShift]);
 
+  // ── Normalize European comma decimal (12,50) to dot (12.50) ──
+  const normalizedAmount = amount.trim().replace(",", ".");
+  const amountNumber = Number(normalizedAmount);
+  const isSaveDisabled =
+    saving ||
+    amount.trim() === "" ||
+    Number.isNaN(amountNumber) ||
+    amountNumber <= 0;
+
   const handleSubmit = () => {
-    onSave({ shift, amount, paymentMethod, entryName });
+    if (isSaveDisabled) return;
+
+    onSave({
+      shift,
+      amount: normalizedAmount,
+      paymentMethod,
+      entryName: entryName.trim(),
+    });
   };
 
   const isEditing = !!editingSale;
@@ -68,19 +85,19 @@ export function SaleForm({
           color={theme.primary}
         />
         <Text style={[styles.headerText, { color: theme.text }]}>
-          {isEditing ? t.editEntry ?? "Edit Entry" : t.newEntry ?? "New Entry"}
+          {isEditing ? t("editEntry") : t("newEntry")}
         </Text>
       </View>
 
       {/* Shift */}
       <Text style={[styles.label, { color: theme.textSecondary }]}>
-        {t.shift ?? "Shift"}
+        {t("shift")}
       </Text>
       <ShiftPicker value={shift} onChange={setShift} disabled={isEditing} />
 
       {/* Amount */}
       <Text style={[styles.label, { color: theme.textSecondary }]}>
-        {t.amount ?? "Amount"}
+        {t("amount")}
       </Text>
       <View style={[styles.amountRow, { borderColor: theme.border, backgroundColor: theme.surface }]}>
         <Text style={[styles.currencyPrefix, { color: theme.textSecondary }]}>€</Text>
@@ -91,18 +108,20 @@ export function SaleForm({
           keyboardType="decimal-pad"
           placeholder="0.00"
           placeholderTextColor={theme.textSecondary}
+          returnKeyType="done"
+          onSubmitEditing={handleSubmit}
         />
       </View>
 
       {/* Payment Method */}
       <Text style={[styles.label, { color: theme.textSecondary }]}>
-        {t.paymentMethod ?? "Payment Method"}
+        {t("paymentMethod")}
       </Text>
       <PaymentPicker value={paymentMethod} onChange={setPaymentMethod} />
 
       {/* Entry Name (was Note) — optional */}
       <Text style={[styles.label, { color: theme.textSecondary }]}>
-        {t.entryName ?? "Entry Name"} ({t.noteOptional ?? "optional"})
+        {t("entryName")}
       </Text>
       <TextInput
         style={[
@@ -111,9 +130,11 @@ export function SaleForm({
         ]}
         value={entryName}
         onChangeText={setEntryName}
-        placeholder={t.entryNamePlaceholder ?? "e.g. Lunch rush, Delivery batch..."}
+        placeholder={t("entryNamePlaceholder")}
         placeholderTextColor={theme.textSecondary}
         maxLength={100}
+        returnKeyType="done"
+        onSubmitEditing={handleSubmit}
       />
 
       {/* Actions */}
@@ -123,17 +144,17 @@ export function SaleForm({
             style={[styles.cancelButton, { borderColor: theme.border }]}
             onPress={onCancelEdit}
           >
-            <Text style={{ color: theme.textSecondary }}>{t.cancel ?? "Cancel"}</Text>
+            <Text style={{ color: theme.textSecondary }}>{t("cancel")}</Text>
           </TouchableOpacity>
         )}
         <TouchableOpacity
-          style={[styles.saveButton, { backgroundColor: theme.primary, opacity: saving ? 0.6 : 1 }]}
+          style={[styles.saveButton, { backgroundColor: theme.primary, opacity: isSaveDisabled ? 0.6 : 1 }]}
           onPress={handleSubmit}
-          disabled={saving}
+          disabled={isSaveDisabled}
         >
           <MaterialIcons name="save" size={18} color="#ffffff" />
           <Text style={styles.saveButtonText}>
-            {saving ? (t.saving ?? "Saving...") : (t.saveSale ?? "Save Sale")}
+            {saving ? t("saving") : t("saveSale")}
           </Text>
         </TouchableOpacity>
       </View>

@@ -5,6 +5,8 @@
 
 import { Shift } from "../types/sales-types";
 
+export const MAX_ENTRIES_PER_SHIFT = 3;
+
 export interface ValidationResult {
   valid: boolean;
   error?: string;
@@ -23,13 +25,20 @@ export function validateSaleEntry(
     shift: Shift;
   },
   isShiftLocked: boolean,
-  isEditing: boolean
+  isEditing: boolean,
+  currentShiftEntryCount: number
 ): ValidationResult {
   if (!isValidAmount(input.amount)) {
     return { valid: false, error: "Enter a valid amount" };
   }
   if (isShiftLocked && !isEditing) {
     return { valid: false, error: `${input.shift} shift is already locked.` };
+  }
+  if (!isEditing && currentShiftEntryCount >= MAX_ENTRIES_PER_SHIFT) {
+    return {
+      valid: false,
+      error: `${input.shift} shift already has ${MAX_ENTRIES_PER_SHIFT} entries. Maximum reached.`,
+    };
   }
   return { valid: true };
 }
