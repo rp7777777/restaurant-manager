@@ -28,7 +28,7 @@ import {
   getShiftEntries,
 } from "../utils/sale-calculations";
 import { validateSaleEntry, validateRestaurantContext } from "../utils/sale-validation";
-import { todayISO } from "../../../utils/date-utils";
+import { useTodayISO } from "../../../hooks/useTodayISO";
 
 export function useSales() {
   const { restaurantId } = useApp();
@@ -38,7 +38,9 @@ export function useSales() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const today = useMemo(() => todayISO(), []);
+  // ── Reactive business date — automatically rolls over at midnight,
+  //    even if the app stays open with no user interaction. ──
+  const today = useTodayISO();
 
   // ── Realtime subscription — instant updates, no refresh needed ──
   useEffect(() => {

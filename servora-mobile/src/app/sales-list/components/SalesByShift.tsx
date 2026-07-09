@@ -9,21 +9,12 @@ import {
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useApp } from "../../../context/AppContext";
-
-interface SaleEntry {
-  id?: string;
-  shift: string;
-  amount: number;
-  paymentMethod: string;
-  note: string;
-  locked: boolean;
-  date: string;
-}
+import { SaleHistoryEntry } from "../types/sales-history-types";
 
 interface Props {
-  sales: SaleEntry[];
-  onEdit?: (sale: SaleEntry) => void;
-  onDelete?: (sale: SaleEntry) => void;
+  sales: SaleHistoryEntry[];
+  onEdit?: (sale: SaleHistoryEntry) => void;
+  onDelete?: (sale: SaleHistoryEntry) => void;
   isManager?: boolean;
 }
 
@@ -146,24 +137,32 @@ export default function SalesByShift({ sales, onEdit, onDelete, isManager }: Pro
                           <TouchableOpacity
                             onPress={() => onEdit(sale)}
                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            style={styles.actionButton}
                           >
                             <MaterialIcons
                               name="edit"
                               size={15}
                               color={theme.primary}
                             />
+                            <Text style={[styles.actionText, { color: theme.primary }]}>
+                              Edit
+                            </Text>
                           </TouchableOpacity>
                         )}
                         {onDelete && isManager && (
                           <TouchableOpacity
                             onPress={() => onDelete(sale)}
                             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            style={styles.actionButton}
                           >
                             <MaterialIcons
                               name="delete"
                               size={15}
                               color="#ef4444"
                             />
+                            <Text style={[styles.actionText, { color: "#ef4444" }]}>
+                              Delete
+                            </Text>
                           </TouchableOpacity>
                         )}
                       </View>
@@ -239,5 +238,7 @@ const styles = StyleSheet.create({
   entryNote: { fontSize: 11 },
   entryRight: { alignItems: "flex-end", gap: 5 },
   entryAmount: { fontSize: 14, fontWeight: "800" },
-  actions: { flexDirection: "row", gap: 10 },
+  actions: { flexDirection: "row", gap: 12 },
+  actionButton: { flexDirection: "row", alignItems: "center", gap: 3 },
+  actionText: { fontSize: 11, fontWeight: "600" },
 });

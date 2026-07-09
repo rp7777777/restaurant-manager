@@ -5,7 +5,7 @@
 // ============================================
 
 import React from "react";
-import { View, Text, TouchableOpacity, StyleSheet, Alert } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useApp } from "../../../context/AppContext";
 import { SaleEntry } from "../types/sales-types";
@@ -23,17 +23,6 @@ export function SaleEntryCard({ entry, onEdit, onDelete }: SaleEntryCardProps) {
 
   const paymentColor = PAYMENT_COLORS[entry.paymentMethod];
   const displayName = getEntryDisplayName(entry);
-
-  const handleEditPress = () => {
-    Alert.alert(
-      t("editEntry") || "Edit Entry",
-      "Are you sure you want to edit this entry?",
-      [
-        { text: t("cancel"), style: "cancel" },
-        { text: t("editEntry") || "Edit", onPress: onEdit },
-      ]
-    );
-  };
 
   return (
     <View style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}>
@@ -58,7 +47,7 @@ export function SaleEntryCard({ entry, onEdit, onDelete }: SaleEntryCardProps) {
         <Text style={[styles.amount, { color: theme.text }]}>{fmt(entry.amount)}</Text>
         {!entry.locked && (
           <View style={styles.actions}>
-            <TouchableOpacity onPress={handleEditPress} style={styles.actionButton}>
+            <TouchableOpacity onPress={onEdit} style={styles.actionButton}>
               <MaterialIcons name="edit" size={16} color={theme.primary} />
               <Text style={[styles.actionText, { color: theme.primary }]}>
                 {t("editEntry") || "Edit"}

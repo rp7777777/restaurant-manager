@@ -1,6 +1,8 @@
 // ============================================
 // SERVORA ERP — Add Sale Screen (Controller)
 // Composes: TotalCard, ShiftCard (x3), SaleForm
+// Uses ConfirmModal (cross-platform) instead of
+// Alert.alert() (native-only, no-ops on web)
 // FROZEN
 // ============================================
 
@@ -21,8 +23,16 @@ import { formatDisplayDate } from "../utils/sale-formatters";
 import { TotalCard } from "../components/TotalCard";
 import { ShiftCard } from "../components/ShiftCard";
 import { SaleForm } from "../components/SaleForm";
+import { ConfirmModal } from "../../../components/ui/ConfirmModal";
 
 const DEFAULT_SHIFT: Shift = "Morning";
+
+type PendingAction =
+  | { type: "delete"; entry: SaleEntry }
+  | { type: "toggleLock"; shift: Shift; currentlyLocked: boolean }
+  | { type: "editRequest"; entry: SaleEntry }
+  | { type: "saveEdit"; input: { shift: Shift; amount: string; paymentMethod: PaymentMethod; entryName: string } }
+  | null;
 
 interface AddSaleScreenProps {
   onNavigateToHistory?: () => void;
@@ -51,7 +61,7 @@ export function AddSaleScreen({ onNavigateToHistory }: AddSaleScreenProps) {
   //    even when editingSale was already null before and after saving. ──
   const [formResetKey, setFormResetKey] = useState(0);
 
-  // ── Guard against double-tap on lock/delete actions (Alert.alert can pop twice) ──
+  // ── Guard against double-tap on lock/delete actions ──
   const actionInFlight = useRef(false);
 
   // ── Scroll-to-form-on-edit: track the form's Y position via onLayout,
@@ -63,6 +73,14 @@ export function AddSaleScreen({ onNavigateToHistory }: AddSaleScreenProps) {
     scrollViewRef.current?.scrollTo({ y: formYPosition.current, animated: true });
   }, []);
 
+  // ── Single pending-action state drives the one shared ConfirmModal below.
+  //    Replaces Alert.alert() everywhere, since Alert.alert() is native-only
+  //    and silently no-ops on web. ──
+  const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+
+  const closeConfirm = useCallback(() => setPendingAction(null), []);
+
+  // ── Save (create or edit) ──
   const handleSave = useCallback(
     async (input: {
       shift: Shift;
@@ -72,31 +90,13 @@ export function AddSaleScreen({ onNavigateToHistory }: AddSaleScreenProps) {
     }) => {
       if (saving) return;
 
-      // ── Edit mode: confirm before overwriting an existing entry ──
+      // Edit mode: ask for confirmation via the shared modal.
       if (editingSale) {
-        Alert.alert(
-          t("editSale") || "Update Sale",
-          "Save changes to this entry?",
-          [
-            { text: t("cancel"), style: "cancel" },
-            {
-              text: t("saveSale") || "Save",
-              onPress: async () => {
-                const result = await saveSale(input, editingSale);
-                if (result.success) {
-                  setEditingSale(null);
-                  setFormResetKey((k) => k + 1);
-                } else {
-                  Alert.alert(t("error"), result.error ?? "Something went wrong");
-                }
-              },
-            },
-          ]
-        );
+        setPendingAction({ type: "saveEdit", input });
         return;
       }
 
-      // ── New entry: save immediately, no confirmation needed ──
+      // New entry: save immediately, no confirmation needed.
       const result = await saveSale(input, editingSale);
       if (result.success) {
         setEditingSale(null);
@@ -108,80 +108,130 @@ export function AddSaleScreen({ onNavigateToHistory }: AddSaleScreenProps) {
     [saveSale, editingSale, saving, t]
   );
 
-  const handleEditEntry = useCallback(
-    (entry: SaleEntry) => {
-      setEditingSale(entry);
-      // Wait a tick for the form to populate/remount before scrolling to it.
-      setTimeout(scrollToForm, 100);
-    },
-    [scrollToForm]
-  );
+  // ── Pencil click: ask for confirmation before opening the entry in the form ──
+  const handleEditEntry = useCallback((entry: SaleEntry) => {
+    setPendingAction({ type: "editRequest", entry });
+  }, []);
 
   const handleCancelEdit = useCallback(() => {
     setEditingSale(null);
   }, []);
 
-  const handleDeleteEntry = useCallback(
-    (entry: SaleEntry) => {
-      if (actionInFlight.current) return;
-
-      Alert.alert(
-        t("deleteEntry"),
-        t("deleteEntryConfirm"),
-        [
-          { text: t("cancel"), style: "cancel" },
-          {
-            text: t("delete"),
-            style: "destructive",
-            onPress: async () => {
-              actionInFlight.current = true;
-              try {
-                const result = await removeSale(entry);
-                if (!result.success) {
-                  Alert.alert(t("error"), result.error ?? "Failed to delete");
-                }
-              } finally {
-                actionInFlight.current = false;
-              }
-            },
-          },
-        ]
-      );
-    },
-    [removeSale, t]
-  );
+  const handleDeleteEntry = useCallback((entry: SaleEntry) => {
+    if (actionInFlight.current) return;
+    setPendingAction({ type: "delete", entry });
+  }, []);
 
   const handleToggleLock = useCallback(
     (shift: Shift) => {
       if (actionInFlight.current) return;
-
-      const locked = shiftLocked(shift);
-      const actionText = locked ? t("unlockShift") : t("lockShift");
-
-      Alert.alert(
-        actionText,
-        locked ? t("unlockShiftConfirm") : t("lockShiftConfirm"),
-        [
-          { text: t("cancel"), style: "cancel" },
-          {
-            text: actionText,
-            onPress: async () => {
-              actionInFlight.current = true;
-              try {
-                const result = await toggleShiftLock(shift, locked);
-                if (!result.success) {
-                  Alert.alert(t("error"), result.error ?? "Failed to update lock");
-                }
-              } finally {
-                actionInFlight.current = false;
-              }
-            },
-          },
-        ]
-      );
+      const currentlyLocked = shiftLocked(shift);
+      setPendingAction({ type: "toggleLock", shift, currentlyLocked });
     },
-    [shiftLocked, toggleShiftLock, t]
+    [shiftLocked]
   );
+
+  // ── Executes whichever action is currently pending, once the user
+  //    confirms via the modal. ──
+  const handleConfirm = useCallback(async () => {
+    if (!pendingAction) return;
+
+    if (pendingAction.type === "delete") {
+      actionInFlight.current = true;
+      closeConfirm();
+      try {
+        const result = await removeSale(pendingAction.entry);
+        if (!result.success) {
+          Alert.alert(t("error"), result.error ?? "Failed to delete");
+        }
+      } finally {
+        actionInFlight.current = false;
+      }
+      return;
+    }
+
+    if (pendingAction.type === "toggleLock") {
+      actionInFlight.current = true;
+      closeConfirm();
+      try {
+        const result = await toggleShiftLock(pendingAction.shift, pendingAction.currentlyLocked);
+        if (!result.success) {
+          Alert.alert(t("error"), result.error ?? "Failed to update lock");
+        }
+      } finally {
+        actionInFlight.current = false;
+      }
+      return;
+    }
+
+    if (pendingAction.type === "editRequest") {
+      const entry = pendingAction.entry;
+      closeConfirm();
+      setEditingSale(entry);
+      setTimeout(scrollToForm, 100);
+      return;
+    }
+
+    if (pendingAction.type === "saveEdit") {
+      closeConfirm();
+      const result = await saveSale(pendingAction.input, editingSale);
+      if (result.success) {
+        setEditingSale(null);
+        setFormResetKey((k) => k + 1);
+      } else {
+        Alert.alert(t("error"), result.error ?? "Something went wrong");
+      }
+      return;
+    }
+  }, [pendingAction, closeConfirm, removeSale, toggleShiftLock, saveSale, editingSale, t, scrollToForm]);
+
+  // ── Derive modal copy (title/message/labels) from the pending action ──
+  const modalConfig = (() => {
+    if (!pendingAction) return null;
+
+    if (pendingAction.type === "delete") {
+      return {
+        title: t("deleteEntry"),
+        message: t("deleteEntryConfirm"),
+        confirmLabel: t("delete"),
+        cancelLabel: t("cancel"),
+        destructive: true,
+      };
+    }
+
+    if (pendingAction.type === "toggleLock") {
+      const { currentlyLocked } = pendingAction;
+      return {
+        title: currentlyLocked ? t("unlockShift") : t("lockShift"),
+        message: currentlyLocked ? t("unlockShiftConfirm") : t("lockShiftConfirm"),
+        confirmLabel: currentlyLocked ? t("unlockShift") : t("lockShift"),
+        cancelLabel: t("cancel"),
+        destructive: false,
+      };
+    }
+
+    if (pendingAction.type === "editRequest") {
+      return {
+        title: t("editEntry") || "Edit Entry",
+        message: "Are you sure you want to edit this entry?",
+        confirmLabel: t("editEntry") || "Edit",
+        cancelLabel: t("cancel"),
+        destructive: false,
+      };
+    }
+
+    if (pendingAction.type === "saveEdit") {
+      return {
+        title: t("editSale") || "Update Sale",
+        message: "Save changes to this entry?",
+        confirmLabel: t("saveSale") || "Save",
+        cancelLabel: t("cancel"),
+        destructive: false,
+      };
+    }
+
+    return null;
+  })();
 
   if (loading) {
     return (
@@ -229,9 +279,7 @@ export function AddSaleScreen({ onNavigateToHistory }: AddSaleScreenProps) {
         />
       ))}
 
-      {/* New Entry / Edit Entry Form — key forces a clean remount+reset
-          after every successful save, whether creating or editing.
-          onLayout tracks its Y position so Edit can scroll straight to it. */}
+      {/* New Entry / Edit Entry Form */}
       <View onLayout={(e) => { formYPosition.current = e.nativeEvent.layout.y; }}>
         <SaleForm
           key={editingSale?.id ?? `new-${formResetKey}`}
@@ -242,6 +290,20 @@ export function AddSaleScreen({ onNavigateToHistory }: AddSaleScreenProps) {
           onCancelEdit={handleCancelEdit}
         />
       </View>
+
+      {/* Shared confirmation modal — cross-platform, replaces Alert.alert() */}
+      {modalConfig && (
+        <ConfirmModal
+          visible={!!pendingAction}
+          title={modalConfig.title}
+          message={modalConfig.message}
+          confirmLabel={modalConfig.confirmLabel}
+          cancelLabel={modalConfig.cancelLabel}
+          destructive={modalConfig.destructive}
+          onConfirm={handleConfirm}
+          onCancel={closeConfirm}
+        />
+      )}
     </ScrollView>
   );
 }

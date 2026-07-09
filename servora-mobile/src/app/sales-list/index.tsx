@@ -1,204 +1,80 @@
 // ============================================
-// SERVORA ERP — Sales List / History
-// Monthly view + Jan-Dec tabs + Daily details
-// Now with Edit/Delete for past-date entries
+// SERVORA ERP — Sales History Screen (Controller)
+// Composes: Year summary, Month tabs, Daily list, SalesDayDetail
+// Uses ConfirmModal (cross-platform) for delete —
+// Alert.alert() is native-only, silently no-ops on web.
 // FROZEN
 // ============================================
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
   View, Text, StyleSheet, ScrollView,
   TouchableOpacity, ActivityIndicator,
   Modal, Platform, RefreshControl, Alert,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import {
-  collection, onSnapshot, query,
-  orderBy, where, Timestamp,
-} from "firebase/firestore";
-import { db } from "../../firebase";
 import { useApp } from "../../context/AppContext";
 import PaymentSummary from "./components/PaymentSummary";
-import SalesByShift from "./components/SalesByShift";
 import SalesPrintView from "./components/SalesPrintView";
+import { SalesDayDetail } from "./components/SalesDayDetail";
 import { SaleForm } from "../sales-module/components/SaleForm";
-import {
-  updateSale,
-  deleteSale,
-} from "../../services/sales-service";
-import type {
-  SaleEntry as ModuleSaleEntry,
-  Shift,
-  PaymentMethod,
-} from "../sales-module/types/sales-types";
+import { ConfirmModal } from "../../components/ui/ConfirmModal";
+import { useSalesHistory } from "./hooks/useSalesHistory";
+import { MONTHS, MONTH_NAMES, formatShortDate } from "./utils/sales-date";
 
-// ── Types ────────────────────────────────────
-interface SaleEntry {
-  id?: string;
-  date: string;
-  shift: string;
-  amount: number;
-  paymentMethod: string;
-  note: string;
-  entryName?: string;
-  locked: boolean;
-  createdAt?: unknown;
-}
-
-interface DayTotal {
-  date: string;
-  total: number;
-  entries: SaleEntry[];
-}
-
-// ── Constants ────────────────────────────────
-const MONTHS = [
-  "Jan","Feb","Mar","Apr","May","Jun",
-  "Jul","Aug","Sep","Oct","Nov","Dec",
-];
-
-const MONTH_NAMES = [
-  "January","February","March","April","May","June",
-  "July","August","September","October","November","December",
-];
-
-// ── Safe date parsing — s.date is a "YYYY-MM-DD" string,
-//    but defensively handle Timestamp and missing values too ──
-function parseSaleDate(date: unknown): Date {
-  if (!date) return new Date(0);
-  if (date instanceof Timestamp) return date.toDate();
-  return new Date(String(date));
-}
-
-// ── Convert local SaleEntry -> module SaleEntry (for SaleForm props) ──
-function toModuleSaleEntry(sale: SaleEntry, restaurantId: string): ModuleSaleEntry {
-  return {
-    id: sale.id,
-    date: sale.date,
-    shift: sale.shift as Shift,
-    amount: sale.amount,
-    paymentMethod: sale.paymentMethod as PaymentMethod,
-    entryName: sale.entryName ?? sale.note ?? "",
-    locked: sale.locked,
-    userId: "",
-    restaurantId,
-  };
-}
-
-// ── Main Screen ──────────────────────────────
 export default function SalesListScreen() {
   const { theme, fmt, t, restaurantId, userProfile } = useApp();
 
-  const currentYear = new Date().getFullYear();
-  const currentMonth = new Date().getMonth();
-
-  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
-  const [selectedYear] = useState(currentYear);
-  const [allSales, setAllSales] = useState<SaleEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [selectedYear] = useState(new Date().getFullYear());
   const [refreshing, setRefreshing] = useState(false);
-
-  // Right panel — selected day
-  const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [showPrint, setShowPrint] = useState(false);
   const [printDate, setPrintDate] = useState<string>("");
   const [paperSize, setPaperSize] = useState<"A4" | "A5" | "A6">("A4");
 
-  // Edit modal state
-  const [editingSale, setEditingSale] = useState<SaleEntry | null>(null);
-  const [savingEdit, setSavingEdit] = useState(false);
+  const {
+    loading,
+    selectedMonth,
+    selectedDay,
+    dayTotals,
+    monthlyTotal,
+    monthSales,
+    monthlySummary,
+    yearTotal,
+    selectedDaySales,
+    selectedDayTotal,
+    selectMonth,
+    selectDay,
 
-  const isManager = ["MANAGER", "OWNER"].includes(userProfile?.role ?? "");
+    editingSale,
+    savingEdit,
+    editError,
+    requestEdit,
+    cancelEdit,
+    confirmEdit,
 
-  // ── Load all sales for year ──────────────
+    pendingDelete,
+    requestDelete,
+    cancelDelete,
+    confirmDelete,
+  } = useSalesHistory(selectedYear);
+
+  const isManager =
+    userProfile?.role === "MANAGER" || userProfile?.role === "OWNER";
+
+  // ── Scroll-to-detail: track the expanded day-detail section's Y
+  //    position, then scroll there once selectedDay changes and the
+  //    layout has settled. A short delay is more reliable across
+  //    platforms than relying on onLayout timing alone. ──
+  const scrollViewRef = useRef<ScrollView>(null);
+  const detailYPosition = useRef(0);
+
   useEffect(() => {
-    if (!restaurantId) {
-      setAllSales([]);
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-
-    const yearStart = new Date(selectedYear, 0, 1);
-    const yearEnd = new Date(selectedYear, 11, 31, 23, 59, 59);
-
-    const q = query(
-      collection(db, "restaurants", restaurantId, "sales"),
-      where("createdAt", ">=", Timestamp.fromDate(yearStart)),
-      where("createdAt", "<=", Timestamp.fromDate(yearEnd)),
-      orderBy("createdAt", "desc")
-    );
-
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const data: SaleEntry[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<SaleEntry, "id">),
-        }));
-        setAllSales(data);
-        setLoading(false);
-        setRefreshing(false);
-      },
-      () => { setLoading(false); setRefreshing(false); }
-    );
-
-    return unsub;
-  }, [restaurantId, selectedYear]);
-
-  // ── Filter by selected month ─────────────
-  const monthSales = allSales.filter((s) => {
-    if (!s.date) return false;
-    const d = parseSaleDate(s.date);
-    return d.getMonth() === selectedMonth && d.getFullYear() === selectedYear;
-  });
-
-  // ── Group by day ─────────────────────────
-  const dayMap: Record<string, SaleEntry[]> = {};
-  monthSales.forEach((s) => {
-    if (!dayMap[s.date]) dayMap[s.date] = [];
-    dayMap[s.date].push(s);
-  });
-
-  const dayTotals: DayTotal[] = Object.entries(dayMap)
-    .map(([date, entries]) => ({
-      date,
-      total: entries.reduce((sum, e) => sum + Number(e.amount), 0),
-      entries,
-    }))
-    .sort((a, b) => parseSaleDate(b.date).getTime() - parseSaleDate(a.date).getTime());
-
-  // ── Monthly totals ────────────────────────
-  const monthlyTotal = monthSales.reduce((sum, s) => sum + Number(s.amount), 0);
-  const monthlyTxCount = monthSales.length;
-
-  // ── Monthly summary (all months) ─────────
-  const monthlySummary = MONTHS.map((_, idx) => {
-    const sales = allSales.filter((s) => {
-      if (!s.date) return false;
-      const d = parseSaleDate(s.date);
-      return d.getMonth() === idx && d.getFullYear() === selectedYear;
-    });
-    return {
-      month: idx,
-      total: sales.reduce((sum, s) => sum + Number(s.amount), 0),
-      count: sales.length,
-    };
-  });
-
-  const yearTotal = monthlySummary.reduce((sum, m) => sum + m.total, 0);
-
-  // ── Selected day sales ───────────────────
-  const selectedDaySales = selectedDay ? (dayMap[selectedDay] ?? []) : [];
-  const selectedDayTotal = selectedDaySales.reduce(
-    (sum, s) => sum + Number(s.amount), 0
-  );
-
-  const formatDate = (d: string) =>
-    parseSaleDate(d).toLocaleDateString("en-GB", {
-      weekday: "short", day: "numeric", month: "short",
-    });
+    if (!selectedDay) return;
+    const timer = setTimeout(() => {
+      scrollViewRef.current?.scrollTo({ y: detailYPosition.current, animated: true });
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [selectedDay]);
 
   // ── Refresh — Firestore onSnapshot is already realtime,
   //    this just gives visual feedback for pull-to-refresh gesture ──
@@ -208,88 +84,19 @@ export default function SalesListScreen() {
     return () => clearTimeout(timer);
   }, [refreshing]);
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-  }, []);
+  const onRefresh = useCallback(() => setRefreshing(true), []);
 
-  // ── Edit handlers ─────────────────────────
-  const handleEditRequest = useCallback((sale: SaleEntry) => {
-    setEditingSale(sale);
-  }, []);
-
-  const handleCancelEdit = useCallback(() => {
-    setEditingSale(null);
-  }, []);
-
-  const handleSaveEdit = useCallback(
-    async (input: {
-      shift: Shift;
-      amount: string;
-      paymentMethod: PaymentMethod;
-      entryName: string;
-    }) => {
-      if (!editingSale || !editingSale.id || !restaurantId) return;
-
-      const amountNum = Number(input.amount);
-      if (isNaN(amountNum) || amountNum <= 0) {
-        Alert.alert(t("error"), "Enter a valid amount");
-        return;
-      }
-
-      setSavingEdit(true);
-      try {
-        const oldModuleSale = toModuleSaleEntry(editingSale, restaurantId);
-
-        await updateSale(restaurantId, editingSale.id, oldModuleSale, {
-          amount: amountNum,
-          paymentMethod: input.paymentMethod,
-          entryName: input.entryName,
-        });
-
-        setEditingSale(null);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to update sale";
-        Alert.alert(t("error"), message);
-      } finally {
-        setSavingEdit(false);
-      }
-    },
-    [editingSale, restaurantId, t]
-  );
-
-  // ── Delete handler ─────────────────────────
-  const handleDeleteRequest = useCallback(
-    (sale: SaleEntry) => {
-      if (!sale.id || !restaurantId) return;
-
-      Alert.alert(
-        t("deleteEntry"),
-        t("deleteEntryConfirm"),
-        [
-          { text: t("cancel"), style: "cancel" },
-          {
-            text: t("delete"),
-            style: "destructive",
-            onPress: async () => {
-              try {
-                const moduleSale = toModuleSaleEntry(sale, restaurantId);
-                await deleteSale(restaurantId, sale.id!, moduleSale);
-              } catch (err) {
-                const message = err instanceof Error ? err.message : "Failed to delete sale";
-                Alert.alert(t("error"), message);
-              }
-            },
-          },
-        ]
-      );
-    },
-    [restaurantId, t]
-  );
+  const handleConfirmDelete = useCallback(async () => {
+    const result = await confirmDelete();
+    if (!result.success) {
+      Alert.alert(t("error"), result.error ?? "Failed to delete");
+    }
+  }, [confirmDelete, t]);
 
   // ── Print modal ───────────────────────────
   if (showPrint) {
     const printSales = printDate
-      ? (dayMap[printDate] ?? [])
+      ? monthSales.filter((s) => s.date === printDate)
       : monthSales;
 
     return (
@@ -314,6 +121,7 @@ export default function SalesListScreen() {
   return (
     <View style={[styles.root, { backgroundColor: theme.bg }]}>
       <ScrollView
+        ref={scrollViewRef}
         style={styles.left}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -375,10 +183,7 @@ export default function SalesListScreen() {
                     active && { backgroundColor: theme.primary },
                     !active && { backgroundColor: theme.card },
                   ]}
-                  onPress={() => {
-                    setSelectedMonth(idx);
-                    setSelectedDay(null);
-                  }}
+                  onPress={() => selectMonth(idx)}
                 >
                   <Text
                     style={[
@@ -416,7 +221,7 @@ export default function SalesListScreen() {
               </View>
               <View style={styles.monthSummaryRight}>
                 <Text style={[styles.txCount, { color: theme.textSecondary }]}>
-                  {monthlyTxCount} entries
+                  {monthSales.length} entries
                 </Text>
                 <TouchableOpacity
                   style={[styles.monthPrintBtn, { borderColor: theme.border }]}
@@ -464,7 +269,7 @@ export default function SalesListScreen() {
                       { backgroundColor: theme.card, borderColor: theme.border },
                       isSelected && { borderColor: theme.primary, borderWidth: 2 },
                     ]}
-                    onPress={() => setSelectedDay(isSelected ? null : day.date)}
+                    onPress={() => selectDay(day.date)}
                   >
                     <View style={styles.dayLeft}>
                       <View
@@ -481,7 +286,7 @@ export default function SalesListScreen() {
                       </View>
                       <View>
                         <Text style={[styles.dayDate, { color: theme.text }]}>
-                          {formatDate(day.date)}
+                          {formatShortDate(day.date)}
                         </Text>
                         <Text style={[styles.dayCount, { color: theme.textSecondary }]}>
                           {day.entries.length} entries
@@ -521,23 +326,15 @@ export default function SalesListScreen() {
 
           {/* Expanded day detail */}
           {selectedDay && selectedDaySales.length > 0 && (
-            <View style={[styles.dayDetail, { backgroundColor: theme.surface }]}>
-              <View style={styles.dayDetailHeader}>
-                <Text style={[styles.dayDetailTitle, { color: theme.text }]}>
-                  {formatDate(selectedDay)}
-                </Text>
-                <Text style={[styles.dayDetailTotal, { color: "#10b981" }]}>
-                  {fmt(selectedDayTotal)}
-                </Text>
-              </View>
-              <SalesByShift
-                sales={selectedDaySales}
-                isManager={isManager}
-                onEdit={handleEditRequest}
-                onDelete={handleDeleteRequest}
-              />
-              <PaymentSummary sales={selectedDaySales} />
-            </View>
+            <SalesDayDetail
+              date={selectedDay}
+              sales={selectedDaySales}
+              total={selectedDayTotal}
+              isManager={isManager}
+              onEdit={requestEdit}
+              onDelete={requestDelete}
+              onLayout={(y) => { detailYPosition.current = y; }}
+            />
           )}
 
         </View>
@@ -548,7 +345,7 @@ export default function SalesListScreen() {
         visible={!!editingSale}
         animationType="slide"
         transparent
-        onRequestClose={handleCancelEdit}
+        onRequestClose={cancelEdit}
       >
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: theme.bg }]}>
@@ -556,22 +353,49 @@ export default function SalesListScreen() {
               <Text style={[styles.modalTitle, { color: theme.text }]}>
                 {t("editEntry")}
               </Text>
-              <TouchableOpacity onPress={handleCancelEdit}>
+              <TouchableOpacity onPress={cancelEdit}>
                 <MaterialIcons name="close" size={22} color={theme.textSecondary} />
               </TouchableOpacity>
             </View>
+            {editError && (
+              <Text style={{ color: theme.error, fontSize: 13, marginBottom: 10 }}>
+                {editError}
+              </Text>
+            )}
             {editingSale && (
               <SaleForm
-                editingSale={toModuleSaleEntry(editingSale, restaurantId)}
-                defaultShift={editingSale.shift as Shift}
+                editingSale={{
+                  id: editingSale.id,
+                  date: editingSale.date,
+                  shift: editingSale.shift,
+                  amount: editingSale.amount,
+                  paymentMethod: editingSale.paymentMethod,
+                  entryName: editingSale.entryName ?? editingSale.note ?? "",
+                  locked: editingSale.locked,
+                  userId: "",
+                  restaurantId: restaurantId,
+                }}
+                defaultShift={editingSale.shift}
                 saving={savingEdit}
-                onSave={handleSaveEdit}
-                onCancelEdit={handleCancelEdit}
+                onSave={confirmEdit}
+                onCancelEdit={cancelEdit}
               />
             )}
           </View>
         </View>
       </Modal>
+
+      {/* Delete confirmation — cross-platform, replaces Alert.alert() */}
+      <ConfirmModal
+        visible={!!pendingDelete}
+        title={t("deleteEntry")}
+        message={t("deleteEntryConfirm")}
+        confirmLabel={t("delete")}
+        cancelLabel={t("cancel")}
+        destructive
+        onConfirm={handleConfirmDelete}
+        onCancel={cancelDelete}
+      />
     </View>
   );
 }
@@ -694,21 +518,6 @@ const styles = StyleSheet.create({
   dayRight: { alignItems: "flex-end", gap: 4 },
   dayTotal: { fontSize: 15, fontWeight: "800" },
   dayActions: { flexDirection: "row", alignItems: "center", gap: 8 },
-  dayDetail: {
-    borderRadius: 14,
-    padding: 14,
-    marginTop: 4,
-    marginBottom: 12,
-    gap: 10,
-  },
-  dayDetailHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  dayDetailTitle: { fontSize: 14, fontWeight: "700" },
-  dayDetailTotal: { fontSize: 18, fontWeight: "900" },
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",

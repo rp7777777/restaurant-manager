@@ -5,7 +5,7 @@
 // ============================================
 
 import React, { useState, useEffect } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Keyboard } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useApp } from "../../../context/AppContext";
 import { SaleEntry, Shift, PaymentMethod } from "../types/sales-types";
@@ -55,7 +55,7 @@ export function SaleForm({
   }, [editingSale, defaultShift]);
 
   // ── Normalize European comma decimal (12,50) to dot (12.50) ──
-  const normalizedAmount = amount.trim().replace(",", ".");
+  const normalizedAmount = amount.trim().replace(/,/g, ".");
   const amountNumber = Number(normalizedAmount);
   const isSaveDisabled =
     saving ||
@@ -109,7 +109,7 @@ export function SaleForm({
           placeholder="0.00"
           placeholderTextColor={theme.textSecondary}
           returnKeyType="done"
-          onSubmitEditing={handleSubmit}
+          onSubmitEditing={() => Keyboard.dismiss()}
         />
       </View>
 
@@ -134,7 +134,7 @@ export function SaleForm({
         placeholderTextColor={theme.textSecondary}
         maxLength={100}
         returnKeyType="done"
-        onSubmitEditing={handleSubmit}
+        onSubmitEditing={() => Keyboard.dismiss()}
       />
 
       {/* Actions */}

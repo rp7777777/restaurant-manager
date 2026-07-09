@@ -14,21 +14,22 @@ export const COL = {
 
 // ── Restaurant subcollections ─────────────────
 export const RCOL = {
-  SALES:         "sales",
-  EXPENSES:      "expenses",
-  ATTENDANCE:    "attendance",
-  PAYROLL:       "payroll",
-  EMPLOYEES:     "employees",
-  SCHEDULES:     "schedules",
-  INVENTORY:     "inventory",
-  KITCHEN:       "kitchen",
-  STORE:         "store",
-  ACTIVITY_LOGS: "activityLogs",
-  HACCP:         "haccp",
-  DOCUMENTS:     "documents",
-  CONTRACTS:     "contracts",
-  LICENSES:      "licenses",
-  CERTIFICATES:  "certificates",
+  SALES:              "sales",
+  EXPENSES:            "expenses",
+  EXPENSE_CATEGORIES:  "expense-categories",
+  ATTENDANCE:          "attendance",
+  PAYROLL:             "payroll",
+  EMPLOYEES:           "employees",
+  SCHEDULES:           "schedules",
+  INVENTORY:           "inventory",
+  KITCHEN:             "kitchen",
+  STORE:               "store",
+  ACTIVITY_LOGS:       "activityLogs",
+  HACCP:               "haccp",
+  DOCUMENTS:           "documents",
+  CONTRACTS:           "contracts",
+  LICENSES:            "licenses",
+  CERTIFICATES:        "certificates",
 } as const;
 
 // ── Stats subcollections ──────────────────────

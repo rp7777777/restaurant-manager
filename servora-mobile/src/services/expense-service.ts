@@ -1,138 +1,243 @@
 // ============================================
 // SERVORA ERP — Expense Service
-// ✅ audit-service removed — module xaina
 // Multi-tenant Firestore operations
+// Single gateway for all expense data access
+//
+// TODO: Move dashboard aggregation to Cloud Functions
+//       for stronger write-consistency guarantees.
+// NOTE: createExpense() has no entry-count limit
+//       (unlike Sales' 3-per-shift), since expenses have
+//       no natural per-day cap.
 // ============================================
 
 import {
   collection, addDoc, updateDoc, deleteDoc,
-  doc, onSnapshot, query, orderBy, where,
-  serverTimestamp, Timestamp,
+  doc, getDoc, getDocs, onSnapshot, query,
+  where, orderBy, serverTimestamp,
+  runTransaction,
+  QueryDocumentSnapshot, DocumentData,
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
+import { COL, RCOL } from "../constants/firestore-collections";
+import { logCreate, logEdit, logDelete } from "../app/security/audit-service";
 import { updateDashboardStats } from "./dashboard-service";
-
-// ── Types ─────────────────────────────────────
-export interface ExpenseItem {
-  id?:           string;
-  expenseName:   string;
-  category:      string;
-  amount:        number;
-  note:          string;
-  createdAt?:    unknown;
-  updatedAt?:    unknown;
-  userId?:       string;
-  restaurantId?: string;
-}
-
-// ── Helpers ───────────────────────────────────
-function getRestaurantId(): string {
-  return auth.currentUser?.uid ?? "";
-}
+import {
+  ExpenseEntry,
+  CreateExpenseInput,
+  UpdateExpenseInput,
+} from "../app/expenses-module/types/expense-types";
 
 function expensesCollection(restaurantId: string) {
-  return collection(db, "restaurants", restaurantId, "expenses");
+  return collection(db, COL.RESTAURANTS, restaurantId, RCOL.EXPENSES);
 }
 
-// ── Create ────────────────────────────────────
+function expenseDoc(restaurantId: string, expenseId: string) {
+  return doc(db, COL.RESTAURANTS, restaurantId, RCOL.EXPENSES, expenseId);
+}
+
+function mapQueryDoc(d: QueryDocumentSnapshot<DocumentData>): ExpenseEntry {
+  return { id: d.id, ...(d.data() as Omit<ExpenseEntry, "id">) };
+}
+
+function nextMonthStr(monthStr: string): string {
+  const [year, month] = monthStr.split("-").map(Number);
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  return `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
+}
+
+// ── Create ──
 export async function createExpense(
-  expense: Omit<ExpenseItem, "id" | "createdAt" | "updatedAt">
+  restaurantId: string,
+  input: CreateExpenseInput
 ): Promise<string> {
-  const restaurantId = getRestaurantId();
-  if (!restaurantId) throw new Error("Not authenticated");
+  if (!restaurantId) throw new Error("Restaurant not configured");
+
+  const user = auth.currentUser;
+  if (!user) throw new Error("User not authenticated");
 
   const data = {
-    ...expense,
-    userId:      auth.currentUser!.uid,
+    ...input,
+    note: input.note?.trim() ?? "",
+    locked: false,
+    userId: user.uid,
     restaurantId,
-    createdAt:   serverTimestamp(),
-    updatedAt:   serverTimestamp(),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   };
 
   const docRef = await addDoc(expensesCollection(restaurantId), data);
-  await updateDashboardStats(restaurantId, "expenses", expense.amount, "add");
+
+  await updateDashboardStats(restaurantId, "expenses", input.amount, "add");
+
+  await logCreate("EXPENSES", docRef.id, {
+    date: input.date,
+    categoryId: input.categoryId,
+    amount: input.amount,
+    paymentMethod: input.paymentMethod,
+  });
+
   return docRef.id;
 }
 
-// ── Update ────────────────────────────────────
+// ── Update — runTransaction: read + locked-check + write happen atomically ──
 export async function updateExpense(
-  expenseId:     string,
-  oldExpense:    ExpenseItem,
-  updatedFields: Partial<ExpenseItem>
+  restaurantId: string,
+  expenseId: string,
+  oldExpense: ExpenseEntry,
+  updates: UpdateExpenseInput
 ): Promise<void> {
-  const restaurantId = getRestaurantId();
-  if (!restaurantId) throw new Error("Not authenticated");
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
 
-  await updateDoc(
-    doc(db, "restaurants", restaurantId, "expenses", expenseId),
-    { ...updatedFields, updatedAt: serverTimestamp() }
+  const ref = expenseDoc(restaurantId, expenseId);
+
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists()) throw new Error("Expense entry not found");
+
+    const currentData = snap.data() as Omit<ExpenseEntry, "id">;
+    if (currentData.locked) throw new Error("This expense is locked and cannot be edited");
+
+    const cleanUpdates = {
+      ...updates,
+      ...(updates.note !== undefined && { note: updates.note.trim() }),
+      updatedAt: serverTimestamp(),
+    };
+
+    transaction.update(ref, cleanUpdates);
+  });
+
+  if (updates.amount !== undefined && oldExpense.amount !== undefined) {
+    const diff = updates.amount - oldExpense.amount;
+    if (diff !== 0) {
+      await updateDashboardStats(restaurantId, "expenses", diff, "add");
+    }
+  }
+
+  await logEdit(
+    "EXPENSES",
+    expenseId,
+    oldExpense as unknown as Record<string, unknown>,
+    updates as unknown as Record<string, unknown>
   );
+}
 
-  if (
-    updatedFields.amount !== undefined &&
-    oldExpense.amount    !== undefined
-  ) {
-    const diff = updatedFields.amount - oldExpense.amount;
-    await updateDashboardStats(restaurantId, "expenses", diff, "add");
+// ── Delete — runTransaction: read + locked-check + delete happen atomically ──
+export async function deleteExpense(
+  restaurantId: string,
+  expenseId: string,
+  expenseData: ExpenseEntry
+): Promise<void> {
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
+
+  const ref = expenseDoc(restaurantId, expenseId);
+
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists()) throw new Error("Expense entry not found");
+
+    const currentData = snap.data() as Omit<ExpenseEntry, "id">;
+    if (currentData.locked) throw new Error("This expense is locked and cannot be deleted");
+
+    transaction.delete(ref);
+  });
+
+  await updateDashboardStats(restaurantId, "expenses", expenseData.amount, "subtract");
+
+  await logDelete("EXPENSES", expenseId, expenseData as unknown as Record<string, unknown>);
+}
+
+// ── Toggle lock on a single expense entry (individual-level lock) ──
+export async function toggleExpenseLock(
+  restaurantId: string,
+  expenseId: string,
+  locked: boolean
+): Promise<void> {
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
+
+  await updateDoc(expenseDoc(restaurantId, expenseId), {
+    locked,
+    updatedAt: serverTimestamp(),
+  });
+
+  if (locked) {
+    await logEdit("EXPENSES", expenseId, { locked: false }, { locked: true });
+  } else {
+    await logEdit("EXPENSES", expenseId, { locked: true }, { locked: false });
   }
 }
 
-// ── Delete ────────────────────────────────────
-export async function deleteExpense(
-  expenseId:   string,
-  expenseData: ExpenseItem
-): Promise<void> {
-  const restaurantId = getRestaurantId();
-  if (!restaurantId) throw new Error("Not authenticated");
-
-  await deleteDoc(
-    doc(db, "restaurants", restaurantId, "expenses", expenseId)
-  );
-  await updateDashboardStats(
-    restaurantId, "expenses", expenseData.amount, "subtract"
-  );
+export async function getExpenseById(
+  restaurantId: string,
+  expenseId: string
+): Promise<ExpenseEntry | null> {
+  const snap = await getDoc(expenseDoc(restaurantId, expenseId));
+  if (!snap.exists()) return null;
+  return { id: snap.id, ...(snap.data() as Omit<ExpenseEntry, "id">) };
 }
 
-// ── Real-time listener ────────────────────────
-export function subscribeExpenses(
+// ── Realtime — today's expenses ──
+export function subscribeTodayExpenses(
   restaurantId: string,
-  callback:     (expenses: ExpenseItem[]) => void,
-  onError?:     (err: Error) => void
+  date: string,
+  callback: (expenses: ExpenseEntry[]) => void,
+  onError?: (err: Error) => void
 ): () => void {
+  if (!restaurantId) {
+    callback([]);
+    return () => {};
+  }
+
   const q = query(
     expensesCollection(restaurantId),
-    orderBy("createdAt", "desc")
+    where("date", "==", date),
+    orderBy("createdAt", "asc")
   );
 
   return onSnapshot(
     q,
-    (snap) => {
-      const expenses: ExpenseItem[] = snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<ExpenseItem, "id">),
-      }));
-      callback(expenses);
-    },
+    (snap) => callback(snap.docs.map(mapQueryDoc)),
     (err) => onError?.(err)
   );
 }
 
-// ── Today's expenses ──────────────────────────
-export function subscribeTodayExpenses(
+// ── Get expenses for a specific date (one-time fetch) ──
+export async function getExpensesByDate(
   restaurantId: string,
-  callback:     (total: number) => void
-): () => void {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  date: string
+): Promise<ExpenseEntry[]> {
+  if (!restaurantId) return [];
 
   const q = query(
     expensesCollection(restaurantId),
-    where("createdAt", ">=", Timestamp.fromDate(today))
+    where("date", "==", date),
+    orderBy("createdAt", "asc")
   );
 
-  return onSnapshot(q, (snap) => {
-    let total = 0;
-    snap.forEach((d) => { total += Number(d.data().amount ?? 0); });
-    callback(total);
-  });
+  const snap = await getDocs(q);
+  return snap.docs.map(mapQueryDoc);
+}
+
+// ── Get expenses for a month (YYYY-MM) — half-open range, leap-year safe ──
+export async function getExpensesByMonth(
+  restaurantId: string,
+  monthStr: string
+): Promise<ExpenseEntry[]> {
+  if (!restaurantId) return [];
+
+  const start = `${monthStr}-01`;
+  const end = `${nextMonthStr(monthStr)}-01`;
+
+  const q = query(
+    expensesCollection(restaurantId),
+    where("date", ">=", start),
+    where("date", "<", end),
+    orderBy("date", "asc")
+  );
+
+  const snap = await getDocs(q);
+  return snap.docs.map(mapQueryDoc);
 }
