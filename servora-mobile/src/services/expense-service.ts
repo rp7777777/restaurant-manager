@@ -8,13 +8,17 @@
 // NOTE: createExpense() has no entry-count limit
 //       (unlike Sales' 3-per-shift), since expenses have
 //       no natural per-day cap.
+// NOTE: subCategoryId is conditionally included/removed —
+//       Firestore rejects `undefined` field values, so it's
+//       only ever written when actually present.
+// FROZEN
 // ============================================
 
 import {
   collection, addDoc, updateDoc, deleteDoc,
   doc, getDoc, getDocs, onSnapshot, query,
   where, orderBy, serverTimestamp,
-  runTransaction,
+  runTransaction, deleteField,
   QueryDocumentSnapshot, DocumentData,
 } from "firebase/firestore";
 import { db, auth } from "../firebase";
@@ -46,7 +50,8 @@ function nextMonthStr(monthStr: string): string {
   return `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
 }
 
-// ── Create ──
+// ── Create — subCategoryId only included when present, since Firestore
+//    rejects `undefined` field values ──
 export async function createExpense(
   restaurantId: string,
   input: CreateExpenseInput
@@ -56,8 +61,12 @@ export async function createExpense(
   const user = auth.currentUser;
   if (!user) throw new Error("User not authenticated");
 
-  const data = {
-    ...input,
+  const data: Record<string, unknown> = {
+    date: input.date,
+    expenseName: input.expenseName,
+    categoryId: input.categoryId,
+    amount: input.amount,
+    paymentMethod: input.paymentMethod,
     note: input.note?.trim() ?? "",
     locked: false,
     userId: user.uid,
@@ -65,6 +74,10 @@ export async function createExpense(
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
+
+  if (input.subCategoryId) {
+    data.subCategoryId = input.subCategoryId;
+  }
 
   const docRef = await addDoc(expensesCollection(restaurantId), data);
 
@@ -80,7 +93,9 @@ export async function createExpense(
   return docRef.id;
 }
 
-// ── Update — runTransaction: read + locked-check + write happen atomically ──
+// ── Update — runTransaction: read + locked-check + write happen atomically.
+//    subCategoryId: if explicitly cleared (undefined), removes the field
+//    via deleteField() rather than writing `undefined` (which Firestore rejects). ──
 export async function updateExpense(
   restaurantId: string,
   expenseId: string,
@@ -99,11 +114,15 @@ export async function updateExpense(
     const currentData = snap.data() as Omit<ExpenseEntry, "id">;
     if (currentData.locked) throw new Error("This expense is locked and cannot be edited");
 
-    const cleanUpdates = {
-      ...updates,
-      ...(updates.note !== undefined && { note: updates.note.trim() }),
-      updatedAt: serverTimestamp(),
-    };
+    const cleanUpdates: Record<string, unknown> = { ...updates, updatedAt: serverTimestamp() };
+
+    if (updates.note !== undefined) {
+      cleanUpdates.note = updates.note.trim();
+    }
+
+    if ("subCategoryId" in updates) {
+      cleanUpdates.subCategoryId = updates.subCategoryId ? updates.subCategoryId : deleteField();
+    }
 
     transaction.update(ref, cleanUpdates);
   });

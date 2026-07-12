@@ -2,6 +2,7 @@
 // SERVORA ERP — Category Service
 // Multi-tenant Firestore operations for expense categories
 // and their nested subcategories
+// FROZEN
 // ============================================
 
 import {
@@ -49,6 +50,7 @@ function normalize(name: string): string {
 //    on every app load without creating duplicates. ──
 export async function seedDefaultCategoriesIfEmpty(restaurantId: string): Promise<void> {
   if (!restaurantId) return;
+  if (!auth.currentUser) throw new Error("User not authenticated");
 
   const existing = await getDocs(categoriesCollection(restaurantId));
   if (!existing.empty) return;
