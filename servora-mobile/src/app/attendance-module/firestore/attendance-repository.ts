@@ -3,6 +3,7 @@
 // ✅ Repository = Data Only
 // ✅ isValidAttendanceStatus — safe mapper
 // ✅ Firestore composite index notes added
+// ✅ normalDailyHours mapped (defaults to 8 if missing on old records)
 // ✅ No business logic, no settings, no context
 // FROZEN
 // ============================================
@@ -61,10 +62,11 @@ export function mapAttendanceDoc(
       ? Number(data.scheduledHours) : undefined,
     clockIn:        (data.clockIn        as string | undefined),
     clockOut:       (data.clockOut       as string | undefined),
-    breakMinutes:   Number(data.breakMinutes  ?? 0),
-    workedHours:    Number(data.workedHours   ?? 0),
-    overtimeHours:  Number(data.overtimeHours ?? 0),
-    lateMinutes:    Number(data.lateMinutes   ?? 0),
+    breakMinutes:     Number(data.breakMinutes     ?? 0),
+    normalDailyHours: Number(data.normalDailyHours ?? 8),
+    workedHours:      Number(data.workedHours   ?? 0),
+    overtimeHours:    Number(data.overtimeHours ?? 0),
+    lateMinutes:      Number(data.lateMinutes   ?? 0),
     employeeSnapshot,
     branchId:       (data.branchId       as string | undefined),
     departmentId:   (data.departmentId   as string | undefined),

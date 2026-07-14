@@ -1,20 +1,36 @@
 // ============================================
 // SERVORA ERP — Attendance Service
-// ✅ Overnight shift fix — 22:00 → 06:00
-// ✅ clockIn overwrite protection
-// ✅ clockOut overwrite protection
-// ✅ updateAttendance — fetch + merge + recalc
-// ✅ clockOut — fetch clockIn from Firestore
-// ✅ Duplicate check — targeted query
+// ✅ Overnight shift fix — 22:00 → 06:00 (worked hours)
+// ✅ Overnight late-calculation fix (scheduled evening,
+//    clock-in after midnight now correctly counted as late,
+//    not clamped to 0)
+// ✅ clockIn overwrite protection (via runTransaction)
+// ✅ clockOut overwrite protection (via runTransaction)
+// ✅ createAttendance — two-layer duplicate protection:
+//    legacy query check (catches old random-ID records) +
+//    deterministic ID (employeeId_date) + runTransaction
+//    (guarantees no new duplicate under concurrent creates)
+// ✅ normalDailyHours persisted on the record — clockOut and
+//    updateAttendance both fall back to the record's own
+//    snapshot instead of current restaurant settings, so a
+//    settings change later doesn't retroactively change
+//    historical overtime math
+// ✅ updateAttendance — runTransaction, no stale recalculation
+//    race; supports explicit clockIn/clockOut clearing via
+//    null (deleteField()), distinct from undefined (leave as-is)
+// ✅ Status/clockIn/clockOut consistency guards — enforced on
+//    BOTH create and update paths:
+//    - PRESENT/LATE cannot exist without a clock-in time
+//    - clockOut cannot exist without clockIn
 // ✅ Calculations imported from utils
 // ✅ No UI, No Context
 // FROZEN
 // ============================================
 
 import {
-  collection, doc, addDoc, updateDoc,
-  deleteDoc, serverTimestamp, getDoc, getDocs,
-  query, where,
+  collection, doc,
+  deleteDoc, deleteField, serverTimestamp, getDocs,
+  query, where, runTransaction,
 } from "firebase/firestore";
 import { db } from "../../../firebase";
 import {
@@ -51,7 +67,6 @@ function stripUndefined(obj: Record<string, unknown>): Record<string, unknown> {
 
 // ── Calculation helpers ───────────────────────
 
-// ✅ Overnight shift safe — imported timeToMinutes
 export function calcWorkedHours(
   clockIn: string,
   clockOut: string,
@@ -60,7 +75,6 @@ export function calcWorkedHours(
   let inMinutes  = timeToMinutes(clockIn);
   let outMinutes = timeToMinutes(clockOut);
 
-  // ✅ Overnight shift
   if (outMinutes < inMinutes) {
     outMinutes += 24 * 60;
   }
@@ -73,8 +87,17 @@ export function calcLateMinutes(
   clockIn: string,
   scheduledStart: string,
 ): number {
-  const diff = timeToMinutes(clockIn) - timeToMinutes(scheduledStart);
-  return Math.max(0, diff);
+  let clockInMinutes = timeToMinutes(clockIn);
+  const scheduledMinutes = timeToMinutes(scheduledStart);
+
+  const isEveningShift = scheduledMinutes >= 18 * 60;
+  const isEarlyMorningClockIn = clockInMinutes < 6 * 60;
+
+  if (isEveningShift && isEarlyMorningClockIn) {
+    clockInMinutes += 24 * 60;
+  }
+
+  return Math.max(0, clockInMinutes - scheduledMinutes);
 }
 
 export function calcOvertimeHours(
@@ -95,16 +118,6 @@ function buildAttendanceEmployeeSnapshot(
   };
 }
 
-// ── Fetch existing attendance ─────────────────
-async function fetchAttendance(
-  restaurantId: string,
-  attendanceId: string,
-): Promise<AttendanceRecord | null> {
-  const snap = await getDoc(docRef(restaurantId, attendanceId));
-  if (!snap.exists()) return null;
-  return mapAttendanceDoc(snap.id, snap.data() as Record<string, unknown>);
-}
-
 // ── Create Attendance ─────────────────────────
 export interface CreateAttendanceInput {
   restaurantId:      string;
@@ -121,6 +134,12 @@ export interface CreateAttendanceInput {
   attendanceSource?: "MANUAL" | "CLOCK_IN";
 }
 
+// ── Create Attendance — two layers of duplicate protection, plus
+//    the same status/clockIn/clockOut consistency guards enforced
+//    on the update path, so a contradictory record can never be
+//    created in the first place:
+//    - PRESENT/LATE requires a clock-in time
+//    - clockOut requires a clock-in time ──
 export async function createAttendance(
   input: CreateAttendanceInput
 ): Promise<AttendanceServiceResult> {
@@ -131,20 +150,35 @@ export async function createAttendance(
     attendanceSource,
   } = input;
 
-  // ✅ Targeted duplicate check
-  const dupSnap = await getDocs(
+  if ((status === "PRESENT" || status === "LATE") && !clockIn) {
+    return {
+      success: false,
+      error: "Cannot set status to Present/Late without a clock-in time.",
+    };
+  }
+  if (clockOut && !clockIn) {
+    return {
+      success: false,
+      error: "Cannot set a clock-out time without a clock-in time.",
+    };
+  }
+
+  const legacyDupSnap = await getDocs(
     query(
       col(restaurantId),
       where("date",       "==", date),
       where("employeeId", "==", employee.id),
     )
   );
-  if (!dupSnap.empty) {
+  if (!legacyDupSnap.empty) {
     return {
       success: false,
       error: `Attendance already exists for ${employee.firstName} on ${date}`,
     };
   }
+
+  const attendanceId = `${employee.id}_${date}`;
+  const ref = docRef(restaurantId, attendanceId);
 
   const workedHours   = clockIn && clockOut
     ? calcWorkedHours(clockIn, clockOut, breakMinutes)
@@ -155,30 +189,39 @@ export async function createAttendance(
     : 0;
 
   try {
-    const payload = stripUndefined({
-      restaurantId,
-      employeeId:   employee.id,
-      employeeNo:   employee.employeeNumber,
-      employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
-      date,
-      status,
-      attendanceSource: attendanceSource ?? "MANUAL",
-      scheduledStart,
-      scheduledEnd,
-      scheduledHours,
-      clockIn,
-      clockOut,
-      breakMinutes,
-      workedHours,
-      overtimeHours,
-      lateMinutes,
-      employeeSnapshot: buildAttendanceEmployeeSnapshot(employee),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+    await runTransaction(db, async (transaction) => {
+      const existing = await transaction.get(ref);
+      if (existing.exists()) {
+        throw new Error(`Attendance already exists for ${employee.firstName} on ${date}`);
+      }
+
+      const payload = stripUndefined({
+        restaurantId,
+        employeeId:   employee.id,
+        employeeNo:   employee.employeeNumber,
+        employeeName: `${employee.firstName} ${employee.lastName}`.trim(),
+        date,
+        status,
+        attendanceSource: attendanceSource ?? "MANUAL",
+        scheduledStart,
+        scheduledEnd,
+        scheduledHours,
+        clockIn,
+        clockOut,
+        breakMinutes,
+        normalDailyHours,
+        workedHours,
+        overtimeHours,
+        lateMinutes,
+        employeeSnapshot: buildAttendanceEmployeeSnapshot(employee),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      transaction.set(ref, payload);
     });
 
-    const ref = await addDoc(col(restaurantId), payload);
-    return { success: true, id: ref.id };
+    return { success: true, id: attendanceId };
 
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to create attendance";
@@ -191,12 +234,20 @@ export interface UpdateAttendanceInput {
   restaurantId:      string;
   attendanceId:      string;
   status?:           AttendanceStatus;
-  clockIn?:          string;
-  clockOut?:         string;
+  clockIn?:          string | null;   // null = explicitly clear
+  clockOut?:         string | null;   // null = explicitly clear
   breakMinutes?:     number;
   normalDailyHours?: number;
 }
 
+// ── Update Attendance — runTransaction: read + recalculate + write
+//    happen atomically. clockIn/clockOut: undefined = leave untouched,
+//    null = manager explicitly cleared it (removed via deleteField()),
+//    string = set new value. Consistency guards prevent:
+//    - PRESENT/LATE without a clock-in time
+//    - clockOut without a clock-in time
+//    normalDailyHours falls back to the record's own persisted
+//    snapshot (not a hardcoded 8). ──
 export async function updateAttendance(
   input: UpdateAttendanceInput
 ): Promise<AttendanceServiceResult> {
@@ -207,35 +258,80 @@ export async function updateAttendance(
   } = input;
 
   try {
-    const existing = await fetchAttendance(restaurantId, attendanceId);
-    if (!existing) {
-      return { success: false, error: "Attendance record not found" };
-    }
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(docRef(restaurantId, attendanceId));
+      if (!snap.exists()) {
+        throw new Error("Attendance record not found");
+      }
 
-    const updates: Record<string, unknown> = { updatedAt: serverTimestamp() };
+      const existing = mapAttendanceDoc(snap.id, snap.data() as Record<string, unknown>);
 
-    if (status)                    updates.status       = status;
-    if (clockIn)                   updates.clockIn      = clockIn;
-    if (clockOut)                  updates.clockOut     = clockOut;
-    if (breakMinutes !== undefined) updates.breakMinutes = breakMinutes;
+      const updates: Record<string, unknown> = { updatedAt: serverTimestamp() };
 
-    const finalClockIn      = clockIn      ?? existing.clockIn;
-    const finalClockOut     = clockOut     ?? existing.clockOut;
-    const finalBreakMinutes = breakMinutes ?? existing.breakMinutes;
-    const finalNormalHours  = normalDailyHours ?? 8;
+      if (status) updates.status = status;
 
-    if (finalClockIn && finalClockOut) {
-      const workedHours   = calcWorkedHours(finalClockIn, finalClockOut, finalBreakMinutes);
-      const overtimeHours = calcOvertimeHours(workedHours, finalNormalHours);
-      const lateMinutes   = existing.scheduledStart
-        ? calcLateMinutes(finalClockIn, existing.scheduledStart)
-        : 0;
-      updates.workedHours   = workedHours;
-      updates.overtimeHours = overtimeHours;
-      updates.lateMinutes   = lateMinutes;
-    }
+      if (clockIn !== undefined) {
+        updates.clockIn = clockIn === null ? deleteField() : clockIn;
+      }
+      if (clockOut !== undefined) {
+        updates.clockOut = clockOut === null ? deleteField() : clockOut;
+      }
+      if (breakMinutes !== undefined) updates.breakMinutes = breakMinutes;
+      if (normalDailyHours !== undefined) updates.normalDailyHours = normalDailyHours;
 
-    await updateDoc(docRef(restaurantId, attendanceId), updates);
+      // Resolve the effective clockIn/clockOut after this update —
+      // an explicit clear (null) means "no longer present", it must
+      // NOT fall back to the old value.
+      const finalClockIn =
+        clockIn === undefined ? existing.clockIn
+        : clockIn === null ? undefined
+        : clockIn;
+      const finalClockOut =
+        clockOut === undefined ? existing.clockOut
+        : clockOut === null ? undefined
+        : clockOut;
+
+      // ── Consistency guard 1: PRESENT/LATE without a clockIn is a
+      //    contradictory state. Applies whether `status` was explicitly
+      //    passed in this call or is simply carried over from the
+      //    existing record. ──
+      const finalStatus = status ?? existing.status;
+      if ((finalStatus === "PRESENT" || finalStatus === "LATE") && !finalClockIn) {
+        throw new Error(
+          "Cannot keep status as Present/Late without a clock-in time. Please choose a different status (e.g. Absent) when clearing the clock-in."
+        );
+      }
+
+      // ── Consistency guard 2: a clockOut can't exist without a
+      //    clockIn (e.g. manager clears clockIn but leaves clockOut
+      //    untouched). ──
+      if (finalClockOut && !finalClockIn) {
+        throw new Error("Cannot have a clock-out time without a clock-in time.");
+      }
+
+      const finalBreakMinutes = breakMinutes ?? existing.breakMinutes;
+      const finalNormalHours  = normalDailyHours ?? existing.normalDailyHours ?? 8;
+
+      if (finalClockIn && finalClockOut) {
+        const workedHours   = calcWorkedHours(finalClockIn, finalClockOut, finalBreakMinutes);
+        const overtimeHours = calcOvertimeHours(workedHours, finalNormalHours);
+        const lateMinutes   = existing.scheduledStart
+          ? calcLateMinutes(finalClockIn, existing.scheduledStart)
+          : 0;
+        updates.workedHours   = workedHours;
+        updates.overtimeHours = overtimeHours;
+        updates.lateMinutes   = lateMinutes;
+      } else {
+        updates.workedHours   = 0;
+        updates.overtimeHours = 0;
+        updates.lateMinutes   = finalClockIn && existing.scheduledStart
+          ? calcLateMinutes(finalClockIn, existing.scheduledStart)
+          : 0;
+      }
+
+      transaction.update(docRef(restaurantId, attendanceId), updates);
+    });
+
     return { success: true, id: attendanceId };
 
   } catch (err: unknown) {
@@ -258,35 +354,39 @@ export async function deleteAttendance(
   }
 }
 
-// ── Clock In ──────────────────────────────────
+// ── Clock In ───────────────────────────────────
 export async function clockIn(
   restaurantId: string,
   attendanceId: string,
   time: string,
 ): Promise<AttendanceServiceResult> {
   try {
-    const existing = await fetchAttendance(restaurantId, attendanceId);
-    if (!existing) {
-      return { success: false, error: "Attendance record not found" };
-    }
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(docRef(restaurantId, attendanceId));
+      if (!snap.exists()) {
+        throw new Error("Attendance record not found");
+      }
 
-    // ✅ Overwrite protection
-    if (existing.clockIn) {
-      return { success: false, error: "Already clocked in" };
-    }
+      const existing = mapAttendanceDoc(snap.id, snap.data() as Record<string, unknown>);
 
-    const lateMinutes = existing.scheduledStart
-      ? calcLateMinutes(time, existing.scheduledStart)
-      : 0;
-    const status: AttendanceStatus = lateMinutes > 0 ? "LATE" : "PRESENT";
+      if (existing.clockIn) {
+        throw new Error("Already clocked in");
+      }
 
-    await updateDoc(docRef(restaurantId, attendanceId), {
-      clockIn:          time,
-      status,
-      lateMinutes,
-      attendanceSource: "CLOCK_IN",
-      updatedAt:        serverTimestamp(),
+      const lateMinutes = existing.scheduledStart
+        ? calcLateMinutes(time, existing.scheduledStart)
+        : 0;
+      const status: AttendanceStatus = lateMinutes > 0 ? "LATE" : "PRESENT";
+
+      transaction.update(docRef(restaurantId, attendanceId), {
+        clockIn:          time,
+        status,
+        lateMinutes,
+        attendanceSource: "CLOCK_IN",
+        updatedAt:        serverTimestamp(),
+      });
     });
+
     return { success: true, id: attendanceId };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to clock in";
@@ -294,7 +394,7 @@ export async function clockIn(
   }
 }
 
-// ── Clock Out ─────────────────────────────────
+// ── Clock Out ──────────────────────────────────
 export async function clockOut(
   restaurantId: string,
   attendanceId: string,
@@ -303,30 +403,35 @@ export async function clockOut(
   normalDailyHours: number,
 ): Promise<AttendanceServiceResult> {
   try {
-    const existing = await fetchAttendance(restaurantId, attendanceId);
-    if (!existing) {
-      return { success: false, error: "Attendance record not found" };
-    }
-    if (!existing.clockIn) {
-      return { success: false, error: "Employee has not clocked in yet" };
-    }
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(docRef(restaurantId, attendanceId));
+      if (!snap.exists()) {
+        throw new Error("Attendance record not found");
+      }
 
-    // ✅ Overwrite protection
-    if (existing.clockOut) {
-      return { success: false, error: "Already clocked out" };
-    }
+      const existing = mapAttendanceDoc(snap.id, snap.data() as Record<string, unknown>);
 
-    const workedHours   = calcWorkedHours(existing.clockIn, clockOutTime, breakMinutes);
-    const overtimeHours = calcOvertimeHours(workedHours, normalDailyHours);
+      if (!existing.clockIn) {
+        throw new Error("Employee has not clocked in yet");
+      }
 
-    await updateDoc(docRef(restaurantId, attendanceId), {
-      clockOut:         clockOutTime,
-      breakMinutes,
-      workedHours,
-      overtimeHours,
-      attendanceSource: "CLOCK_IN",
-      updatedAt:        serverTimestamp(),
+      if (existing.clockOut) {
+        throw new Error("Already clocked out");
+      }
+
+      const workedHours   = calcWorkedHours(existing.clockIn, clockOutTime, breakMinutes);
+      const overtimeHours = calcOvertimeHours(workedHours, normalDailyHours);
+
+      transaction.update(docRef(restaurantId, attendanceId), {
+        clockOut:         clockOutTime,
+        breakMinutes,
+        workedHours,
+        overtimeHours,
+        attendanceSource: "CLOCK_IN",
+        updatedAt:        serverTimestamp(),
+      });
     });
+
     return { success: true, id: attendanceId };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Failed to clock out";

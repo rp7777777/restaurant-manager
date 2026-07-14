@@ -8,6 +8,7 @@
 // ✅ scheduledHours — schedule vs actual compare
 // ✅ attendanceSource — Manual/QR/GPS/Biometric ready
 // ✅ AttendanceStats — KPI rates added
+// ✅ normalDailyHours — persisted on record for accurate edits
 // ✅ Future v2 — branchId/departmentId ready
 // FROZEN
 // ============================================
@@ -54,10 +55,11 @@ export interface AttendanceRecord {
   clockIn?:  string;
   clockOut?: string;
 
-  breakMinutes:  number;
-  workedHours:   number;
-  overtimeHours: number;
-  lateMinutes:   number;
+  breakMinutes:     number;
+  normalDailyHours: number;
+  workedHours:      number;
+  overtimeHours:    number;
+  lateMinutes:      number;
 
   employeeSnapshot: AttendanceEmployeeSnapshot;
 
