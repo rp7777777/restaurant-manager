@@ -22,6 +22,10 @@
 //    BOTH create and update paths:
 //    - PRESENT/LATE cannot exist without a clock-in time
 //    - clockOut cannot exist without clockIn
+// ✅ attendanceSource now includes "SCHEDULE" — tags records
+//    auto-created by the Schedule → Attendance sync integration,
+//    distinct from manager-authored "MANUAL" entries and actual
+//    "CLOCK_IN" records
 // ✅ Calculations imported from utils
 // ✅ No UI, No Context
 // FROZEN
@@ -36,6 +40,7 @@ import { db } from "../../../firebase";
 import {
   AttendanceRecord,
   AttendanceStatus,
+  AttendanceSource,
   AttendanceEmployeeSnapshot,
 } from "../types/attendance-types";
 import { mapAttendanceDoc } from "../firestore/attendance-repository";
@@ -131,7 +136,7 @@ export interface CreateAttendanceInput {
   scheduledStart?:   string;
   scheduledEnd?:     string;
   scheduledHours?:   number;
-  attendanceSource?: "MANUAL" | "CLOCK_IN";
+  attendanceSource?: AttendanceSource;
 }
 
 // ── Create Attendance — two layers of duplicate protection, plus

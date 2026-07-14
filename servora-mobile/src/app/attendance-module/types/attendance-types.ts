@@ -26,7 +26,8 @@ export type AttendanceStatus =
 
 export type AttendanceSource =
   | "MANUAL"
-  | "CLOCK_IN";
+  | "CLOCK_IN"
+  | "SCHEDULE";
 
 export interface AttendanceEmployeeSnapshot {
   hourlyRate:    number;
