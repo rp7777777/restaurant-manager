@@ -81,8 +81,7 @@ export async function createExpense(
 
   const docRef = await addDoc(expensesCollection(restaurantId), data);
 
-  await updateDashboardStats(restaurantId, "expenses", input.amount, "add");
-
+await updateDashboardStats(restaurantId, "expenses", input.amount, "add", input.date);
   await logCreate("EXPENSES", docRef.id, {
     date: input.date,
     categoryId: input.categoryId,
@@ -130,7 +129,7 @@ export async function updateExpense(
   if (updates.amount !== undefined && oldExpense.amount !== undefined) {
     const diff = updates.amount - oldExpense.amount;
     if (diff !== 0) {
-      await updateDashboardStats(restaurantId, "expenses", diff, "add");
+     await updateDashboardStats(restaurantId, "expenses", diff, "add", oldExpense.date);
     }
   }
 
@@ -163,7 +162,7 @@ export async function deleteExpense(
     transaction.delete(ref);
   });
 
-  await updateDashboardStats(restaurantId, "expenses", expenseData.amount, "subtract");
+  await updateDashboardStats(restaurantId, "expenses", expenseData.amount, "subtract", expenseData.date);
 
   await logDelete("EXPENSES", expenseId, expenseData as unknown as Record<string, unknown>);
 }

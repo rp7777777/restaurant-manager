@@ -100,7 +100,7 @@ export async function createSale(
     transaction.set(newRef, data);
   });
 
-  await updateDashboardStats(restaurantId, "sales", input.amount, "add");
+  await updateDashboardStats(restaurantId, "sales", input.amount, "add", input.date);
 
   await logCreate("SALES", newRef.id, {
     date: input.date,
@@ -141,10 +141,10 @@ export async function updateSale(
     transaction.update(ref, cleanUpdates);
   });
 
-  if (updates.amount !== undefined && oldSale.amount !== undefined) {
+ if (updates.amount !== undefined && oldSale.amount !== undefined) {
     const diff = updates.amount - oldSale.amount;
     if (diff !== 0) {
-      await updateDashboardStats(restaurantId, "sales", diff, "add");
+      await updateDashboardStats(restaurantId, "sales", diff, "add", oldSale.date);
     }
   }
 
@@ -177,7 +177,7 @@ export async function deleteSale(
     transaction.delete(ref);
   });
 
-  await updateDashboardStats(restaurantId, "sales", saleData.amount, "subtract");
+ await updateDashboardStats(restaurantId, "sales", saleData.amount, "subtract", saleData.date);
 
   await logDelete("SALES", saleId, saleData as unknown as Record<string, unknown>);
 }
