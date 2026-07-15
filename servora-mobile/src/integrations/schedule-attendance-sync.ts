@@ -25,6 +25,13 @@
 //    later actual clock-in can still compute lateness correctly
 // ✅ Service create/update results always checked
 // ✅ Never throws to caller — returns ScheduleSyncResult
+// ✅ syncScheduleDaysToAttendance() — batch helper with bounded
+//    concurrency (chunks of 50)
+// ✅ cleanupScheduleOriginAttendance() — used when a whole Schedule
+//    is deleted, to remove the SCHEDULE-origin Attendance records it
+//    generated for that week. Only deletes records whose origin is
+//    confirmed "SCHEDULE" with no clockIn — CLOCK_IN/MANUAL/actual
+//    records are never touched.
 // FROZEN
 // ============================================
 
@@ -368,4 +375,163 @@ export async function syncScheduleDayToAttendance(
       error: message,
     };
   }
+}
+
+// ── Batch item shape for the centralized helper below ──
+export interface ScheduleSyncItem {
+  employeeId: string;
+  date: string;
+  status: DayStatus;
+  startTime?: string;
+  endTime?: string;
+  hours?: number;
+}
+
+export interface ScheduleSyncFailure {
+  employeeId: string;
+  date: string;
+  error?: string;
+}
+
+export interface ScheduleBatchSyncResult {
+  failures: ScheduleSyncFailure[];
+}
+
+// ── Max concurrent sync/cleanup calls in flight at once. ──
+const SYNC_CONCURRENCY_LIMIT = 50;
+
+// ── Centralized batch sync helper ─────────────
+// A convenience wrapper that runs syncScheduleDayToAttendance() over
+// a list of items with bounded concurrency, and collects failures
+// into a single list.
+//
+// NOTE: this centralizes the batching/failure-collection LOGIC only —
+// it does not and cannot enforce that every Schedule write path
+// actually calls it. Each write path still has to explicitly call
+// this helper after its own write succeeds. ──
+export async function syncScheduleDaysToAttendance(
+  restaurantId: string,
+  items: ScheduleSyncItem[],
+  normalDailyHours: number,
+): Promise<ScheduleBatchSyncResult> {
+  if (items.length === 0) {
+    return { failures: [] };
+  }
+
+  const failures: ScheduleSyncFailure[] = [];
+
+  for (let i = 0; i < items.length; i += SYNC_CONCURRENCY_LIMIT) {
+    const chunk = items.slice(i, i + SYNC_CONCURRENCY_LIMIT);
+
+    const outcomes = await Promise.allSettled(
+      chunk.map((item) =>
+        syncScheduleDayToAttendance(
+          restaurantId,
+          item.employeeId,
+          item.date,
+          item.status,
+          normalDailyHours,
+          item.startTime,
+          item.endTime,
+          item.hours,
+        )
+      )
+    );
+
+    outcomes.forEach((outcome, idx) => {
+      const item = chunk[idx];
+      if (outcome.status === "rejected") {
+        failures.push({
+          employeeId: item.employeeId,
+          date: item.date,
+          error: outcome.reason instanceof Error
+            ? outcome.reason.message
+            : "Unknown sync error",
+        });
+      } else if (!outcome.value.success) {
+        failures.push({
+          employeeId: item.employeeId,
+          date: item.date,
+          error: outcome.value.error,
+        });
+      }
+    });
+  }
+
+  return { failures };
+}
+
+// ── Clean up a single day's SCHEDULE-origin Attendance record.
+//    Only deletes if the resolved record's origin is confirmed
+//    "SCHEDULE" AND it has no clockIn — CLOCK_IN, MANUAL, and any
+//    record with an actual clockIn are NEVER touched. ──
+async function cleanupOneScheduleOriginDay(
+  restaurantId: string,
+  employeeId: string,
+  date: string,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const attendanceId = await resolveAttendanceId(restaurantId, employeeId, date);
+    if (!attendanceId) {
+      return { success: true }; // nothing to clean up
+    }
+
+    const ref = attendanceDocRef(restaurantId, attendanceId);
+
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(ref);
+      if (!snap.exists()) return;
+
+      const existing = mapAttendanceDoc(snap.id, snap.data() as Record<string, unknown>);
+
+      // Never touch actual or manager-authored records.
+      if (existing.attendanceSource !== "SCHEDULE") return;
+      if (existing.clockIn) return; // extra safety — actual truth wins
+
+      transaction.delete(ref);
+    });
+
+    return { success: true };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Cleanup failed";
+    return { success: false, error: message };
+  }
+}
+
+// ── Clean up all SCHEDULE-origin Attendance records for a list of
+//    dates (used when an entire Schedule week is deleted). Only
+//    ever removes records this sync itself created — CLOCK_IN,
+//    MANUAL, and unknown-origin records are always left alone. ──
+export async function cleanupScheduleOriginAttendance(
+  restaurantId: string,
+  employeeId: string,
+  dates: string[],
+): Promise<ScheduleBatchSyncResult> {
+  if (dates.length === 0) {
+    return { failures: [] };
+  }
+
+  const failures: ScheduleSyncFailure[] = [];
+
+  for (let i = 0; i < dates.length; i += SYNC_CONCURRENCY_LIMIT) {
+    const chunk = dates.slice(i, i + SYNC_CONCURRENCY_LIMIT);
+
+    const outcomes = await Promise.allSettled(
+      chunk.map((date) => cleanupOneScheduleOriginDay(restaurantId, employeeId, date))
+    );
+
+    outcomes.forEach((outcome, idx) => {
+      const date = chunk[idx];
+      if (outcome.status === "rejected") {
+        failures.push({
+          employeeId, date,
+          error: outcome.reason instanceof Error ? outcome.reason.message : "Unknown cleanup error",
+        });
+      } else if (!outcome.value.success) {
+        failures.push({ employeeId, date, error: outcome.value.error });
+      }
+    });
+  }
+
+  return { failures };
 }

@@ -6,6 +6,10 @@
 // ✅ Deterministic ID — duplicate impossible
 // ✅ Empty newDays — skipped++ correct
 // ✅ No snapshot — skip safely
+// ✅ Syncs every copied day to Attendance via the centralized
+//    syncScheduleDaysToAttendance() helper — a sync failure never
+//    blocks the copy itself; caller can inspect syncFailedCount
+// FROZEN
 // ============================================
 
 import { writeBatch, doc, serverTimestamp } from "firebase/firestore";
@@ -18,13 +22,17 @@ import { getWeekDates, addDays } from "../utils/date-utils";
 import { buildWeekSummary } from "../utils/overtime-utils";
 import { DaySchedule } from "../types/schedule-types";
 import { SCHEDULE_CONFIG } from "../constants/schedule-config";
+import {
+  syncScheduleDaysToAttendance,
+  ScheduleSyncItem,
+} from "../../../integrations/schedule-attendance-sync";
 
 export async function copyScheduleToNextWeek(
   restaurantId: string,
   fromWeek: string,
   employeeMap: Record<string, EmployeeDB>,
   settings: RestaurantSettings
-): Promise<{ copied: number; skipped: number }> {
+): Promise<{ copied: number; skipped: number; syncFailedCount: number }> {
 
   const nextWeek  = addDays(fromWeek, 7);
   const nextDates = getWeekDates(nextWeek);
@@ -46,11 +54,15 @@ export async function copyScheduleToNextWeek(
   // ✅ let — so skipped++ works
   let skipped = currentSchedules.length - toCreate.length;
 
-  if (toCreate.length === 0) return { copied: 0, skipped };
+  if (toCreate.length === 0) return { copied: 0, skipped, syncFailedCount: 0 };
 
   const rSnap = buildRestaurantSnapshot(settings);
   const LIMIT = SCHEDULE_CONFIG.BATCH_WRITE_LIMIT;
   let copied  = 0;
+
+  // ── Accumulate sync items across every chunk, then sync once at
+  //    the end (after all batches have committed successfully). ──
+  const syncItems: ScheduleSyncItem[] = [];
 
   for (let i = 0; i < toCreate.length; i += LIMIT) {
     const chunk = toCreate.slice(i, i + LIMIT);
@@ -110,10 +122,27 @@ export async function copyScheduleToNextWeek(
       });
 
       copied++;
+
+      Object.entries(newDays).forEach(([date, day]) => {
+        syncItems.push({
+          employeeId: emp.employeeId,
+          date,
+          status: day.status,
+          startTime: day.startTime || undefined,
+          endTime: day.endTime || undefined,
+          hours: day.hours,
+        });
+      });
     });
 
     await batch.commit();
   }
 
-  return { copied, skipped };
+  const { failures } = await syncScheduleDaysToAttendance(
+    restaurantId,
+    syncItems,
+    settings.normalDailyHours
+  );
+
+  return { copied, skipped, syncFailedCount: failures.length };
 }

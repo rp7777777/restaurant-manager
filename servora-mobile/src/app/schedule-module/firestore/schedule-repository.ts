@@ -1,56 +1,49 @@
 // ============================================
 // SERVORA ERP — Schedule Repository
-// ✅ Timezone safe — addDays() use
-// ✅ Batch write — fast copy
-// ✅ Lock check from Firestore — UI trust hudaina
-// ✅ Delete pani locked check
-// ✅ employeeSnapshot + restaurantSnapshot saved
-// ✅ Fresh snapshot on copy
+// ✅ Lock check + mutation atomic (single runTransaction)
+// ✅ employeeId read from the schedule document itself inside the
+//    transaction — never trusted from a caller-passed parameter
+// ✅ createSchedule — settings is a REQUIRED parameter (no silent
+//    default fallback), deterministic ID + transaction prevents
+//    duplicate create under concurrent/double-tap attempts
+// ✅ updateScheduleDay — re-reads the LATEST committed day value
+//    right before syncing to Attendance, instead of syncing the
+//    caller-supplied snapshot. If two rapid edits to the same day
+//    race (e.g. WORK then SICK moments later), whichever sync call
+//    runs last always reads and syncs whatever is ACTUALLY committed
+//    at that moment — converging Attendance to the true final
+//    Schedule state instead of a stale snapshot based on network
+//    timing.
+// ✅ deleteSchedule — cleans up SCHEDULE-origin Attendance records
+//    for every date in the deleted week. Only records whose origin
+//    is confirmed "SCHEDULE" (with no clockIn) are removed —
+//    CLOCK_IN/MANUAL/actual records are never touched.
+// ✅ copyWeekSchedules() — REMOVED (unused dead code)
+// FROZEN
 // ============================================
 
 import {
-  collection, addDoc, updateDoc, deleteDoc,
-  onSnapshot, query, where, getDocs, getDoc,
-  doc, serverTimestamp, writeBatch,
+  collection, updateDoc, getDoc,
+  onSnapshot, query, where, getDocs,
+  doc, serverTimestamp, runTransaction,
 } from "firebase/firestore";
 import { db, auth } from "../../../firebase";
 import { EmployeeSchedule, DaySchedule, WeekSummary } from "../types/schedule-types";
 import { EmployeeDB } from "../types/employee-types";
 import { RestaurantSettings } from "../types/restaurant-types";
-import { buildScheduleData, buildEmployeeSnapshot } from "../utils/schedule-utils";
-import { getWeekDates, addDays } from "../utils/date-utils";
-import { buildWeekSummary } from "../utils/overtime-utils";
-import { SCHEDULE_CONFIG } from "../constants/schedule-config";
+import { buildScheduleData } from "../utils/schedule-utils";
+import {
+  syncScheduleDayToAttendance,
+  syncScheduleDaysToAttendance,
+  cleanupScheduleOriginAttendance,
+  ScheduleSyncItem,
+} from "../../../integrations/schedule-attendance-sync";
 
 const col = (restaurantId: string) =>
   collection(db, "restaurants", restaurantId, "schedules");
 
 const scheduleDoc = (restaurantId: string, scheduleId: string) =>
   doc(db, "restaurants", restaurantId, "schedules", scheduleId);
-
-// ✅ Default settings fallback
-const DEFAULT_SETTINGS: RestaurantSettings = {
-  currency:          "EUR",
-  currencySymbol:    "€",
-  paymentType:       "MONTHLY",
-  normalDailyHours:  8,
-  normalWeeklyHours: 40,
-  defaultTaxRate:    11,
-  defaultSSRate:     11,
-  payrollMonthDays:  30,
-  defaultShiftStart: "09:00",
-};
-
-// ✅ Reusable lock check — Firestore bata verify
-async function assertNotLocked(
-  restaurantId: string,
-  scheduleId: string
-): Promise<void> {
-  const snap = await getDoc(scheduleDoc(restaurantId, scheduleId));
-  if (snap.data()?.locked === true) {
-    throw new Error("Schedule is locked — payroll already generated");
-  }
-}
 
 export function subscribeToSchedules(
   restaurantId: string,
@@ -74,50 +67,155 @@ export function subscribeToSchedules(
   );
 }
 
-// ✅ employeeSnapshot + restaurantSnapshot saved!
+// ✅ settings is REQUIRED — no silent hardcoded fallback.
+// ✅ Deterministic ID (employeeNumber_weekStart) + transaction —
+//    guarantees one schedule per employee per week even under a
+//    double-tap or two concurrent "Add Employee" attempts.
 export async function createSchedule(
   restaurantId: string,
   employee: EmployeeDB,
   weekStart: string,
-  settings?: RestaurantSettings
-): Promise<void> {
+  settings: RestaurantSettings
+): Promise<{ syncFailedCount: number }> {
   const data = buildScheduleData(
     employee,
     weekStart,
     restaurantId,
-    settings ?? DEFAULT_SETTINGS
+    settings
   );
-  await addDoc(col(restaurantId), {
-    ...data,
-    userId:    auth.currentUser?.uid ?? "",
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+
+  const scheduleId = `${employee.employeeNumber}_${weekStart}`;
+  const ref = scheduleDoc(restaurantId, scheduleId);
+
+  await runTransaction(db, async (transaction) => {
+    const existing = await transaction.get(ref);
+    if (existing.exists()) {
+      throw new Error(`${employee.firstName} already has a schedule for this week`);
+    }
+
+    transaction.set(ref, {
+      ...data,
+      userId:    auth.currentUser?.uid ?? "",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
   });
+
+  const items: ScheduleSyncItem[] = Object.entries(data.days).map(
+    ([date, day]) => ({
+      employeeId: employee.id,
+      date,
+      status: day.status,
+      startTime: day.startTime || undefined,
+      endTime: day.endTime || undefined,
+      hours: day.hours,
+    })
+  );
+
+  const { failures } = await syncScheduleDaysToAttendance(
+    restaurantId,
+    items,
+    settings.normalDailyHours
+  );
+
+  return { syncFailedCount: failures.length };
 }
 
-// ✅ Lock check from Firestore — not from UI!
+// ✅ Lock check + day mutation are atomic (single transaction).
+// ✅ employeeId read from the schedule document itself.
+// ✅ Re-reads the LATEST committed day value right before syncing,
+//    instead of syncing the caller-supplied `updatedDay` snapshot —
+//    closes the race where two rapid edits to the same day could
+//    otherwise sync out of order and leave Attendance stale relative
+//    to the true final Schedule state. ──
 export async function updateScheduleDay(
   restaurantId: string,
   scheduleId: string,
   dayKey: string,
   updatedDay: DaySchedule,
-  stats: WeekSummary
-): Promise<void> {
-  await assertNotLocked(restaurantId, scheduleId);
-  await updateDoc(scheduleDoc(restaurantId, scheduleId), {
-    ["days." + dayKey]: updatedDay,
-    ...stats,
-    updatedAt: serverTimestamp(),
+  stats: WeekSummary,
+  normalDailyHours: number,
+): Promise<{ syncFailed: boolean; syncError?: string }> {
+  const ref = scheduleDoc(restaurantId, scheduleId);
+
+  const employeeId = await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists()) {
+      throw new Error("Schedule not found");
+    }
+
+    const data = snap.data();
+    if (data?.locked === true) {
+      throw new Error("Schedule is locked — payroll already generated");
+    }
+
+    transaction.update(ref, {
+      ["days." + dayKey]: updatedDay,
+      ...stats,
+      updatedAt: serverTimestamp(),
+    });
+
+    return data.employeeId as string;
   });
+
+  // ── Re-read the actual committed value right before syncing. If a
+  //    concurrent edit already overwrote this day again by the time
+  //    we get here, we sync THAT (the true current state) rather than
+  //    our own now-possibly-stale `updatedDay` parameter. ──
+  const latestSnap = await getDoc(ref);
+  const latestDay =
+    (latestSnap.data()?.days?.[dayKey] as DaySchedule | undefined) ?? updatedDay;
+
+  const syncResult = await syncScheduleDayToAttendance(
+    restaurantId,
+    employeeId,
+    dayKey,
+    latestDay.status,
+    normalDailyHours,
+    latestDay.startTime || undefined,
+    latestDay.endTime   || undefined,
+    latestDay.hours,
+  );
+
+  if (!syncResult.success) {
+    return { syncFailed: true, syncError: syncResult.error };
+  }
+  return { syncFailed: false };
 }
 
-// ✅ Delete pani locked check!
+// ✅ Lock check + delete atomic (single transaction).
+// ✅ Cleans up SCHEDULE-origin Attendance records for every date in
+//    the deleted week — best-effort, never blocks the delete itself.
+//    CLOCK_IN/MANUAL/actual records are never touched. ──
 export async function deleteSchedule(
   restaurantId: string,
   scheduleId: string
-): Promise<void> {
-  await assertNotLocked(restaurantId, scheduleId);
-  await deleteDoc(scheduleDoc(restaurantId, scheduleId));
+): Promise<{ cleanupFailedCount: number }> {
+  const ref = scheduleDoc(restaurantId, scheduleId);
+
+  const { employeeId, dates } = await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists()) {
+      throw new Error("Schedule not found");
+    }
+    const data = snap.data();
+    if (data?.locked === true) {
+      throw new Error("Schedule is locked — payroll already generated");
+    }
+
+    transaction.delete(ref);
+
+    return {
+      employeeId: data.employeeId as string,
+      dates: Object.keys(data.days ?? {}),
+    };
+  });
+
+  const { failures } = await cleanupScheduleOriginAttendance(
+    restaurantId, employeeId, dates
+  );
+
+  return { cleanupFailedCount: failures.length };
 }
 
 export async function lockSchedule(
@@ -141,70 +239,4 @@ export async function getSchedulesByWeek(
     id: d.id,
     ...(d.data() as Omit<EmployeeSchedule, "id">),
   }));
-}
-
-// ✅ Batch write + timezone safe + fresh snapshot
-export async function copyWeekSchedules(
-  restaurantId: string,
-  fromWeek: string,
-  employeeMap: Record<string, EmployeeDB>
-): Promise<{ copied: number; skipped: number }> {
-  const nextWeek  = addDays(fromWeek, 7);
-  const nextDates = getWeekDates(nextWeek);
-
-  const [currentSchedules, existingSchedules] = await Promise.all([
-    getSchedulesByWeek(restaurantId, fromWeek),
-    getSchedulesByWeek(restaurantId, nextWeek),
-  ]);
-
-  const existingNos = new Set(existingSchedules.map((s) => s.employeeNo));
-  const toCreate    = currentSchedules.filter((s) => !existingNos.has(s.employeeNo));
-  const skipped     = currentSchedules.length - toCreate.length;
-
-  if (toCreate.length === 0) return { copied: 0, skipped };
-
-  let copied  = 0;
-  const LIMIT = SCHEDULE_CONFIG.BATCH_WRITE_LIMIT;
-
-  for (let i = 0; i < toCreate.length; i += LIMIT) {
-    const chunk = toCreate.slice(i, i + LIMIT);
-    const batch = writeBatch(db);
-
-    chunk.forEach((emp) => {
-      const oldDates = getWeekDates(emp.weekStart);
-      const newDays: Record<string, DaySchedule> = {};
-      oldDates.forEach((oldDate, idx) => {
-        if (emp.days[oldDate] && nextDates[idx]) {
-          newDays[nextDates[idx]] = { ...emp.days[oldDate] };
-        }
-      });
-
-      const stats         = buildWeekSummary(newDays, nextDates);
-      const dbEmployee    = employeeMap[emp.employeeNo];
-      const freshSnapshot = dbEmployee
-        ? buildEmployeeSnapshot(dbEmployee)
-        : emp.employeeSnapshot;
-
-      const newRef = doc(col(restaurantId));
-      batch.set(newRef, {
-        employeeId:       emp.employeeId,
-        employeeNo:       emp.employeeNo,
-        employeeName:     emp.employeeName,
-        position:         emp.position,
-        weekStart:        nextWeek,
-        days:             newDays,
-        restaurantId,
-        employeeSnapshot: freshSnapshot,
-        ...stats,
-        userId:    auth.currentUser?.uid ?? "",
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      copied++;
-    });
-
-    await batch.commit();
-  }
-
-  return { copied, skipped };
 }

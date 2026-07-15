@@ -4,9 +4,20 @@
 // ✅ Net hours saved to Firestore
 // ✅ Holiday batch write
 // ✅ Apply whole week all statuses
-// ✅ Schedule → Attendance sync wired into single-cell save
-//    AND bulk Set Holiday — passes actual shift start/end/hours
-//    so a later real clock-in can still compute lateness correctly
+// ✅ updateScheduleDay() is the single source of truth for
+//    schedule-day mutation + Attendance sync (sync happens inside
+//    the repository function itself, re-reading the latest
+//    committed day before syncing) — saveCellEdit() no longer
+//    calls sync separately, it just reads the syncFailed/syncError
+//    result back.
+// ✅ Set Holiday remains a documented exception: it bypasses
+//    updateScheduleDay() for bulk-write performance (writeBatch),
+//    so it still calls the batch sync helper explicitly afterward.
+// ✅ createSchedule() now receives real restaurant settings
+//    (mandatory parameter — no silent hardcoded fallback).
+// ✅ deleteSchedule() now cleans up SCHEDULE-origin Attendance
+//    records for the deleted week — handleDelete() surfaces a
+//    warning if any couldn't be cleaned up automatically.
 // ============================================
 
 import React, { useState } from "react";
@@ -46,7 +57,10 @@ import { EmployeePickerModal } from "../components/EmployeePickerModal";
 import { CellEditorModal }     from "../components/CellEditorModal";
 import { CalendarModal }       from "../components/CalendarModal";
 import { HolidayModal }        from "../components/HolidayModal";
-import { syncScheduleDayToAttendance } from "../../../integrations/schedule-attendance-sync";
+import {
+  syncScheduleDaysToAttendance,
+  ScheduleSyncItem,
+} from "../../../integrations/schedule-attendance-sync";
 
 export default function ScheduleScreen() {
   const {
@@ -94,25 +108,29 @@ export default function ScheduleScreen() {
     defaultShiftStart: SCHEDULE_CONFIG.DEFAULT_START_TIME,
   });
 
-  // ── Add employee ──────────────────────────
-const handleAddEmployee = async (emp: EmployeeDB) => {
-  console.log("🔥 Adding:", emp.employeeNumber, emp.firstName, restaurantId);
-  if (!restaurantId) {
-    console.log("❌ No restaurantId!");
-    return;
-  }
-  setSaving(true);
-  try {
-    await createSchedule(restaurantId, emp, selectedWeek);
-    console.log("✅ Schedule created!");
-  } catch (err: any) {
-    console.log("❌ Error:", err?.message);
-    Alert.alert("Error", err?.message ?? "Failed to add employee");
-  } finally {
-    setSaving(false);
-    setShowEmpPicker(false);
-  }
-};
+  // ── Add employee — passes real restaurant settings (was
+  //    previously silently falling back to a hardcoded default) ──
+  const handleAddEmployee = async (emp: EmployeeDB) => {
+    if (!restaurantId) return;
+    setSaving(true);
+    try {
+      const { syncFailedCount } = await createSchedule(
+        restaurantId, emp, selectedWeek, getRestaurantSettings()
+      );
+      if (syncFailedCount > 0) {
+        Alert.alert(
+          "Employee Added",
+          `${emp.firstName} added to the schedule, but attendance sync failed for ${syncFailedCount} day(s). Re-save any affected day to retry.`
+        );
+      }
+    } catch (err: any) {
+      Alert.alert("Error", err?.message ?? "Failed to add employee");
+    } finally {
+      setSaving(false);
+      setShowEmpPicker(false);
+    }
+  };
+
   // ── Cell editor ───────────────────────────
   const openCell = (
     scheduleId: string, dayKey: string, current: DaySchedule
@@ -126,7 +144,10 @@ const handleAddEmployee = async (emp: EmployeeDB) => {
     setShowCellEditor(true);
   };
 
-  // ✅ Save with break threshold
+  // ✅ Save with break threshold — updateScheduleDay() now syncs
+  //    Attendance internally (re-reading the latest committed day
+  //    value), so this function just reads back syncFailed/syncError
+  //    to surface a warning if needed.
   const saveCellEdit = async () => {
     if (!editingCell || !restaurantId) return;
     const { scheduleId, dayKey } = editingCell;
@@ -163,34 +184,17 @@ const handleAddEmployee = async (emp: EmployeeDB) => {
           updatedDays[date] = { ...updatedDay };
         });
         const stats = buildWeekSummary(updatedDays, weekDates);
-        await Promise.all(
-          weekDates.map((date) =>
-            updateScheduleDay(restaurantId, scheduleId, date, updatedDay, stats)
-          )
-        );
 
-        // ── Sync each day to Attendance, tracking both rejected
-        //    promises AND resolved-but-failed results. ──
-        const syncOutcomes = await Promise.allSettled(
+        const results = await Promise.all(
           weekDates.map((date) =>
-            syncScheduleDayToAttendance(
-              restaurantId, schedule.employeeId, date, updatedDay.status, normalDailyHours,
-              updatedDay.startTime || undefined,
-              updatedDay.endTime   || undefined,
-              updatedDay.hours,
+            updateScheduleDay(
+              restaurantId, scheduleId,
+              date, updatedDay, stats, normalDailyHours
             )
           )
         );
 
-        const failedDates: string[] = [];
-        syncOutcomes.forEach((outcome, idx) => {
-          if (outcome.status === "rejected") {
-            failedDates.push(weekDates[idx]);
-          } else if (!outcome.value.success) {
-            failedDates.push(weekDates[idx]);
-          }
-        });
-
+        const failedDates = weekDates.filter((_, idx) => results[idx].syncFailed);
         if (failedDates.length > 0) {
           Alert.alert(
             "Schedule Saved",
@@ -200,20 +204,16 @@ const handleAddEmployee = async (emp: EmployeeDB) => {
       } else {
         const updatedDays = { ...schedule.days, [dayKey]: updatedDay };
         const stats       = buildWeekSummary(updatedDays, weekDates);
-        await updateScheduleDay(
-          restaurantId, scheduleId, dayKey, updatedDay, stats
+
+        const result = await updateScheduleDay(
+          restaurantId, scheduleId,
+          dayKey, updatedDay, stats, normalDailyHours
         );
 
-        const syncResult = await syncScheduleDayToAttendance(
-          restaurantId, schedule.employeeId, dayKey, updatedDay.status, normalDailyHours,
-          updatedDay.startTime || undefined,
-          updatedDay.endTime   || undefined,
-          updatedDay.hours,
-        );
-        if (!syncResult.success) {
+        if (result.syncFailed) {
           Alert.alert(
             "Schedule Saved",
-            `Schedule saved, but attendance sync failed: ${syncResult.error ?? "Unknown error"}. Re-save to retry.`
+            `Schedule saved, but attendance sync failed: ${result.syncError ?? "Unknown error"}. Re-save to retry.`
           );
         }
       }
@@ -224,11 +224,19 @@ const handleAddEmployee = async (emp: EmployeeDB) => {
     }
   };
 
-  // ── Delete ────────────────────────────────
+  // ── Delete — deleteSchedule() now also cleans up SCHEDULE-origin
+  //    Attendance records for the deleted week; surface a warning
+  //    if any couldn't be cleaned up automatically. ──
   const handleDelete = (emp: EmployeeSchedule) => {
     const doDelete = async () => {
       try {
-        await deleteSchedule(restaurantId!, emp.id);
+        const { cleanupFailedCount } = await deleteSchedule(restaurantId!, emp.id);
+        if (cleanupFailedCount > 0) {
+          Alert.alert(
+            "Schedule Removed",
+            `${emp.employeeName}'s schedule removed, but ${cleanupFailedCount} attendance record(s) could not be cleaned up automatically.`
+          );
+        }
       } catch (err: any) {
         Alert.alert("Error", err?.message ?? "Delete failed");
       }
@@ -257,12 +265,20 @@ const handleAddEmployee = async (emp: EmployeeDB) => {
     if (!doConfirm) return;
     setSaving(true);
     try {
-      const { copied } = await copyScheduleToNextWeek(
+      const { copied, syncFailedCount } = await copyScheduleToNextWeek(
         restaurantId, selectedWeek, employeeMap, getRestaurantSettings()
       );
       setSelectedWeek(addDays(selectedWeek, 7));
-      if (Platform.OS === "web") window.alert(`✅ ${copied} employees copied!`);
-      else Alert.alert("✅ Copied!", `${copied} employees copied`);
+      if (syncFailedCount > 0) {
+        Alert.alert(
+          "Copied",
+          `${copied} employees copied, but attendance sync failed for ${syncFailedCount} day(s). Re-save affected days to retry.`
+        );
+      } else if (Platform.OS === "web") {
+        window.alert(`✅ ${copied} employees copied!`);
+      } else {
+        Alert.alert("✅ Copied!", `${copied} employees copied`);
+      }
     } catch (err: any) {
       Alert.alert("Error", err?.message ?? "Failed");
     } finally {
@@ -270,7 +286,10 @@ const handleAddEmployee = async (emp: EmployeeDB) => {
     }
   };
 
-  // ── Set Holiday batch write ───────────────
+  // ── Set Holiday batch write — bypasses updateScheduleDay() on
+  //    purpose for bulk-write performance (writeBatch across every
+  //    employee at once). Documented exception: this is the one
+  //    place that still calls the batch sync helper explicitly. ──
   const handleSetHoliday = async (date: string) => {
     if (!restaurantId || applyingHoliday) return;
     setApplyingHoliday(true);
@@ -299,38 +318,28 @@ const handleAddEmployee = async (emp: EmployeeDB) => {
         await batch.commit();
       }
 
-      // ── Sync each employee's new Schedule-Holiday day to Attendance,
-      //    tracking both rejected promises AND resolved-but-failed
-      //    results. Schedule batch save is never rolled back if some
-      //    sync calls fail — a warning is shown instead, and re-running
-      //    Set Holiday for the same date naturally retries. ──
       const normalDailyHours = settings?.normalDailyHours ?? 8;
-      const syncOutcomes = await Promise.allSettled(
-        schedules.map((emp) =>
-          syncScheduleDayToAttendance(
-            restaurantId, emp.employeeId, date, holidayDay.status, normalDailyHours,
-            holidayDay.startTime || undefined,
-            holidayDay.endTime   || undefined,
-            holidayDay.hours,
-          )
-        )
+      const items: ScheduleSyncItem[] = schedules.map((emp) => ({
+        employeeId: emp.employeeId,
+        date,
+        status: holidayDay.status,
+        startTime: undefined,
+        endTime: undefined,
+        hours: holidayDay.hours,
+      }));
+      const { failures } = await syncScheduleDaysToAttendance(
+        restaurantId, items, normalDailyHours
       );
-
-      const failedEmployees: string[] = [];
-      syncOutcomes.forEach((outcome, idx) => {
-        if (outcome.status === "rejected") {
-          failedEmployees.push(schedules[idx].employeeName);
-        } else if (!outcome.value.success) {
-          failedEmployees.push(schedules[idx].employeeName);
-        }
-      });
 
       setShowHoliday(false);
 
-      if (failedEmployees.length > 0) {
+      if (failures.length > 0) {
+        const names = failures
+          .map((f) => schedules.find((s) => s.employeeId === f.employeeId)?.employeeName ?? f.employeeId)
+          .join(", ");
         Alert.alert(
           "Holiday Set",
-          `Public Holiday applied to all ${schedules.length} employees. Attendance sync failed for: ${failedEmployees.join(", ")}. Re-open Set Holiday for this date to retry.`
+          `Public Holiday applied to all ${schedules.length} employees. Attendance sync failed for: ${names}. Re-open Set Holiday for this date to retry.`
         );
       } else {
         Alert.alert(
