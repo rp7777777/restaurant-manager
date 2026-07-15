@@ -7,9 +7,11 @@
 //    HOLIDAY → WORK/ABSENT/TRAINING removes stale
 //    Schedule-created Attendance record
 // ✅ Actual CLOCK_IN / clockIn always wins
-// ✅ MANUAL (manager-authored) records are never overwritten,
-//    relabeled, or deleted by this sync — forward-sync only
-//    touches SCHEDULE-origin or unlabeled/legacy records
+// ✅ Forward-sync allowlist: only records this sync itself
+//    created (attendanceSource === "SCHEDULE") are ever updated
+//    or deleted. MANUAL, CLOCK_IN, and unknown/undefined-origin
+//    legacy records are ALL protected by default — "SCHEDULE
+//    owns only SCHEDULE records."
 // ✅ Existing-record mutation protected by transaction
 // ✅ Deterministic ID + legacy random-ID fallback
 // ✅ Employee snapshot fetched fresh on create
@@ -214,8 +216,9 @@ export async function syncScheduleDayToAttendance(
             // WORK is not auto-synced, but the old Schedule-created
             // HOLIDAY attendance must not remain stale.
             //
-            // Only SCHEDULE-origin records are deleted. A MANUAL
-            // (manager-authored) record is never touched here.
+            // Only records THIS sync created (SCHEDULE-origin) are
+            // ever deleted. Everything else — MANUAL, CLOCK_IN, and
+            // unknown/undefined-origin legacy records — is protected.
             if (!attendanceStatus) {
               if (
                 existing.attendanceSource === "SCHEDULE"
@@ -227,20 +230,21 @@ export async function syncScheduleDayToAttendance(
               return "NOOP_SKIP" as const;
             }
 
-            // ── Forward-sync guard: a MANUAL (manager-authored)
-            //    record is the manager's own planned entry for this
-            //    day. It must never be silently overwritten or
-            //    relabeled as SCHEDULE-origin here, even though it
-            //    has no actual clockIn — only SCHEDULE-origin or
-            //    unlabeled/legacy records may be updated below. ──
-            if (existing.attendanceSource === "MANUAL") {
-              return "MANUAL_SKIP" as const;
+            // ── Forward-sync allowlist: ONLY a record this sync
+            //    itself created (attendanceSource === "SCHEDULE")
+            //    may be updated below. Anything else — MANUAL,
+            //    CLOCK_IN, or an unknown/undefined-origin legacy
+            //    record that pre-dates this field — is left alone.
+            //    "SCHEDULE owns only SCHEDULE records." ──
+            if (existing.attendanceSource !== "SCHEDULE") {
+              return "PROTECTED_SKIP" as const;
             }
 
             // ── Sync new planned status ───────
             //
-            // Existing non-actual, non-manual record can safely
-            // become the new Schedule-planned attendance state.
+            // Safe: this record's origin is confirmed to be this
+            // sync itself, so updating its planned status in place
+            // cannot clobber manager-authored or actual data.
             transaction.update(ref, {
               status: attendanceStatus,
               attendanceSource: "SCHEDULE",
@@ -257,7 +261,7 @@ export async function syncScheduleDayToAttendance(
       if (
         transactionResult === "ACTUAL_SKIP" ||
         transactionResult === "NOOP_SKIP" ||
-        transactionResult === "MANUAL_SKIP"
+        transactionResult === "PROTECTED_SKIP"
       ) {
         return {
           success: true,
