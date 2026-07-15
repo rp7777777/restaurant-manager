@@ -1,33 +1,21 @@
 // ============================================
 // SERVORA ERP — Schedule → Attendance Sync
-// Cross-module integration: when a manager sets a Schedule day to
-// HOLIDAY / SICK / VACATION / DO / DC, the corresponding Attendance
-// record is automatically created or updated to reflect it.
-//
 // ✅ Schedule = Planned truth
 // ✅ Attendance = Actual truth
 // ✅ HOLIDAY / SICK / VACATION / DO / DC auto-sync
-// ✅ WORK / ABSENT / TRAINING — reversal path: if the schedule
-//    changes AWAY from a synced status back to WORK/ABSENT/TRAINING,
-//    any stale SCHEDULE-originated Attendance record (never touched
-//    by actual attendance) is cleared. MANUAL (manager-authored) and
-//    CLOCK_IN (actual) records are NEVER touched by this reversal.
-// ✅ attendanceSource: "SCHEDULE" tags records this sync creates,
-//    distinguishing them from true manager-authored MANUAL entries
-// ✅ Actual origin (attendanceSource === "CLOCK_IN" OR clockIn
-//    present) always wins — sync never overwrites it
-// ✅ Deterministic (employeeId_date) attendance ID fast path, with
-//    a legacy random-ID query fallback for records created before
-//    the deterministic-ID scheme existed
-// ✅ Uses the actual found document's ID (deterministic or legacy)
-//    for conflict checks, updates, and deletes
-// ✅ updateAttendance()/createAttendance()/deleteAttendance() results
-//    are always checked — a service-level failure is never reported
-//    as success
-// ✅ Employee data is always freshly fetched from the Employees
-//    collection here, never copied from Schedule's own snapshot
-// ✅ Never throws — always resolves with a ScheduleSyncResult, so a
-//    sync failure can never block or crash the Schedule save flow
+// ✅ SCHEDULE-origin reversal cleanup
+//    HOLIDAY → WORK/ABSENT/TRAINING removes stale
+//    Schedule-created Attendance record
+// ✅ Actual CLOCK_IN / clockIn always wins
+// ✅ MANUAL (manager-authored) records are never overwritten,
+//    relabeled, or deleted by this sync — forward-sync only
+//    touches SCHEDULE-origin or unlabeled/legacy records
+// ✅ Existing-record mutation protected by transaction
+// ✅ Deterministic ID + legacy random-ID fallback
+// ✅ Employee snapshot fetched fresh on create
+// ✅ Restaurant normalDailyHours passed from settings
+// ✅ Service create result always checked
+// ✅ Never throws to caller — returns ScheduleSyncResult
 // FROZEN
 // ============================================
 
@@ -38,8 +26,11 @@ import {
   getDocs,
   limit,
   query,
+  runTransaction,
+  serverTimestamp,
   where,
 } from "firebase/firestore";
+
 import { db } from "../firebase";
 
 import {
@@ -56,8 +47,6 @@ import {
 
 import {
   createAttendance,
-  updateAttendance,
-  deleteAttendance,
 } from "../app/attendance-module/services/attendance-service";
 
 import {
@@ -71,7 +60,7 @@ export interface ScheduleSyncResult {
   skipped?: boolean;
 }
 
-// ── Schedule → Attendance status mapping ─────
+// ── Schedule → Attendance mapping ─────────────
 const SYNCABLE_STATUS_MAP: Partial<
   Record<DayStatus, AttendanceStatus>
 > = {
@@ -82,7 +71,7 @@ const SYNCABLE_STATUS_MAP: Partial<
   DC: "OFF",
 };
 
-// ── Attendance deterministic document ref ────
+// ── Attendance document ref ───────────────────
 function attendanceDocRef(
   restaurantId: string,
   attendanceId: string,
@@ -96,7 +85,7 @@ function attendanceDocRef(
   );
 }
 
-// ── Attendance collection ref ────────────────
+// ── Attendance collection ref ─────────────────
 function attendanceCollectionRef(
   restaurantId: string,
 ) {
@@ -108,7 +97,7 @@ function attendanceCollectionRef(
   );
 }
 
-// ── Employee document ref ────────────────────
+// ── Employee document ref ─────────────────────
 function employeeDocRef(
   restaurantId: string,
   employeeId: string,
@@ -122,30 +111,28 @@ function employeeDocRef(
   );
 }
 
-// ── Resolve attendance record ────────────────
-// Fast path: employeeId_date deterministic document.
-// Legacy fallback: query employeeId + date to find old random-ID
-// records that predate the deterministic-ID scheme.
+// ── Resolve attendance document ID ────────────
+// Deterministic fast path first.
+// Legacy employeeId + date fallback second.
 //
-// IMPORTANT: the actual found document's ID is returned so the
-// caller can use it for conflict checks, updates, and deletes —
-// a legacy record must be acted on in place, not treated as missing.
-async function resolveAttendanceRecord(
+// Returns the REAL Firestore document ID so legacy records
+// are mutated in place.
+async function resolveAttendanceId(
   restaurantId: string,
   employeeId: string,
   date: string,
-) {
+): Promise<string | null> {
   const deterministicId = `${employeeId}_${date}`;
 
   const deterministicSnap = await getDoc(
-    attendanceDocRef(restaurantId, deterministicId)
+    attendanceDocRef(
+      restaurantId,
+      deterministicId,
+    )
   );
 
   if (deterministicSnap.exists()) {
-    return mapAttendanceDoc(
-      deterministicSnap.id,
-      deterministicSnap.data() as Record<string, unknown>,
-    );
+    return deterministicSnap.id;
   }
 
   const legacySnap = await getDocs(
@@ -161,18 +148,10 @@ async function resolveAttendanceRecord(
     return null;
   }
 
-  const legacyDoc = legacySnap.docs[0];
-
-  return mapAttendanceDoc(
-    legacyDoc.id,
-    legacyDoc.data() as Record<string, unknown>,
-  );
+  return legacySnap.docs[0].id;
 }
 
-// ── Sync a single Schedule day to the Attendance module.
-//    Call this after a Schedule day has been successfully saved.
-//    normalDailyHours should be the restaurant's already-loaded
-//    setting (from useApp()) — no need to refetch it here. ──
+// ── Sync one Schedule day → Attendance ────────
 export async function syncScheduleDayToAttendance(
   restaurantId: string,
   employeeId: string,
@@ -181,92 +160,149 @@ export async function syncScheduleDayToAttendance(
   normalDailyHours: number,
 ): Promise<ScheduleSyncResult> {
   try {
-    const attendanceStatus = SYNCABLE_STATUS_MAP[scheduleStatus];
+    const attendanceStatus =
+      SYNCABLE_STATUS_MAP[scheduleStatus];
 
-    // ── Reversal path — schedule status is no longer one of the
-    //    synced statuses (e.g. changed back to WORK/ABSENT/TRAINING).
-    //    If a previously schedule-generated Attendance record exists
-    //    for this day (attendanceSource === "SCHEDULE") and it was
-    //    never touched by actual attendance (no clockIn), it's now
-    //    stale — remove it. Manager-authored MANUAL records and
-    //    actual CLOCK_IN records are NEVER touched here. ──
-    if (!attendanceStatus) {
-      const existing = await resolveAttendanceRecord(restaurantId, employeeId, date);
+    const existingAttendanceId =
+      await resolveAttendanceId(
+        restaurantId,
+        employeeId,
+        date,
+      );
 
-      if (existing && existing.attendanceSource === "SCHEDULE" && !existing.clockIn) {
-        const deleteResult = await deleteAttendance(restaurantId, existing.id);
-        if (!deleteResult.success) {
-          return {
-            success: false,
-            error:
-              deleteResult.error ??
-              "Failed to clear stale schedule-derived attendance",
-          };
-        }
-      }
+    // ==========================================
+    // EXISTING ATTENDANCE RECORD
+    // ==========================================
+    if (existingAttendanceId) {
+      const ref = attendanceDocRef(
+        restaurantId,
+        existingAttendanceId,
+      );
 
-      return {
-        success: true,
-        skipped: true,
-      };
-    }
+      const transactionResult =
+        await runTransaction(
+          db,
+          async (transaction) => {
+            const snap = await transaction.get(ref);
 
-    // ── Resolve deterministic OR legacy record ──
-    const existing = await resolveAttendanceRecord(
-      restaurantId,
-      employeeId,
-      date,
-    );
+            if (!snap.exists()) {
+              return "MISSING" as const;
+            }
 
-    // ── Existing attendance ──────────────────
-    if (existing) {
-      // Actual truth always wins.
-      //
-      // Both checks are intentional: attendanceSource may remain
-      // "CLOCK_IN" even if a manager later clears clockIn via the
-      // edit form, since updateAttendance() never resets it.
-      const hasActualOrigin =
-        existing.attendanceSource === "CLOCK_IN" ||
-        !!existing.clockIn;
+            const existing = mapAttendanceDoc(
+              snap.id,
+              snap.data() as Record<string, unknown>,
+            );
 
-      if (hasActualOrigin) {
+            // ── Actual truth always wins — never touched. ──
+            const hasActualOrigin =
+              existing.attendanceSource === "CLOCK_IN" ||
+              !!existing.clockIn;
+
+            if (hasActualOrigin) {
+              return "ACTUAL_SKIP" as const;
+            }
+
+            // ── Reversal cleanup ──────────────
+            //
+            // Example:
+            // Schedule HOLIDAY
+            // → Attendance HOLIDAY / SCHEDULE
+            //
+            // Manager later changes Schedule to WORK.
+            //
+            // WORK is not auto-synced, but the old Schedule-created
+            // HOLIDAY attendance must not remain stale.
+            //
+            // Only SCHEDULE-origin records are deleted. A MANUAL
+            // (manager-authored) record is never touched here.
+            if (!attendanceStatus) {
+              if (
+                existing.attendanceSource === "SCHEDULE"
+              ) {
+                transaction.delete(ref);
+                return "DELETED" as const;
+              }
+
+              return "NOOP_SKIP" as const;
+            }
+
+            // ── Forward-sync guard: a MANUAL (manager-authored)
+            //    record is the manager's own planned entry for this
+            //    day. It must never be silently overwritten or
+            //    relabeled as SCHEDULE-origin here, even though it
+            //    has no actual clockIn — only SCHEDULE-origin or
+            //    unlabeled/legacy records may be updated below. ──
+            if (existing.attendanceSource === "MANUAL") {
+              return "MANUAL_SKIP" as const;
+            }
+
+            // ── Sync new planned status ───────
+            //
+            // Existing non-actual, non-manual record can safely
+            // become the new Schedule-planned attendance state.
+            transaction.update(ref, {
+              status: attendanceStatus,
+              attendanceSource: "SCHEDULE",
+              workedHours: 0,
+              overtimeHours: 0,
+              lateMinutes: 0,
+              updatedAt: serverTimestamp(),
+            });
+
+            return "UPDATED" as const;
+          }
+        );
+
+      if (
+        transactionResult === "ACTUAL_SKIP" ||
+        transactionResult === "NOOP_SKIP" ||
+        transactionResult === "MANUAL_SKIP"
+      ) {
         return {
           success: true,
           skipped: true,
         };
       }
 
-      // IMPORTANT: use existing.id — this may be a legacy
-      // random-ID attendance document, not the deterministic one.
-      const updateResult = await updateAttendance({
-        restaurantId,
-        attendanceId: existing.id,
-        status: attendanceStatus,
-      });
-
-      if (!updateResult.success) {
+      // Record disappeared between resolve and transaction.
+      // Continue to create path only when the new Schedule status
+      // is syncable.
+      if (
+        transactionResult !== "MISSING" ||
+        !attendanceStatus
+      ) {
         return {
-          success: false,
-          error:
-            updateResult.error ??
-            "Failed to update attendance during schedule sync",
+          success: true,
         };
       }
+    }
 
+    // ==========================================
+    // NO EXISTING ATTENDANCE RECORD
+    // ==========================================
+
+    // WORK / ABSENT / TRAINING do not create Attendance.
+    if (!attendanceStatus) {
       return {
         success: true,
+        skipped: true,
       };
     }
 
-    // ── No attendance record — fetch the employee fresh ──
+    // ── Fetch employee fresh ──────────────────
     const empSnap = await getDoc(
-      employeeDocRef(restaurantId, employeeId)
+      employeeDocRef(
+        restaurantId,
+        employeeId,
+      )
     );
 
     if (!empSnap.exists()) {
       return {
         success: false,
-        error: "Employee not found for schedule sync",
+        error:
+          "Employee not found for schedule attendance sync",
       };
     }
 
@@ -276,10 +312,7 @@ export async function syncScheduleDayToAttendance(
       restaurantId,
     );
 
-    // ── Create attendance — tagged as SCHEDULE-origin, distinct
-    //    from a true manager-authored MANUAL entry, so a later
-    //    reversal knows it's safe to clear if the schedule changes
-    //    away from a synced status. ──
+    // ── Create Schedule-origin Attendance ─────
     const createResult = await createAttendance({
       restaurantId,
       employee,
@@ -307,7 +340,7 @@ export async function syncScheduleDayToAttendance(
     const message =
       err instanceof Error
         ? err.message
-        : "Schedule sync failed";
+        : "Schedule attendance sync failed";
 
     return {
       success: false,
