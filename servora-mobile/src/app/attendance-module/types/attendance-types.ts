@@ -22,7 +22,8 @@ export type AttendanceStatus =
   | "SICK"
   | "VACATION"
   | "HOLIDAY"
-  | "OFF";
+  | "OFF"
+  | "TRAINING";
 
 export type AttendanceSource =
   | "MANUAL"

@@ -18,12 +18,21 @@
 // ✅ updateAttendance — runTransaction, no stale recalculation
 //    race; supports explicit clockIn/clockOut clearing via
 //    null (deleteField()), distinct from undefined (leave as-is)
-// ✅ Status/clockIn/clockOut consistency guards — enforced on
-//    BOTH create and update paths:
-//    - PRESENT/LATE cannot exist without a clock-in time
-//    - clockOut cannot exist without clockIn
-// ✅ attendanceSource now includes "SCHEDULE" — tags records
-//    auto-created by the Schedule → Attendance sync integration,
+// ✅ Status/clockIn/clockOut consistency guards, origin-aware:
+//    - LATE ALWAYS requires a clock-in time (Schedule has no
+//      "Late" concept — LATE can only ever come from an actual
+//      clock-in calculation), regardless of record origin.
+//    - PRESENT requires a clock-in time UNLESS the record's
+//      origin is "SCHEDULE" — Servora's Schedule module is the
+//      initial planned truth, so a Schedule-driven "WORK" day
+//      may sync to a real PRESENT Attendance record before any
+//      actual clock-in happens (roster-based attendance). Once
+//      the employee actually clocks in, clockIn() naturally
+//      overwrites the record with attendanceSource "CLOCK_IN",
+//      and from that point on the strict guard applies again.
+//    - clockOut can never exist without clockIn, for any origin.
+// ✅ attendanceSource includes "SCHEDULE" — tags records created
+//    or kept in sync by the Schedule → Attendance integration,
 //    distinct from manager-authored "MANUAL" entries and actual
 //    "CLOCK_IN" records
 // ✅ Calculations imported from utils
@@ -140,11 +149,11 @@ export interface CreateAttendanceInput {
 }
 
 // ── Create Attendance — two layers of duplicate protection, plus
-//    the same status/clockIn/clockOut consistency guards enforced
-//    on the update path, so a contradictory record can never be
-//    created in the first place:
-//    - PRESENT/LATE requires a clock-in time
-//    - clockOut requires a clock-in time ──
+//    origin-aware status/clockIn/clockOut consistency guards:
+//    - LATE always requires a clock-in time.
+//    - PRESENT requires a clock-in time UNLESS attendanceSource
+//      is "SCHEDULE" (roster-based planned attendance).
+//    - clockOut requires a clock-in time. ──
 export async function createAttendance(
   input: CreateAttendanceInput
 ): Promise<AttendanceServiceResult> {
@@ -155,10 +164,16 @@ export async function createAttendance(
     attendanceSource,
   } = input;
 
-  if ((status === "PRESENT" || status === "LATE") && !clockIn) {
+  if (status === "LATE" && !clockIn) {
     return {
       success: false,
-      error: "Cannot set status to Present/Late without a clock-in time.",
+      error: "Cannot set status to Late without a clock-in time.",
+    };
+  }
+  if (status === "PRESENT" && !clockIn && attendanceSource !== "SCHEDULE") {
+    return {
+      success: false,
+      error: "Cannot set status to Present without a clock-in time.",
     };
   }
   if (clockOut && !clockIn) {
@@ -247,10 +262,16 @@ export interface UpdateAttendanceInput {
 
 // ── Update Attendance — runTransaction: read + recalculate + write
 //    happen atomically. clockIn/clockOut: undefined = leave untouched,
-//    null = manager explicitly cleared it (removed via deleteField()),
-//    string = set new value. Consistency guards prevent:
-//    - PRESENT/LATE without a clock-in time
-//    - clockOut without a clock-in time
+//    null = explicitly clear (deleteField()), string = set new value.
+//    Origin-aware consistency guards:
+//    - LATE always requires a clock-in time, for any record origin.
+//    - PRESENT requires a clock-in time UNLESS the record's origin
+//      is "SCHEDULE" — a Schedule-driven record is allowed to move
+//      freely between PRESENT/ABSENT/SICK/VACATION/HOLIDAY/OFF/
+//      TRAINING as the Schedule changes, without needing an actual
+//      clock-in. A MANUAL or CLOCK_IN-origin record is NOT exempt —
+//      this preserves the original fix for the "manager clears
+//      clockIn but leaves stale PRESENT" bug on real records.
 //    normalDailyHours falls back to the record's own persisted
 //    snapshot (not a hardcoded 8). ──
 export async function updateAttendance(
@@ -296,14 +317,25 @@ export async function updateAttendance(
         : clockOut === null ? undefined
         : clockOut;
 
-      // ── Consistency guard 1: PRESENT/LATE without a clockIn is a
-      //    contradictory state. Applies whether `status` was explicitly
-      //    passed in this call or is simply carried over from the
-      //    existing record. ──
       const finalStatus = status ?? existing.status;
-      if ((finalStatus === "PRESENT" || finalStatus === "LATE") && !finalClockIn) {
+      const isScheduleOrigin = existing.attendanceSource === "SCHEDULE";
+
+      // ── Consistency guard 1a: LATE always requires a clock-in,
+      //    for any record origin — Schedule has no "Late" concept. ──
+      if (finalStatus === "LATE" && !finalClockIn) {
         throw new Error(
-          "Cannot keep status as Present/Late without a clock-in time. Please choose a different status (e.g. Absent) when clearing the clock-in."
+          "Cannot keep status as Late without a clock-in time. Please choose a different status when clearing the clock-in."
+        );
+      }
+
+      // ── Consistency guard 1b: PRESENT without a clock-in is only
+      //    allowed for a SCHEDULE-origin record (roster-based
+      //    planned attendance). MANUAL/CLOCK_IN/legacy records are
+      //    NOT exempt — this preserves the original fix for the
+      //    "manager clears clockIn but leaves stale PRESENT" bug. ──
+      if (finalStatus === "PRESENT" && !finalClockIn && !isScheduleOrigin) {
+        throw new Error(
+          "Cannot keep status as Present without a clock-in time. Please choose a different status (e.g. Absent) when clearing the clock-in."
         );
       }
 

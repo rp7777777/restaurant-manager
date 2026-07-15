@@ -4,10 +4,9 @@
 // ✅ Net hours saved to Firestore
 // ✅ Holiday batch write
 // ✅ Apply whole week all statuses
-// ✅ Schedule → Attendance sync wired into BOTH single-cell save
-//    (saveCellEdit) AND bulk Set Holiday (handleSetHoliday), so
-//    the same status change always behaves consistently regardless
-//    of which UI path triggered it
+// ✅ Schedule → Attendance sync wired into single-cell save
+//    AND bulk Set Holiday — passes actual shift start/end/hours
+//    so a later real clock-in can still compute lateness correctly
 // ============================================
 
 import React, { useState } from "react";
@@ -175,7 +174,10 @@ const handleAddEmployee = async (emp: EmployeeDB) => {
         const syncOutcomes = await Promise.allSettled(
           weekDates.map((date) =>
             syncScheduleDayToAttendance(
-              restaurantId, schedule.employeeId, date, updatedDay.status, normalDailyHours
+              restaurantId, schedule.employeeId, date, updatedDay.status, normalDailyHours,
+              updatedDay.startTime || undefined,
+              updatedDay.endTime   || undefined,
+              updatedDay.hours,
             )
           )
         );
@@ -203,7 +205,10 @@ const handleAddEmployee = async (emp: EmployeeDB) => {
         );
 
         const syncResult = await syncScheduleDayToAttendance(
-          restaurantId, schedule.employeeId, dayKey, updatedDay.status, normalDailyHours
+          restaurantId, schedule.employeeId, dayKey, updatedDay.status, normalDailyHours,
+          updatedDay.startTime || undefined,
+          updatedDay.endTime   || undefined,
+          updatedDay.hours,
         );
         if (!syncResult.success) {
           Alert.alert(
@@ -303,7 +308,10 @@ const handleAddEmployee = async (emp: EmployeeDB) => {
       const syncOutcomes = await Promise.allSettled(
         schedules.map((emp) =>
           syncScheduleDayToAttendance(
-            restaurantId, emp.employeeId, date, holidayDay.status, normalDailyHours
+            restaurantId, emp.employeeId, date, holidayDay.status, normalDailyHours,
+            holidayDay.startTime || undefined,
+            holidayDay.endTime   || undefined,
+            holidayDay.hours,
           )
         )
       );

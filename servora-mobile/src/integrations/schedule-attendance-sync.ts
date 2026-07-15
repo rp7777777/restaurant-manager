@@ -1,22 +1,29 @@
 // ============================================
 // SERVORA ERP — Schedule → Attendance Sync
-// ✅ Schedule = Planned truth
-// ✅ Attendance = Actual truth
-// ✅ HOLIDAY / SICK / VACATION / DO / DC auto-sync
-// ✅ SCHEDULE-origin reversal cleanup
-//    HOLIDAY → WORK/ABSENT/TRAINING removes stale
-//    Schedule-created Attendance record
-// ✅ Actual CLOCK_IN / clockIn always wins
+// ✅ Schedule = Planned truth (initial source)
+// ✅ Attendance = Actual truth (once clock-in happens)
+// ✅ Full status coverage — every Schedule DayStatus now maps to
+//    an Attendance status:
+//    WORK → PRESENT, ABSENT → ABSENT, SICK → SICK,
+//    VACATION → VACATION, HOLIDAY → HOLIDAY, DO/DC → OFF,
+//    TRAINING → TRAINING
+// ✅ Roster-based PRESENT — a SCHEDULE-origin record may be
+//    PRESENT without an actual clock-in (attendance-service.ts's
+//    guards allow this only for attendanceSource === "SCHEDULE")
+// ✅ Actual CLOCK_IN / clockIn always wins — never overwritten
 // ✅ Forward-sync allowlist: only records this sync itself
-//    created (attendanceSource === "SCHEDULE") are ever updated
-//    or deleted. MANUAL, CLOCK_IN, and unknown/undefined-origin
-//    legacy records are ALL protected by default — "SCHEDULE
-//    owns only SCHEDULE records."
+//    created (attendanceSource === "SCHEDULE") are ever updated.
+//    MANUAL, CLOCK_IN, and unknown/undefined-origin legacy
+//    records are ALL protected by default.
+// ✅ Reversal cleanup kept as a defensive fallback for any future
+//    DayStatus added without a mapping (currently unreachable
+//    since every status maps to something, by design)
 // ✅ Existing-record mutation protected by transaction
 // ✅ Deterministic ID + legacy random-ID fallback
 // ✅ Employee snapshot fetched fresh on create
-// ✅ Restaurant normalDailyHours passed from settings
-// ✅ Service create result always checked
+// ✅ Scheduled shift times (start/end/hours) passed through so a
+//    later actual clock-in can still compute lateness correctly
+// ✅ Service create/update results always checked
 // ✅ Never throws to caller — returns ScheduleSyncResult
 // FROZEN
 // ============================================
@@ -62,15 +69,20 @@ export interface ScheduleSyncResult {
   skipped?: boolean;
 }
 
-// ── Schedule → Attendance mapping ─────────────
+// ── Schedule → Attendance mapping — every DayStatus now maps to
+//    an Attendance status. WORK maps to PRESENT (roster-based,
+//    no clock-in required for SCHEDULE-origin records). ──
 const SYNCABLE_STATUS_MAP: Partial<
   Record<DayStatus, AttendanceStatus>
 > = {
+  WORK: "PRESENT",
+  ABSENT: "ABSENT",
   HOLIDAY: "HOLIDAY",
   SICK: "SICK",
   VACATION: "VACATION",
   DO: "OFF",
   DC: "OFF",
+  TRAINING: "TRAINING",
 };
 
 // ── Attendance document ref ───────────────────
@@ -154,12 +166,18 @@ async function resolveAttendanceId(
 }
 
 // ── Sync one Schedule day → Attendance ────────
+// scheduledStart/scheduledEnd/scheduledHours are the Schedule day's
+// own planned shift times (only meaningful for WORK days) — passed
+// through so a later actual clock-in can still compute lateness.
 export async function syncScheduleDayToAttendance(
   restaurantId: string,
   employeeId: string,
   date: string,
   scheduleStatus: DayStatus,
   normalDailyHours: number,
+  scheduledStart?: string,
+  scheduledEnd?: string,
+  scheduledHours?: number,
 ): Promise<ScheduleSyncResult> {
   try {
     const attendanceStatus =
@@ -205,20 +223,10 @@ export async function syncScheduleDayToAttendance(
               return "ACTUAL_SKIP" as const;
             }
 
-            // ── Reversal cleanup ──────────────
-            //
-            // Example:
-            // Schedule HOLIDAY
-            // → Attendance HOLIDAY / SCHEDULE
-            //
-            // Manager later changes Schedule to WORK.
-            //
-            // WORK is not auto-synced, but the old Schedule-created
-            // HOLIDAY attendance must not remain stale.
-            //
-            // Only records THIS sync created (SCHEDULE-origin) are
-            // ever deleted. Everything else — MANUAL, CLOCK_IN, and
-            // unknown/undefined-origin legacy records — is protected.
+            // ── Reversal cleanup — defensive fallback only.
+            //    Currently unreachable since every DayStatus maps to
+            //    an Attendance status above, but kept in case a
+            //    future DayStatus is added without a mapping. ──
             if (!attendanceStatus) {
               if (
                 existing.attendanceSource === "SCHEDULE"
@@ -234,7 +242,7 @@ export async function syncScheduleDayToAttendance(
             //    itself created (attendanceSource === "SCHEDULE")
             //    may be updated below. Anything else — MANUAL,
             //    CLOCK_IN, or an unknown/undefined-origin legacy
-            //    record that pre-dates this field — is left alone.
+            //    record — is left alone.
             //    "SCHEDULE owns only SCHEDULE records." ──
             if (existing.attendanceSource !== "SCHEDULE") {
               return "PROTECTED_SKIP" as const;
@@ -243,11 +251,16 @@ export async function syncScheduleDayToAttendance(
             // ── Sync new planned status ───────
             //
             // Safe: this record's origin is confirmed to be this
-            // sync itself, so updating its planned status in place
-            // cannot clobber manager-authored or actual data.
+            // sync itself, so it may transition freely between
+            // PRESENT/ABSENT/SICK/VACATION/HOLIDAY/OFF/TRAINING as
+            // the Schedule changes (attendance-service.ts's guards
+            // allow PRESENT without a clock-in for SCHEDULE origin).
             transaction.update(ref, {
               status: attendanceStatus,
               attendanceSource: "SCHEDULE",
+              scheduledStart: scheduledStart ?? null,
+              scheduledEnd: scheduledEnd ?? null,
+              scheduledHours: scheduledHours ?? null,
               workedHours: 0,
               overtimeHours: 0,
               lateMinutes: 0,
@@ -286,7 +299,8 @@ export async function syncScheduleDayToAttendance(
     // NO EXISTING ATTENDANCE RECORD
     // ==========================================
 
-    // WORK / ABSENT / TRAINING do not create Attendance.
+    // No mapping for this DayStatus (defensive fallback — currently
+    // every DayStatus has a mapping above).
     if (!attendanceStatus) {
       return {
         success: true,
@@ -324,6 +338,9 @@ export async function syncScheduleDayToAttendance(
       status: attendanceStatus,
       breakMinutes: 0,
       normalDailyHours,
+      scheduledStart,
+      scheduledEnd,
+      scheduledHours,
       attendanceSource: "SCHEDULE",
     });
 
