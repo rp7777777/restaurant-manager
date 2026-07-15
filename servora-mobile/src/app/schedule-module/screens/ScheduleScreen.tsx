@@ -4,6 +4,10 @@
 // ✅ Net hours saved to Firestore
 // ✅ Holiday batch write
 // ✅ Apply whole week all statuses
+// ✅ Schedule → Attendance sync wired into BOTH single-cell save
+//    (saveCellEdit) AND bulk Set Holiday (handleSetHoliday), so
+//    the same status change always behaves consistently regardless
+//    of which UI path triggered it
 // ============================================
 
 import React, { useState } from "react";
@@ -43,6 +47,7 @@ import { EmployeePickerModal } from "../components/EmployeePickerModal";
 import { CellEditorModal }     from "../components/CellEditorModal";
 import { CalendarModal }       from "../components/CalendarModal";
 import { HolidayModal }        from "../components/HolidayModal";
+import { syncScheduleDayToAttendance } from "../../../integrations/schedule-attendance-sync";
 
 export default function ScheduleScreen() {
   const {
@@ -150,6 +155,8 @@ const handleAddEmployee = async (emp: EmployeeDB) => {
       nightHours: 0,
     };
 
+    const normalDailyHours = settings?.normalDailyHours ?? 8;
+
     try {
       if (applyWholeWeek) {
         const updatedDays = { ...schedule.days };
@@ -162,12 +169,48 @@ const handleAddEmployee = async (emp: EmployeeDB) => {
             updateScheduleDay(restaurantId, scheduleId, date, updatedDay, stats)
           )
         );
+
+        // ── Sync each day to Attendance, tracking both rejected
+        //    promises AND resolved-but-failed results. ──
+        const syncOutcomes = await Promise.allSettled(
+          weekDates.map((date) =>
+            syncScheduleDayToAttendance(
+              restaurantId, schedule.employeeId, date, updatedDay.status, normalDailyHours
+            )
+          )
+        );
+
+        const failedDates: string[] = [];
+        syncOutcomes.forEach((outcome, idx) => {
+          if (outcome.status === "rejected") {
+            failedDates.push(weekDates[idx]);
+          } else if (!outcome.value.success) {
+            failedDates.push(weekDates[idx]);
+          }
+        });
+
+        if (failedDates.length > 0) {
+          Alert.alert(
+            "Schedule Saved",
+            `Schedule saved, but attendance sync failed for: ${failedDates.join(", ")}. Re-save this day's schedule to retry.`
+          );
+        }
       } else {
         const updatedDays = { ...schedule.days, [dayKey]: updatedDay };
         const stats       = buildWeekSummary(updatedDays, weekDates);
         await updateScheduleDay(
           restaurantId, scheduleId, dayKey, updatedDay, stats
         );
+
+        const syncResult = await syncScheduleDayToAttendance(
+          restaurantId, schedule.employeeId, dayKey, updatedDay.status, normalDailyHours
+        );
+        if (!syncResult.success) {
+          Alert.alert(
+            "Schedule Saved",
+            `Schedule saved, but attendance sync failed: ${syncResult.error ?? "Unknown error"}. Re-save to retry.`
+          );
+        }
       }
       setShowCellEditor(false);
       setApplyWholeWeek(false);
@@ -251,11 +294,42 @@ const handleAddEmployee = async (emp: EmployeeDB) => {
         await batch.commit();
       }
 
-      setShowHoliday(false);
-      Alert.alert(
-        "✅ Holiday Set!",
-        `Public Holiday applied to all ${schedules.length} employees`
+      // ── Sync each employee's new Schedule-Holiday day to Attendance,
+      //    tracking both rejected promises AND resolved-but-failed
+      //    results. Schedule batch save is never rolled back if some
+      //    sync calls fail — a warning is shown instead, and re-running
+      //    Set Holiday for the same date naturally retries. ──
+      const normalDailyHours = settings?.normalDailyHours ?? 8;
+      const syncOutcomes = await Promise.allSettled(
+        schedules.map((emp) =>
+          syncScheduleDayToAttendance(
+            restaurantId, emp.employeeId, date, holidayDay.status, normalDailyHours
+          )
+        )
       );
+
+      const failedEmployees: string[] = [];
+      syncOutcomes.forEach((outcome, idx) => {
+        if (outcome.status === "rejected") {
+          failedEmployees.push(schedules[idx].employeeName);
+        } else if (!outcome.value.success) {
+          failedEmployees.push(schedules[idx].employeeName);
+        }
+      });
+
+      setShowHoliday(false);
+
+      if (failedEmployees.length > 0) {
+        Alert.alert(
+          "Holiday Set",
+          `Public Holiday applied to all ${schedules.length} employees. Attendance sync failed for: ${failedEmployees.join(", ")}. Re-open Set Holiday for this date to retry.`
+        );
+      } else {
+        Alert.alert(
+          "✅ Holiday Set!",
+          `Public Holiday applied to all ${schedules.length} employees`
+        );
+      }
     } catch (err: any) {
       Alert.alert("Error", err?.message ?? "Failed to set holiday");
     } finally {
