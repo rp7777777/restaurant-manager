@@ -48,11 +48,13 @@ const ROLE_ROUTES: Record<string, string[]> = {
     "/workers",
     "/excel-table",
     "/haccp",
+    "/dev-recompute-stats",
   ],
   CHEF: [
     "/kitchen",
     "/ingredient-order",
     "/notifications",
+    "/dev-recompute-stats",
   ],
   STORE: [
     "/store-requests",
@@ -60,15 +62,16 @@ const ROLE_ROUTES: Record<string, string[]> = {
     "/stock-alert",
     "/purchase-orders",
     "/notifications",
+    "/dev-recompute-stats",
   ],
   SALESMAN: [
     "/add-sale",
     "/sales",
     "/notifications",
+    "/dev-recompute-stats",
   ],
   OWNER: [], // Owner gets all routes
 };
-
 // ── Default home per role ───────────────────
 export const ROLE_HOME: Record<string, string> = {
   MANAGER: "/dashboard",
