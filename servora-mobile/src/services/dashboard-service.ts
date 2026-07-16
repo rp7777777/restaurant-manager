@@ -1,5 +1,5 @@
 // ============================================
-// SERVORA ERP — Dashboard Service v7.0 — FINAL
+// SERVORA ERP — Dashboard Service v7.1 — FINAL
 // ✅ Aggregate stats — 1 document read (main) + live sub-doc reads
 // ✅ runTransaction — race condition safe
 // ✅ Shared constants — COL/RCOL/SCOL/ACOL
@@ -12,19 +12,22 @@
 // ✅ transactionCountDelta — accurate counting (+1 create, -1
 //    delete, 0 edit), clamped to [-1, 1]
 // ✅ Negative protection on MAIN doc AND daily/monthly sub-docs
-// ✅ Math.abs(amount) — defensive against negative input
 // ✅ amount === undefined/null check — amount=0 no longer skipped
-// ✅ subscribeDashboardStats() — NEW: todaySales/todayExpenses,
-//    monthSales/monthExpenses, and yearSales/yearExpenses are now
-//    read LIVE from their own date-scoped sub-documents (daily doc
-//    for today, monthly doc for this month, all this-year monthly
-//    docs summed for this year) rather than trusted from the main
-//    aggregate doc's stored fields — this fixes the bug where the
-//    Dashboard kept showing a PREVIOUS day's/month's/year's totals
-//    after the calendar rolled over with zero new transactions yet
-//    (the main doc's todaySales/monthSales/yearSales only update
-//    when a transaction actually happens, so they'd otherwise stay
-//    stuck at the last period's value).
+// ⚠️ NOTE: `amount` here can legitimately be a signed DIFF (e.g.
+//    from updateSale()/updateExpense() editing an amount down),
+//    combined with operation="add" as the calling convention. A
+//    Math.abs(amount) guard was tried here and reverted — it broke
+//    edits that reduce an amount (the diff's negative sign carries
+//    the "decrease" meaning and must NOT be stripped). Callers are
+//    responsible for passing amount/operation correctly; this
+//    function trusts the sign of `amount` combined with `operation`.
+// ✅ subscribeDashboardStats() — todaySales/todayExpenses,
+//    monthSales/monthExpenses, and yearSales/yearExpenses are read
+//    LIVE from their own date-scoped sub-documents (daily doc for
+//    today, monthly doc for this month, all this-year monthly docs
+//    summed for this year) rather than trusted from the main
+//    aggregate doc's stored fields — fixes stale values after a
+//    day/month/year rollover with zero new transactions yet.
 // ✅ recomputeDashboardStatsFromSource() — true source-of-truth
 //    repair from actual sales/expenses collections
 // FROZEN
@@ -145,6 +148,8 @@ function monthlyStatsRef(restaurantId: string, monthStr: string) {
 //    protection (main doc AND daily/monthly sub-docs) + accurate,
 //    clamped transaction counting.
 //    `date` MUST be the actual sale/expense's own date (YYYY-MM-DD).
+//    `amount` may be a signed diff (edits) — its sign is trusted
+//    together with `operation`, never stripped via Math.abs().
 //    `transactionCountDelta`: +1 on create, -1 on delete, 0 on edit
 //    (default) — clamped to [-1, 1] per call.
 //    ALL reads (main + day + month) happen before any writes, as
@@ -159,8 +164,7 @@ export async function updateDashboardStats(
 ): Promise<void> {
   if (!restaurantId || amount === undefined || amount === null || !date) return;
 
-  const safeAmount  = Math.abs(amount);
-  const value       = operation === "add" ? safeAmount : -safeAmount;
+  const value       = operation === "add" ? amount : -amount;
   const month       = date.slice(0, 7);
   const year        = date.slice(0, 4);
   const isToday     = date  === todayISO();
