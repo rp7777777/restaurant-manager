@@ -11,10 +11,16 @@
 // ✅ useMemo — computed data
 // ✅ selectedM — null safe
 // ✅ selectedYear change — expandedDay reset
+// ✅ Recalculate Stats — OWNER-only, with ConfirmModal (cross-
+//    platform, since Alert.alert() silently no-ops on web) before
+//    calling recomputeDashboardStatsFromSource()
+// ✅ Net Profit card's Today/Month rows scroll to (and auto-expand)
+//    the existing DailyDetailsPanel/MonthlySummaryTable sections on
+//    this same page, instead of navigating to a separate screen
 // FROZEN
 // ============================================
 
-import React, { useState, useCallback, useMemo, useEffect } from "react";
+import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import {
   ScrollView, View, StyleSheet,
   Platform, RefreshControl,
@@ -44,7 +50,10 @@ import {
   buildMonthlyChartData,
   hasChartData,
 }                                 from "../services/dashboard/dashboard-chart";
-import { DashboardAlert }         from "../services/dashboard-service";
+import {
+  DashboardAlert,
+  recomputeDashboardStatsFromSource,
+}                                 from "../services/dashboard-service";
 
 // ── Components ────────────────────────────────
 import LoadingScreen        from "../components/dashboard/LoadingScreen";
@@ -58,21 +67,31 @@ import MonthlySummaryTable  from "../components/dashboard/MonthlySummaryTable";
 import DailyDetailsPanel    from "../components/dashboard/DailyDetailsPanel";
 import QuickActions         from "../components/dashboard/QuickActions";
 import ManagementGrid       from "../components/dashboard/ManagementGrid";
+import { ConfirmModal }     from "../components/ui/ConfirmModal";
 
 const isWeb = Platform.OS === "web";
 
 // ── Controller ────────────────────────────────
 export default function DashboardScreen() {
-  const { restaurantId, fmt, t } = useApp();
+  const { restaurantId, fmt, t, userProfile } = useApp();
 
-  // ✅ Fix #1 — lazy initializer — clean
   const [selectedYear,   setSelectedYear]   = useState(() => new Date().getFullYear());
   const [selectedMonth,  setSelectedMonth]  = useState(() => new Date().getMonth());
   const [viewMode,       setViewMode]       = useState<"monthly" | "yearly">("monthly");
   const [expandedDay,    setExpandedDay]    = useState<string | null>(null);
   const [showYearPicker, setShowYearPicker] = useState(false);
-  // ✅ Fix #2 — proper refreshing state
   const [refreshing,     setRefreshing]     = useState(false);
+
+  // ✅ Recalculate Stats state
+  const [recalculating,      setRecalculating]      = useState(false);
+  const [showRecalcConfirm,  setShowRecalcConfirm]  = useState(false);
+
+  const isOwner = userProfile?.role === "OWNER";
+
+  // ✅ Scroll-to-section refs
+  const scrollRef             = useRef<ScrollView>(null);
+  const monthlySummaryY        = useRef(0);
+  const dailyDetailsY          = useRef(0);
 
   // ── Hooks ─────────────────────────────────
   const { stats,      loading: statsLoading      } = useDashboardStats(restaurantId);
@@ -85,7 +104,6 @@ export default function DashboardScreen() {
 
   const loading = statsLoading || salesLoading;
 
-  // ✅ selectedYear change — expandedDay reset
   useEffect(() => {
     setExpandedDay(null);
   }, [selectedYear]);
@@ -113,12 +131,10 @@ export default function DashboardScreen() {
     [allSales, allExpenses, selectedMonth, selectedYear]
   );
 
-  // ✅ null safe
   const selectedM = monthlySummaries[selectedMonth] ??
     buildEmptyMonthSummary(selectedMonth);
 
   // ── Callbacks ─────────────────────────────
-  // ✅ Fix #2 — proper refreshing state
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -180,6 +196,42 @@ export default function DashboardScreen() {
     setShowYearPicker(false);
   }, []);
 
+  // ✅ Recalculate Stats — request → confirm → run
+  const onRecalculateRequest = useCallback(() => {
+    setShowRecalcConfirm(true);
+  }, []);
+
+  const onRecalculateCancel = useCallback(() => {
+    setShowRecalcConfirm(false);
+  }, []);
+
+  const onRecalculateConfirm = useCallback(async () => {
+    if (!restaurantId || recalculating) return;
+    setShowRecalcConfirm(false);
+    setRecalculating(true);
+    try {
+      await recomputeDashboardStatsFromSource(restaurantId);
+    } catch (err) {
+      console.warn("Recalculate failed:", err);
+    } finally {
+      setRecalculating(false);
+    }
+  }, [restaurantId, recalculating]);
+
+  // ✅ Net Profit "Today" row — expand today in DailyDetailsPanel,
+  //    then scroll to it
+  const onProfitTodayPress = useCallback(() => {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    setExpandedDay(todayIso);
+    scrollRef.current?.scrollTo({ y: dailyDetailsY.current, animated: true });
+  }, []);
+
+  // ✅ Net Profit "Month" row — scroll to MonthlySummaryTable
+  //    (current month is already the default selection)
+  const onProfitMonthPress = useCallback(() => {
+    scrollRef.current?.scrollTo({ y: monthlySummaryY.current, animated: true });
+  }, []);
+
   // ── Loading ───────────────────────────────
   if (loading) {
     return <LoadingScreen text={t("loadingDashboard")} />;
@@ -187,10 +239,10 @@ export default function DashboardScreen() {
 
   return (
     <ScrollView
+      ref={scrollRef}
       style={styles.container}
       showsVerticalScrollIndicator={false}
       refreshControl={
-        // ✅ Fix #2 — refreshing state
         <RefreshControl
           refreshing={refreshing}
           onRefresh={onRefresh}
@@ -202,12 +254,16 @@ export default function DashboardScreen() {
         generating={generating}
         onYearPress={onYearPress}
         onDownload={onDownloadPDF}
+        recalculating={isOwner ? recalculating : undefined}
+        onRecalculate={isOwner ? onRecalculateRequest : undefined}
       />
 
       <View style={styles.body}>
         <DashboardStats
           stats={stats}
           attendance={attendance}
+          onProfitTodayPress={onProfitTodayPress}
+          onProfitMonthPress={onProfitMonthPress}
         />
 
         <AlertsPanel
@@ -226,7 +282,10 @@ export default function DashboardScreen() {
         />
 
         {isWeb && (
-          <View style={styles.webRow}>
+          <View
+            style={styles.webRow}
+            onLayout={(e) => { monthlySummaryY.current = e.nativeEvent.layout.y; }}
+          >
             <MonthlySummaryTable
               summaries={monthlySummaries}
               yearTotals={yearTotals}
@@ -239,23 +298,27 @@ export default function DashboardScreen() {
         )}
 
         {!isWeb && (
-          <MonthlySummaryTable
-            summaries={monthlySummaries}
-            yearTotals={yearTotals}
-            selectedYear={selectedYear}
-            selectedMonth={selectedMonth}
-            onMonthSelect={onMonthSelect}
-          />
+          <View onLayout={(e) => { monthlySummaryY.current = e.nativeEvent.layout.y; }}>
+            <MonthlySummaryTable
+              summaries={monthlySummaries}
+              yearTotals={yearTotals}
+              selectedYear={selectedYear}
+              selectedMonth={selectedMonth}
+              onMonthSelect={onMonthSelect}
+            />
+          </View>
         )}
 
-        <DailyDetailsPanel
-          dayList={dayList}
-          selectedM={selectedM}
-          selectedMonth={selectedMonth}
-          expandedDay={expandedDay}
-          onToggleDay={onToggleDay}
-          onDownload={onDownloadMonthly}
-        />
+        <View onLayout={(e) => { dailyDetailsY.current = e.nativeEvent.layout.y; }}>
+          <DailyDetailsPanel
+            dayList={dayList}
+            selectedM={selectedM}
+            selectedMonth={selectedMonth}
+            expandedDay={expandedDay}
+            onToggleDay={onToggleDay}
+            onDownload={onDownloadMonthly}
+          />
+        </View>
 
         <ActivityPanel
           activities={activities}
@@ -270,6 +333,17 @@ export default function DashboardScreen() {
         selectedYear={selectedYear}
         onSelect={setSelectedYear}
         onClose={onYearPickerClose}
+      />
+
+      <ConfirmModal
+        visible={showRecalcConfirm}
+        title="Recalculate Stats"
+        message="This recomputes all Dashboard totals directly from your actual Sales and Expenses records. It may take a moment for restaurants with a lot of history. Continue?"
+        confirmLabel="Recalculate"
+        cancelLabel="Cancel"
+        destructive={false}
+        onConfirm={onRecalculateConfirm}
+        onCancel={onRecalculateCancel}
       />
     </ScrollView>
   );

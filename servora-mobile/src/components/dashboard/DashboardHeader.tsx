@@ -3,6 +3,9 @@
 // ✅ Live clock
 // ✅ Year selector
 // ✅ Download report button
+// ✅ Recalculate Stats button — OWNER-only, optional (rendered
+//    only when onRecalculate is provided by the caller, which
+//    dashboard.tsx only does when userProfile.role === "OWNER")
 // ✅ Theme compatible
 // ✅ React.memo
 // ✅ TypeScript typed props
@@ -26,10 +29,12 @@ const isWeb = Platform.OS === "web";
 
 // ── Props ─────────────────────────────────────
 interface DashboardHeaderProps {
-  selectedYear: number;
-  generating:   boolean;
-  onYearPress:  () => void;
-  onDownload:   () => void;
+  selectedYear:   number;
+  generating:     boolean;
+  onYearPress:    () => void;
+  onDownload:     () => void;
+  recalculating?: boolean;
+  onRecalculate?: () => void;
 }
 
 // ── Live Clock ────────────────────────────────
@@ -83,8 +88,9 @@ function DashboardHeader({
   generating,
   onYearPress,
   onDownload,
+  recalculating,
+  onRecalculate,
 }: DashboardHeaderProps) {
-  // ✅ Fix #1 — t() used for translations
   const { t } = useApp();
 
   return (
@@ -95,7 +101,6 @@ function DashboardHeader({
       <View style={styles.row}>
         {/* ── Left ── */}
         <View style={styles.left}>
-          {/* ✅ Fix #1 — t() for title */}
           <Text style={[styles.title, { fontSize: isWeb ? 22 : 18 }]}>
             {t("dashboardOverview")}
           </Text>
@@ -118,32 +123,57 @@ function DashboardHeader({
             <MaterialIcons name="arrow-drop-down" size={16} color="#FFD700" />
           </TouchableOpacity>
 
-          {/* Download button */}
-          <TouchableOpacity
-            style={[
-              styles.downloadBtn,
-              generating && styles.downloadBtnDisabled,
-            ]}
-            onPress={onDownload}
-            disabled={generating}
-            accessibilityLabel={t("downloadReport")}
-            // ✅ Fix #3 — accessibilityState busy + disabled
-            accessibilityState={{
-              disabled: generating,
-              busy:     generating,
-            }}
-          >
-            {generating ? (
-              <ActivityIndicator size="small" color="#00154f" />
-            ) : (
-              <>
-                <MaterialIcons name="download" size={16} color="#00154f" />
-                <Text style={styles.downloadText}>
-                  {t("downloadReport")}
-                </Text>
-              </>
+          <View style={styles.buttonRow}>
+            {/* ✅ Recalculate Stats — OWNER-only, only rendered when
+                onRecalculate is actually provided */}
+            {onRecalculate && (
+              <TouchableOpacity
+                style={[
+                  styles.recalcBtn,
+                  recalculating && styles.recalcBtnDisabled,
+                ]}
+                onPress={onRecalculate}
+                disabled={recalculating}
+                accessibilityLabel="Recalculate dashboard statistics"
+                accessibilityState={{
+                  disabled: recalculating,
+                  busy:     recalculating,
+                }}
+              >
+                {recalculating ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <MaterialIcons name="refresh" size={16} color="#fff" />
+                )}
+              </TouchableOpacity>
             )}
-          </TouchableOpacity>
+
+            {/* Download button */}
+            <TouchableOpacity
+              style={[
+                styles.downloadBtn,
+                generating && styles.downloadBtnDisabled,
+              ]}
+              onPress={onDownload}
+              disabled={generating}
+              accessibilityLabel={t("downloadReport")}
+              accessibilityState={{
+                disabled: generating,
+                busy:     generating,
+              }}
+            >
+              {generating ? (
+                <ActivityIndicator size="small" color="#00154f" />
+              ) : (
+                <>
+                  <MaterialIcons name="download" size={16} color="#00154f" />
+                  <Text style={styles.downloadText}>
+                    {t("downloadReport")}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     </LinearGradient>
@@ -190,6 +220,21 @@ const styles = StyleSheet.create({
     color:      "#FFD700",
     fontSize:   13,
     fontWeight: "700",
+  },
+  buttonRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  recalcBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  recalcBtnDisabled: {
+    opacity: 0.6,
   },
   downloadBtn: {
     flexDirection:     "row",

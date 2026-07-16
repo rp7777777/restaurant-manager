@@ -1,35 +1,31 @@
 // ============================================
-// SERVORA ERP — Dashboard Service v7.1 — FINAL
+// SERVORA ERP — Dashboard Service v9.0 — FINAL
 // ✅ Aggregate stats — 1 document read (main) + live sub-doc reads
 // ✅ runTransaction — race condition safe
-// ✅ Shared constants — COL/RCOL/SCOL/ACOL
-// ✅ Shared status — ATTENDANCE_STATUS etc
-// ✅ Activity logs — yearly subcollection
-// ✅ updateDashboardKPI — module KPI updates
-// ✅ lastUpdated: Timestamp | null
-// ✅ profitMargin — live update in transaction
 // ✅ Date-aware bucketing (today/month/year) in updateDashboardStats
-// ✅ transactionCountDelta — accurate counting (+1 create, -1
-//    delete, 0 edit), clamped to [-1, 1]
+// ✅ transactionCountDelta — accurate counting, clamped [-1, 1]
 // ✅ Negative protection on MAIN doc AND daily/monthly sub-docs
-// ✅ amount === undefined/null check — amount=0 no longer skipped
-// ⚠️ NOTE: `amount` here can legitimately be a signed DIFF (e.g.
-//    from updateSale()/updateExpense() editing an amount down),
-//    combined with operation="add" as the calling convention. A
-//    Math.abs(amount) guard was tried here and reverted — it broke
-//    edits that reduce an amount (the diff's negative sign carries
-//    the "decrease" meaning and must NOT be stripped). Callers are
-//    responsible for passing amount/operation correctly; this
-//    function trusts the sign of `amount` combined with `operation`.
-// ✅ subscribeDashboardStats() — todaySales/todayExpenses,
-//    monthSales/monthExpenses, and yearSales/yearExpenses are read
-//    LIVE from their own date-scoped sub-documents (daily doc for
-//    today, monthly doc for this month, all this-year monthly docs
-//    summed for this year) rather than trusted from the main
-//    aggregate doc's stored fields — fixes stale values after a
-//    day/month/year rollover with zero new transactions yet.
-// ✅ recomputeDashboardStatsFromSource() — true source-of-truth
-//    repair from actual sales/expenses collections
+// ✅ subscribeDashboardStats() — today/month/year AND trend
+//    baselines (yesterday/lastMonth/lastYear) read LIVE from their
+//    own date-scoped sub-documents
+// ✅ Debounced emit — all 7 listeners (main, day, yesterday, month,
+//    lastMonth, year, lastYear) schedule their emit via a single
+//    microtask flag, so several near-simultaneous snapshot updates
+//    coalesce into ONE callback/re-render instead of up to 7.
+// ✅ recomputeDashboardStatsFromSource() — repair writes are now
+//    chunked via writeBatch() (400 per batch) instead of an
+//    unbounded Promise.all(), so a restaurant with years of daily/
+//    monthly sub-documents to repair doesn't fire thousands of
+//    concurrent writes at once.
+// ✅ Single source of truth — today/month/year/trend-baseline
+//    values are NO LONGER written to the main aggregate document
+//    at all (only totalSales/totalExpenses/netProfit/profitMargin/
+//    totalTransactions remain there, which have no sub-document
+//    equivalent). The daily/monthly sub-documents are now the ONLY
+//    place period-scoped sales/expenses values are persisted,
+//    eliminating the prior duplication between main-doc fields
+//    (which subscribeDashboardStats() no longer even reads) and
+//    sub-doc fields (which it does).
 // FROZEN
 // ============================================
 
@@ -38,7 +34,7 @@ import {
   onSnapshot, increment, serverTimestamp,
   collection, query, where, orderBy,
   limit, getDocs, Timestamp,
-  runTransaction,
+  runTransaction, writeBatch,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { COL, RCOL, SCOL, ACOL } from "../constants/firestore-collections";
@@ -64,6 +60,12 @@ export interface DashboardStats {
   monthExpenses:     number;
   yearSales:         number;
   yearExpenses:      number;
+  yesterdaySales:    number;
+  yesterdayExpenses: number;
+  lastMonthSales:    number;
+  lastMonthExpenses: number;
+  lastYearSales:     number;
+  lastYearExpenses:  number;
   labourCostPct:     number;
   inventoryValue:    number;
   employeesPresent:  number;
@@ -102,7 +104,7 @@ export interface DashboardAlert {
   route?:   string;
 }
 
-const DEFAULT_STATS: DashboardStats = {
+export const DEFAULT_STATS: DashboardStats = {
   totalSales:        0,
   totalExpenses:     0,
   netProfit:         0,
@@ -113,6 +115,12 @@ const DEFAULT_STATS: DashboardStats = {
   monthExpenses:     0,
   yearSales:         0,
   yearExpenses:      0,
+  yesterdaySales:    0,
+  yesterdayExpenses: 0,
+  lastMonthSales:    0,
+  lastMonthExpenses: 0,
+  lastYearSales:     0,
+  lastYearExpenses:  0,
   labourCostPct:     0,
   inventoryValue:    0,
   employeesPresent:  0,
@@ -120,6 +128,8 @@ const DEFAULT_STATS: DashboardStats = {
   profitMargin:      0,
   lastUpdated:       null,
 };
+
+const REPAIR_BATCH_SIZE = 400;
 
 // ── Document refs ─────────────────────────────
 function statsRef(restaurantId: string) {
@@ -144,16 +154,33 @@ function monthlyStatsRef(restaurantId: string, monthStr: string) {
   );
 }
 
+// ── Date helpers for trend comparison periods ──
+function yesterdayISO(today: string): string {
+  const d = new Date(`${today}T00:00:00`);
+  d.setDate(d.getDate() - 1);
+  const tz = d.getTimezoneOffset();
+  return new Date(d.getTime() - tz * 60000).toISOString().split("T")[0];
+}
+
+function prevMonthStr(monthStr: string): string {
+  const [year, month] = monthStr.split("-").map(Number);
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const prevYear  = month === 1 ? year - 1 : year;
+  return `${prevYear}-${String(prevMonth).padStart(2, "0")}`;
+}
+
+function prevYearStr(yearStr: string): string {
+  return String(Number(yearStr) - 1);
+}
+
 // ── ✅ Update aggregate stats — date-aware bucketing + negative
 //    protection (main doc AND daily/monthly sub-docs) + accurate,
 //    clamped transaction counting.
-//    `date` MUST be the actual sale/expense's own date (YYYY-MM-DD).
-//    `amount` may be a signed diff (edits) — its sign is trusted
-//    together with `operation`, never stripped via Math.abs().
-//    `transactionCountDelta`: +1 on create, -1 on delete, 0 on edit
-//    (default) — clamped to [-1, 1] per call.
-//    ALL reads (main + day + month) happen before any writes, as
-//    Firestore transactions require. ──
+//    NOTE: the main doc no longer stores today/month/year fields —
+//    only all-time totals (totalSales/totalExpenses/netProfit/
+//    profitMargin/totalTransactions), which have no sub-document
+//    equivalent. Period-scoped values live ONLY on the daily/
+//    monthly sub-documents now. ──
 export async function updateDashboardStats(
   restaurantId: string,
   type:          "sales" | "expenses",
@@ -164,16 +191,12 @@ export async function updateDashboardStats(
 ): Promise<void> {
   if (!restaurantId || amount === undefined || amount === null || !date) return;
 
-  const value       = operation === "add" ? amount : -amount;
-  const month       = date.slice(0, 7);
-  const year        = date.slice(0, 4);
-  const isToday     = date  === todayISO();
-  const isThisMonth = month === currentMonthStr();
-  const isThisYear  = year  === currentYearStr();
+  const value    = operation === "add" ? amount : -amount;
+  const month    = date.slice(0, 7);
   const safeCountDelta = Math.max(-1, Math.min(1, transactionCountDelta));
-  const mainRef = statsRef(restaurantId);
-  const dayRef  = dailyStatsRef(restaurantId, date);
-  const monRef  = monthlyStatsRef(restaurantId, month);
+  const mainRef  = statsRef(restaurantId);
+  const dayRef   = dailyStatsRef(restaurantId, date);
+  const monRef   = monthlyStatsRef(restaurantId, month);
   const fieldKey = type === "sales" ? "sales" : "expenses";
 
   try {
@@ -194,7 +217,6 @@ export async function updateDashboardStats(
         const initExpenses = type === "expenses" ? Math.max(0, value) : 0;
         const initProfit   = initSales - initExpenses;
         tx.set(mainRef, {
-          ...DEFAULT_STATS,
           totalSales:        initSales,
           totalExpenses:     initExpenses,
           netProfit:         initProfit,
@@ -202,12 +224,10 @@ export async function updateDashboardStats(
             ? Math.round((initProfit / initSales) * 10000) / 100
             : 0,
           totalTransactions: Math.max(0, safeCountDelta),
-          todaySales:        (type === "sales"    && isToday)     ? Math.max(0, value) : 0,
-          todayExpenses:     (type === "expenses" && isToday)     ? Math.max(0, value) : 0,
-          monthSales:        (type === "sales"    && isThisMonth) ? Math.max(0, value) : 0,
-          monthExpenses:     (type === "expenses" && isThisMonth) ? Math.max(0, value) : 0,
-          yearSales:         (type === "sales"    && isThisYear)  ? Math.max(0, value) : 0,
-          yearExpenses:      (type === "expenses" && isThisYear)  ? Math.max(0, value) : 0,
+          labourCostPct:     0,
+          inventoryValue:    0,
+          employeesPresent:  0,
+          employeesTotal:    0,
           lastUpdated:       serverTimestamp(),
         });
       } else {
@@ -215,12 +235,6 @@ export async function updateDashboardStats(
 
         const curSales        = Number(data.totalSales        ?? 0);
         const curExpenses     = Number(data.totalExpenses     ?? 0);
-        const curToday        = Number(data.todaySales        ?? 0);
-        const curTodayExp     = Number(data.todayExpenses     ?? 0);
-        const curMonth        = Number(data.monthSales        ?? 0);
-        const curMonthExp     = Number(data.monthExpenses     ?? 0);
-        const curYear         = Number(data.yearSales         ?? 0);
-        const curYearExp      = Number(data.yearExpenses      ?? 0);
         const curTransactions = Number(data.totalTransactions ?? 0);
 
         const newSales    = type === "sales"    ? Math.max(0, curSales    + value) : curSales;
@@ -230,29 +244,18 @@ export async function updateDashboardStats(
           ? Math.round((newProfit / newSales) * 10000) / 100
           : 0;
 
-        const updates: Record<string, unknown> = {
+        tx.update(mainRef, {
           totalSales:        newSales,
           totalExpenses:     newExpenses,
           netProfit:         newProfit,
           profitMargin:      newMargin,
           totalTransactions: Math.max(0, curTransactions + safeCountDelta),
           lastUpdated:       serverTimestamp(),
-        };
-
-        if (type === "sales") {
-          if (isToday)     updates.todaySales = Math.max(0, curToday + value);
-          if (isThisMonth) updates.monthSales  = Math.max(0, curMonth + value);
-          if (isThisYear)  updates.yearSales   = Math.max(0, curYear + value);
-        } else {
-          if (isToday)     updates.todayExpenses = Math.max(0, curTodayExp + value);
-          if (isThisMonth) updates.monthExpenses  = Math.max(0, curMonthExp + value);
-          if (isThisYear)  updates.yearExpenses   = Math.max(0, curYearExp + value);
-        }
-        tx.update(mainRef, updates);
+        });
       }
 
-      // ✅ Day/month sub-documents — computed + clamped (Math.max 0),
-      //    not a blind increment() — matches main doc's protection.
+      // ✅ Day/month sub-documents — the ONLY place period-scoped
+      //    sales/expenses values live now.
       tx.set(dayRef, {
         date,
         [fieldKey]: newDayValue,
@@ -270,18 +273,13 @@ export async function updateDashboardStats(
   }
 }
 
-// ── Subscribe to stats — LIVE, date-aware derivation.
-//    todaySales/todayExpenses, monthSales/monthExpenses, and
-//    yearSales/yearExpenses are NEVER trusted directly from the
-//    main aggregate doc (which only updates when a transaction
-//    happens, and can go stale the moment the actual day/month/
-//    year rolls over with zero new transactions yet). Instead:
-//    - today  → read live from today's own daily sub-doc
-//    - month  → read live from this month's own monthly sub-doc
-//    - year   → summed live across every monthly sub-doc this year
-//    If the relevant sub-doc(s) don't exist yet (no entries this
-//    period), the value correctly shows 0 — never a stale prior
-//    period's number. ──
+// ── Subscribe to stats — LIVE, date-aware derivation, with
+//    debounced emit. All 7 listeners (main, today, yesterday,
+//    month, lastMonth, year, lastYear) schedule emit() via a
+//    microtask flag rather than calling it directly — several
+//    listeners firing in the same tick (e.g. right after a
+//    transaction touches both main + day + month docs) coalesce
+//    into a SINGLE callback/re-render instead of up to 7. ──
 export function subscribeDashboardStats(
   restaurantId: string,
   callback:     (stats: DashboardStats) => void,
@@ -292,9 +290,12 @@ export function subscribeDashboardStats(
     return () => {};
   }
 
-  const today = todayISO();
-  const month = currentMonthStr();
-  const year  = currentYearStr();
+  const today     = todayISO();
+  const yesterday = yesterdayISO(today);
+  const month     = currentMonthStr();
+  const lastMonth = prevMonthStr(month);
+  const year      = currentYearStr();
+  const lastYear  = prevYearStr(year);
 
   let mainData = {
     totalSales:        DEFAULT_STATS.totalSales,
@@ -312,20 +313,30 @@ export function subscribeDashboardStats(
   let todaySales = 0, todayExpenses = 0;
   let monthSales = 0, monthExpenses = 0;
   let yearSales  = 0, yearExpenses  = 0;
+  let yesterdaySales = 0, yesterdayExpenses = 0;
+  let lastMonthSales = 0, lastMonthExpenses = 0;
+  let lastYearSales  = 0, lastYearExpenses  = 0;
 
-  const emit = () => {
-    callback({
-      ...mainData,
-      todaySales,
-      todayExpenses,
-      monthSales,
-      monthExpenses,
-      yearSales,
-      yearExpenses,
+  // ✅ Debounce — coalesce multiple near-simultaneous listener
+  //    fires into a single callback via a microtask flag.
+  let emitScheduled = false;
+  const scheduleEmit = () => {
+    if (emitScheduled) return;
+    emitScheduled = true;
+    queueMicrotask(() => {
+      emitScheduled = false;
+      callback({
+        ...mainData,
+        todaySales, todayExpenses,
+        monthSales, monthExpenses,
+        yearSales, yearExpenses,
+        yesterdaySales, yesterdayExpenses,
+        lastMonthSales, lastMonthExpenses,
+        lastYearSales, lastYearExpenses,
+      });
     });
   };
 
-  // ── Main doc — all-time totals + non-date-sensitive fields ──
   const unsubMain = onSnapshot(
     statsRef(restaurantId),
     (snap) => {
@@ -342,38 +353,55 @@ export function subscribeDashboardStats(
         profitMargin:      Number(data.profitMargin      ?? 0),
         lastUpdated:       (data.lastUpdated as Timestamp) ?? null,
       };
-      emit();
+      scheduleEmit();
     },
     (err) => onError?.(err)
   );
 
-  // ── Today's daily sub-doc — live, correctly 0 if no entries today ──
   const unsubDay = onSnapshot(
     dailyStatsRef(restaurantId, today),
     (snap) => {
       const data = snap.exists() ? snap.data() : {};
       todaySales    = Number(data.sales    ?? 0);
       todayExpenses = Number(data.expenses ?? 0);
-      emit();
+      scheduleEmit();
     },
-    () => { /* doc doesn't exist yet — todaySales/Expenses stay 0 */ }
+    () => {}
   );
 
-  // ── This month's monthly sub-doc — live, correctly 0 if no
-  //    entries this month ──
+  const unsubYesterday = onSnapshot(
+    dailyStatsRef(restaurantId, yesterday),
+    (snap) => {
+      const data = snap.exists() ? snap.data() : {};
+      yesterdaySales    = Number(data.sales    ?? 0);
+      yesterdayExpenses = Number(data.expenses ?? 0);
+      scheduleEmit();
+    },
+    () => {}
+  );
+
   const unsubMonth = onSnapshot(
     monthlyStatsRef(restaurantId, month),
     (snap) => {
       const data = snap.exists() ? snap.data() : {};
       monthSales    = Number(data.sales    ?? 0);
       monthExpenses = Number(data.expenses ?? 0);
-      emit();
+      scheduleEmit();
     },
-    () => { /* doc doesn't exist yet — monthSales/Expenses stay 0 */ }
+    () => {}
   );
 
-  // ── This year's total — summed live across every monthly sub-doc
-  //    for the current year. Correctly 0 on Jan 1 before any entry. ──
+  const unsubLastMonth = onSnapshot(
+    monthlyStatsRef(restaurantId, lastMonth),
+    (snap) => {
+      const data = snap.exists() ? snap.data() : {};
+      lastMonthSales    = Number(data.sales    ?? 0);
+      lastMonthExpenses = Number(data.expenses ?? 0);
+      scheduleEmit();
+    },
+    () => {}
+  );
+
   const unsubYear = onSnapshot(
     collection(db, COL.STATS, restaurantId, SCOL.YEARLY, year, SCOL.MONTHLY),
     (snap) => {
@@ -385,30 +413,47 @@ export function subscribeDashboardStats(
       });
       yearSales    = sSum;
       yearExpenses = eSum;
-      emit();
+      scheduleEmit();
     },
-    () => { /* no monthly docs yet this year — yearSales/Expenses stay 0 */ }
+    () => {}
+  );
+
+  const unsubLastYear = onSnapshot(
+    collection(db, COL.STATS, restaurantId, SCOL.YEARLY, lastYear, SCOL.MONTHLY),
+    (snap) => {
+      let sSum = 0, eSum = 0;
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        sSum += Number(data.sales    ?? 0);
+        eSum += Number(data.expenses ?? 0);
+      });
+      lastYearSales    = sSum;
+      lastYearExpenses = eSum;
+      scheduleEmit();
+    },
+    () => {}
   );
 
   return () => {
     unsubMain();
     unsubDay();
+    unsubYesterday();
     unsubMonth();
+    unsubLastMonth();
     unsubYear();
+    unsubLastYear();
   };
 }
 
-// ── ✅ Aggregate-based rebuild (kept for backward compatibility) —
-//    NOTE: this only re-sums the EXISTING monthly/daily sub-documents.
-//    Prefer recomputeDashboardStatsFromSource() below for a true
-//    repair. ──
+// ── ✅ Aggregate-based rebuild (kept for backward compatibility,
+//    deprecated/legacy — not updated further, superseded by
+//    recomputeDashboardStatsFromSource()). ──
 export async function rebuildDashboardStats(
   restaurantId: string
 ): Promise<void> {
   if (!restaurantId) return;
 
   try {
-    const today    = todayISO();
     const year     = currentYearStr();
     const monthStr = currentMonthStr();
 
@@ -418,22 +463,12 @@ export async function rebuildDashboardStats(
 
     let totalSales    = 0;
     let totalExpenses = 0;
-    let monthSales    = 0;
-    let monthExpenses = 0;
 
     monthlySnap.docs.forEach((d) => {
       const data = d.data();
       totalSales    += Number(data.sales    ?? 0);
       totalExpenses += Number(data.expenses ?? 0);
-      if (d.id === monthStr) {
-        monthSales    = Number(data.sales    ?? 0);
-        monthExpenses = Number(data.expenses ?? 0);
-      }
     });
-
-    const daySnap       = await getDoc(dailyStatsRef(restaurantId, today));
-    const todaySales    = Number(daySnap.data()?.sales    ?? 0);
-    const todayExpenses = Number(daySnap.data()?.expenses ?? 0);
 
     const netProfit    = totalSales - totalExpenses;
     const profitMargin = totalSales > 0
@@ -449,12 +484,6 @@ export async function rebuildDashboardStats(
       netProfit,
       profitMargin,
       totalTransactions: Number(existingData.totalTransactions ?? 0),
-      todaySales,
-      todayExpenses,
-      monthSales,
-      monthExpenses,
-      yearSales:        Number(existingData.yearSales        ?? 0),
-      yearExpenses:     Number(existingData.yearExpenses     ?? 0),
       labourCostPct:    Number(existingData.labourCostPct    ?? 0),
       inventoryValue:   Number(existingData.inventoryValue   ?? 0),
       employeesPresent: Number(existingData.employeesPresent ?? 0),
@@ -467,17 +496,16 @@ export async function rebuildDashboardStats(
 }
 
 // ── ✅ TRUE source-of-truth repair — recomputes the main aggregate
-//    doc (including yearSales/yearExpenses) AND every daily/monthly
-//    sub-document by scanning the actual sales/expenses collections
-//    directly. ──
+//    doc (all-time totals only, no today/month/year duplication)
+//    AND every daily/monthly sub-document by scanning the actual
+//    sales/expenses collections directly. Sub-document repair
+//    writes are chunked via writeBatch() (400 per batch) rather
+//    than an unbounded Promise.all(), so a restaurant with years of
+//    history doesn't fire thousands of concurrent writes. ──
 export async function recomputeDashboardStatsFromSource(
   restaurantId: string
 ): Promise<void> {
   if (!restaurantId) return;
-
-  const today = todayISO();
-  const month = currentMonthStr();
-  const year  = currentYearStr();
 
   const [salesSnap, expensesSnap] = await Promise.all([
     getDocs(collection(db, COL.RESTAURANTS, restaurantId, RCOL.SALES)),
@@ -485,9 +513,6 @@ export async function recomputeDashboardStatsFromSource(
   ]);
 
   let totalSales = 0, totalExpenses = 0;
-  let todaySales = 0, todayExpenses = 0;
-  let monthSales = 0, monthExpenses = 0;
-  let yearSales  = 0, yearExpenses  = 0;
   let totalTransactions = 0;
 
   const dailySales    = new Map<string, number>();
@@ -503,13 +528,8 @@ export async function recomputeDashboardStatsFromSource(
 
     totalSales += amount;
     totalTransactions += 1;
-    if (date === today) todaySales += amount;
 
     const mo = date.slice(0, 7);
-    const yr = date.slice(0, 4);
-    if (mo === month) monthSales += amount;
-    if (yr === year)  yearSales  += amount;
-
     dailySales.set(date, (dailySales.get(date) ?? 0) + amount);
     monthlySales.set(mo, (monthlySales.get(mo) ?? 0) + amount);
   });
@@ -521,13 +541,8 @@ export async function recomputeDashboardStatsFromSource(
     if (!date) return;
 
     totalExpenses += amount;
-    if (date === today) todayExpenses += amount;
 
     const mo = date.slice(0, 7);
-    const yr = date.slice(0, 4);
-    if (mo === month) monthExpenses += amount;
-    if (yr === year)  yearExpenses  += amount;
-
     dailyExpenses.set(date, (dailyExpenses.get(date) ?? 0) + amount);
     monthlyExpenses.set(mo, (monthlyExpenses.get(mo) ?? 0) + amount);
   });
@@ -546,12 +561,6 @@ export async function recomputeDashboardStatsFromSource(
     netProfit,
     profitMargin,
     totalTransactions,
-    todaySales,
-    todayExpenses,
-    monthSales,
-    monthExpenses,
-    yearSales,
-    yearExpenses,
     labourCostPct:    Number(existingData.labourCostPct    ?? 0),
     inventoryValue:   Number(existingData.inventoryValue   ?? 0),
     employeesPresent: Number(existingData.employeesPresent ?? 0),
@@ -559,31 +568,39 @@ export async function recomputeDashboardStatsFromSource(
     lastUpdated:      serverTimestamp(),
   });
 
-  // ── Repair every daily/monthly sub-document too. Full overwrite
-  //    (not merge) — these values ARE the corrected truth. ──
-  const allDates = new Set<string>([...dailySales.keys(), ...dailyExpenses.keys()]);
-  await Promise.all(
-    Array.from(allDates).map((date) =>
-      setDoc(dailyStatsRef(restaurantId, date), {
+  // ── Repair every daily/monthly sub-document — chunked via
+  //    writeBatch() (400 ops per batch) instead of an unbounded
+  //    Promise.all(), so a large restaurant's years of history
+  //    don't fire thousands of concurrent writes. ──
+  const allDates = Array.from(new Set<string>([...dailySales.keys(), ...dailyExpenses.keys()]));
+  for (let i = 0; i < allDates.length; i += REPAIR_BATCH_SIZE) {
+    const chunk = allDates.slice(i, i + REPAIR_BATCH_SIZE);
+    const batch = writeBatch(db);
+    chunk.forEach((date) => {
+      batch.set(dailyStatsRef(restaurantId, date), {
         date,
         sales:       dailySales.get(date)    ?? 0,
         expenses:    dailyExpenses.get(date) ?? 0,
         lastUpdated: serverTimestamp(),
-      })
-    )
-  );
+      });
+    });
+    await batch.commit();
+  }
 
-  const allMonths = new Set<string>([...monthlySales.keys(), ...monthlyExpenses.keys()]);
-  await Promise.all(
-    Array.from(allMonths).map((mo) =>
-      setDoc(monthlyStatsRef(restaurantId, mo), {
+  const allMonths = Array.from(new Set<string>([...monthlySales.keys(), ...monthlyExpenses.keys()]));
+  for (let i = 0; i < allMonths.length; i += REPAIR_BATCH_SIZE) {
+    const chunk = allMonths.slice(i, i + REPAIR_BATCH_SIZE);
+    const batch = writeBatch(db);
+    chunk.forEach((mo) => {
+      batch.set(monthlyStatsRef(restaurantId, mo), {
         month: mo,
         sales:       monthlySales.get(mo)    ?? 0,
         expenses:    monthlyExpenses.get(mo) ?? 0,
         lastUpdated: serverTimestamp(),
-      })
-    )
-  );
+      });
+    });
+    await batch.commit();
+  }
 }
 
 // ── ✅ Write unified activity log ──────────────

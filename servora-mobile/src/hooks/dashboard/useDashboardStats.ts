@@ -4,7 +4,10 @@
 // ✅ Loading state — no race condition
 // ✅ Cleanup on unmount
 // ✅ restaurantId null safe
-// ✅ DEFAULT_STATS immutable — spread
+// ✅ DEFAULT_STATS imported from service — single source of truth,
+//    no more locally-duplicated default that could drift out of
+//    sync with the interface (previously missing yearSales/
+//    yearExpenses and the new trend baseline fields)
 // ✅ Error — reset stats to default
 // FROZEN
 // ============================================
@@ -13,24 +16,8 @@ import { useEffect, useState } from "react";
 import {
   subscribeDashboardStats,
   DashboardStats,
+  DEFAULT_STATS,
 } from "../../services/dashboard-service";
-
-const DEFAULT_STATS: DashboardStats = {
-  totalSales:        0,
-  totalExpenses:     0,
-  netProfit:         0,
-  totalTransactions: 0,
-  todaySales:        0,
-  todayExpenses:     0,
-  labourCostPct:     0,
-  inventoryValue:    0,
-  employeesPresent:  0,
-  employeesTotal:    0,
-  profitMargin:      0,
-  monthSales:        0,
-  monthExpenses:     0,
-  lastUpdated:       null,
-};
 
 export interface UseDashboardStatsResult {
   stats:   DashboardStats;
@@ -41,14 +28,12 @@ export interface UseDashboardStatsResult {
 export function useDashboardStats(
   restaurantId: string | null | undefined
 ): UseDashboardStatsResult {
-  // ✅ Fix #1 — spread — immutable default
   const [stats,   setStats]   = useState<DashboardStats>({ ...DEFAULT_STATS });
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
 
   useEffect(() => {
     if (!restaurantId) {
-      // ✅ Fix #1 — spread on reset
       setStats({ ...DEFAULT_STATS });
       setLoading(false);
       return;
@@ -64,7 +49,6 @@ export function useDashboardStats(
         setLoading(false);
       },
       (err) => {
-        // ✅ Fix #2 — reset stats on error — no stale data
         setStats({ ...DEFAULT_STATS });
         setError(err.message);
         setLoading(false);
