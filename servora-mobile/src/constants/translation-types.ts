@@ -82,7 +82,9 @@ export interface TranslationKeys {
   morning:              string;
   afternoon:            string;
   night:                string;
-
+  today:                string;
+  year:                 string;
+  late:                 string;
 
   // ── Auth ─────────────────────────────────
   login:              string;

@@ -1,7 +1,6 @@
 // ============================================
-// SERVORA ERP — Dashboard Service v4.0
-// ✅ Aggregate stats — 1 document read only!
-// ✅ Daily stats — no midnight reset needed
+// SERVORA ERP — Dashboard Service v7.0 — FINAL
+// ✅ Aggregate stats — 1 document read (main) + live sub-doc reads
 // ✅ runTransaction — race condition safe
 // ✅ Shared constants — COL/RCOL/SCOL/ACOL
 // ✅ Shared status — ATTENDANCE_STATUS etc
@@ -9,20 +8,25 @@
 // ✅ updateDashboardKPI — module KPI updates
 // ✅ lastUpdated: Timestamp | null
 // ✅ profitMargin — live update in transaction
-// ✅ updateDashboardStats() now requires the entry's OWN date —
-//    fixes a real bug where editing/deleting a back-dated sale or
-//    expense (any date other than today) incorrectly adjusted
-//    TODAY's and THIS MONTH's stats buckets instead of the entry's
-//    actual day/month. todaySales/todayExpenses and monthSales/
-//    monthExpenses on the main aggregate doc are now ONLY adjusted
-//    when the entry's date actually falls on today/this month;
-//    totalSales/totalExpenses remain unconditional (all-time).
-// ✅ recomputeDashboardStatsFromSource() — one-time repair: recomputes
-//    totalSales/totalExpenses/todaySales/todayExpenses/monthSales/
-//    monthExpenses AND the daily/monthly sub-documents directly from
-//    the actual sales/expenses collections (true source of truth),
-//    rather than trusting the (possibly already-corrupted) aggregate
-//    documents the way the old rebuildDashboardStats() did.
+// ✅ Date-aware bucketing (today/month/year) in updateDashboardStats
+// ✅ transactionCountDelta — accurate counting (+1 create, -1
+//    delete, 0 edit), clamped to [-1, 1]
+// ✅ Negative protection on MAIN doc AND daily/monthly sub-docs
+// ✅ Math.abs(amount) — defensive against negative input
+// ✅ amount === undefined/null check — amount=0 no longer skipped
+// ✅ subscribeDashboardStats() — NEW: todaySales/todayExpenses,
+//    monthSales/monthExpenses, and yearSales/yearExpenses are now
+//    read LIVE from their own date-scoped sub-documents (daily doc
+//    for today, monthly doc for this month, all this-year monthly
+//    docs summed for this year) rather than trusted from the main
+//    aggregate doc's stored fields — this fixes the bug where the
+//    Dashboard kept showing a PREVIOUS day's/month's/year's totals
+//    after the calendar rolled over with zero new transactions yet
+//    (the main doc's todaySales/monthSales/yearSales only update
+//    when a transaction actually happens, so they'd otherwise stay
+//    stuck at the last period's value).
+// ✅ recomputeDashboardStatsFromSource() — true source-of-truth
+//    repair from actual sales/expenses collections
 // FROZEN
 // ============================================
 
@@ -53,13 +57,15 @@ export interface DashboardStats {
   totalTransactions: number;
   todaySales:        number;
   todayExpenses:     number;
+  monthSales:        number;
+  monthExpenses:     number;
+  yearSales:         number;
+  yearExpenses:      number;
   labourCostPct:     number;
   inventoryValue:    number;
   employeesPresent:  number;
   employeesTotal:    number;
   profitMargin:      number;
-  monthSales:        number;
-  monthExpenses:     number;
   lastUpdated:       Timestamp | null;
 }
 
@@ -100,13 +106,15 @@ const DEFAULT_STATS: DashboardStats = {
   totalTransactions: 0,
   todaySales:        0,
   todayExpenses:     0,
+  monthSales:        0,
+  monthExpenses:     0,
+  yearSales:         0,
+  yearExpenses:      0,
   labourCostPct:     0,
   inventoryValue:    0,
   employeesPresent:  0,
   employeesTotal:    0,
   profitMargin:      0,
-  monthSales:        0,
-  monthExpenses:     0,
   lastUpdated:       null,
 };
 
@@ -133,31 +141,49 @@ function monthlyStatsRef(restaurantId: string, monthStr: string) {
   );
 }
 
-// ── ✅ Update aggregate stats — date-aware bucketing.
-//    `date` MUST be the actual sale/expense's own date (YYYY-MM-DD),
-//    never assumed to be "today". This is what the entry's day/month
-//    sub-documents are keyed by, and what decides whether the main
-//    doc's todaySales/monthSales fields get touched at all. ──
+// ── ✅ Update aggregate stats — date-aware bucketing + negative
+//    protection (main doc AND daily/monthly sub-docs) + accurate,
+//    clamped transaction counting.
+//    `date` MUST be the actual sale/expense's own date (YYYY-MM-DD).
+//    `transactionCountDelta`: +1 on create, -1 on delete, 0 on edit
+//    (default) — clamped to [-1, 1] per call.
+//    ALL reads (main + day + month) happen before any writes, as
+//    Firestore transactions require. ──
 export async function updateDashboardStats(
   restaurantId: string,
   type:          "sales" | "expenses",
   amount:        number,
   operation:     "add" | "subtract",
   date:          string,
+  transactionCountDelta: number = 0,
 ): Promise<void> {
-  if (!restaurantId || !amount || !date) return;
+  if (!restaurantId || amount === undefined || amount === null || !date) return;
 
-  const value   = operation === "add" ? amount : -amount;
-  const month   = date.slice(0, 7);
-  const isToday = date === todayISO();
+  const safeAmount  = Math.abs(amount);
+  const value       = operation === "add" ? safeAmount : -safeAmount;
+  const month       = date.slice(0, 7);
+  const year        = date.slice(0, 4);
+  const isToday     = date  === todayISO();
   const isThisMonth = month === currentMonthStr();
+  const isThisYear  = year  === currentYearStr();
+  const safeCountDelta = Math.max(-1, Math.min(1, transactionCountDelta));
   const mainRef = statsRef(restaurantId);
   const dayRef  = dailyStatsRef(restaurantId, date);
   const monRef  = monthlyStatsRef(restaurantId, month);
+  const fieldKey = type === "sales" ? "sales" : "expenses";
 
   try {
     await runTransaction(db, async (tx) => {
-      const snap = await tx.get(mainRef);
+      // ── All reads first (Firestore transaction requirement) ──
+      const snap    = await tx.get(mainRef);
+      const daySnap = await tx.get(dayRef);
+      const monSnap = await tx.get(monRef);
+
+      const curDayValue = Number(daySnap.data()?.[fieldKey] ?? 0);
+      const newDayValue = Math.max(0, curDayValue + value);
+
+      const curMonValue = Number(monSnap.data()?.[fieldKey] ?? 0);
+      const newMonValue = Math.max(0, curMonValue + value);
 
       if (!snap.exists()) {
         const initSales    = type === "sales"    ? Math.max(0, value) : 0;
@@ -171,60 +197,67 @@ export async function updateDashboardStats(
           profitMargin:      initSales > 0
             ? Math.round((initProfit / initSales) * 10000) / 100
             : 0,
-          totalTransactions: type === "sales" ? 1 : 0,
-          // ✅ Only seed today's/this-month's fields if this entry
-          //    actually belongs to today/this month.
+          totalTransactions: Math.max(0, safeCountDelta),
           todaySales:        (type === "sales"    && isToday)     ? Math.max(0, value) : 0,
           todayExpenses:     (type === "expenses" && isToday)     ? Math.max(0, value) : 0,
           monthSales:        (type === "sales"    && isThisMonth) ? Math.max(0, value) : 0,
           monthExpenses:     (type === "expenses" && isThisMonth) ? Math.max(0, value) : 0,
+          yearSales:         (type === "sales"    && isThisYear)  ? Math.max(0, value) : 0,
+          yearExpenses:      (type === "expenses" && isThisYear)  ? Math.max(0, value) : 0,
           lastUpdated:       serverTimestamp(),
         });
       } else {
-        const data         = snap.data();
-        const curSales     = Number(data.totalSales    ?? 0);
-        const curExpenses  = Number(data.totalExpenses ?? 0);
+        const data = snap.data();
 
-        const newSales     = type === "sales"    ? curSales    + value : curSales;
-        const newExpenses  = type === "expenses" ? curExpenses + value : curExpenses;
-        const newProfit    = newSales - newExpenses;
-        const newMargin    = newSales > 0
+        const curSales        = Number(data.totalSales        ?? 0);
+        const curExpenses     = Number(data.totalExpenses     ?? 0);
+        const curToday        = Number(data.todaySales        ?? 0);
+        const curTodayExp     = Number(data.todayExpenses     ?? 0);
+        const curMonth        = Number(data.monthSales        ?? 0);
+        const curMonthExp     = Number(data.monthExpenses     ?? 0);
+        const curYear         = Number(data.yearSales         ?? 0);
+        const curYearExp      = Number(data.yearExpenses      ?? 0);
+        const curTransactions = Number(data.totalTransactions ?? 0);
+
+        const newSales    = type === "sales"    ? Math.max(0, curSales    + value) : curSales;
+        const newExpenses = type === "expenses" ? Math.max(0, curExpenses + value) : curExpenses;
+        const newProfit   = newSales - newExpenses;
+        const newMargin   = newSales > 0
           ? Math.round((newProfit / newSales) * 10000) / 100
           : 0;
 
         const updates: Record<string, unknown> = {
-          netProfit:    newProfit,
-          profitMargin: newMargin,
-          lastUpdated:  serverTimestamp(),
+          totalSales:        newSales,
+          totalExpenses:     newExpenses,
+          netProfit:         newProfit,
+          profitMargin:      newMargin,
+          totalTransactions: Math.max(0, curTransactions + safeCountDelta),
+          lastUpdated:       serverTimestamp(),
         };
 
         if (type === "sales") {
-          updates.totalSales  = increment(value);
-          // ✅ Only touch todaySales/monthSales if the entry's own
-          //    date is actually today/this month — this is the fix
-          //    for the back-dated edit/delete corruption bug.
-          if (isToday)     updates.todaySales = increment(value);
-          if (isThisMonth) updates.monthSales  = increment(value);
-          if (operation === "add") updates.totalTransactions = increment(1);
+          if (isToday)     updates.todaySales = Math.max(0, curToday + value);
+          if (isThisMonth) updates.monthSales  = Math.max(0, curMonth + value);
+          if (isThisYear)  updates.yearSales   = Math.max(0, curYear + value);
         } else {
-          updates.totalExpenses = increment(value);
-          if (isToday)     updates.todayExpenses = increment(value);
-          if (isThisMonth) updates.monthExpenses  = increment(value);
+          if (isToday)     updates.todayExpenses = Math.max(0, curTodayExp + value);
+          if (isThisMonth) updates.monthExpenses  = Math.max(0, curMonthExp + value);
+          if (isThisYear)  updates.yearExpenses   = Math.max(0, curYearExp + value);
         }
         tx.update(mainRef, updates);
       }
 
-      // ✅ Day/month sub-documents are always keyed by the entry's
-      //    OWN date/month — never "today"/"this month".
+      // ✅ Day/month sub-documents — computed + clamped (Math.max 0),
+      //    not a blind increment() — matches main doc's protection.
       tx.set(dayRef, {
         date,
-        [type === "sales" ? "sales" : "expenses"]: increment(value),
+        [fieldKey]: newDayValue,
         lastUpdated: serverTimestamp(),
       }, { merge: true });
 
       tx.set(monRef, {
         month,
-        [type === "sales" ? "sales" : "expenses"]: increment(value),
+        [fieldKey]: newMonValue,
         lastUpdated: serverTimestamp(),
       }, { merge: true });
     });
@@ -233,7 +266,18 @@ export async function updateDashboardStats(
   }
 }
 
-// ── Subscribe to stats ────────────────────────
+// ── Subscribe to stats — LIVE, date-aware derivation.
+//    todaySales/todayExpenses, monthSales/monthExpenses, and
+//    yearSales/yearExpenses are NEVER trusted directly from the
+//    main aggregate doc (which only updates when a transaction
+//    happens, and can go stale the moment the actual day/month/
+//    year rolls over with zero new transactions yet). Instead:
+//    - today  → read live from today's own daily sub-doc
+//    - month  → read live from this month's own monthly sub-doc
+//    - year   → summed live across every monthly sub-doc this year
+//    If the relevant sub-doc(s) don't exist yet (no entries this
+//    period), the value correctly shows 0 — never a stale prior
+//    period's number. ──
 export function subscribeDashboardStats(
   restaurantId: string,
   callback:     (stats: DashboardStats) => void,
@@ -244,41 +288,116 @@ export function subscribeDashboardStats(
     return () => {};
   }
 
-  return onSnapshot(
+  const today = todayISO();
+  const month = currentMonthStr();
+  const year  = currentYearStr();
+
+  let mainData = {
+    totalSales:        DEFAULT_STATS.totalSales,
+    totalExpenses:     DEFAULT_STATS.totalExpenses,
+    netProfit:         DEFAULT_STATS.netProfit,
+    totalTransactions: DEFAULT_STATS.totalTransactions,
+    labourCostPct:     DEFAULT_STATS.labourCostPct,
+    inventoryValue:    DEFAULT_STATS.inventoryValue,
+    employeesPresent:  DEFAULT_STATS.employeesPresent,
+    employeesTotal:    DEFAULT_STATS.employeesTotal,
+    profitMargin:      DEFAULT_STATS.profitMargin,
+    lastUpdated:       DEFAULT_STATS.lastUpdated,
+  };
+
+  let todaySales = 0, todayExpenses = 0;
+  let monthSales = 0, monthExpenses = 0;
+  let yearSales  = 0, yearExpenses  = 0;
+
+  const emit = () => {
+    callback({
+      ...mainData,
+      todaySales,
+      todayExpenses,
+      monthSales,
+      monthExpenses,
+      yearSales,
+      yearExpenses,
+    });
+  };
+
+  // ── Main doc — all-time totals + non-date-sensitive fields ──
+  const unsubMain = onSnapshot(
     statsRef(restaurantId),
     (snap) => {
-      if (!snap.exists()) {
-        callback(DEFAULT_STATS);
-        return;
-      }
-      const data = snap.data();
-      callback({
+      const data = snap.exists() ? snap.data() : {};
+      mainData = {
         totalSales:        Number(data.totalSales        ?? 0),
         totalExpenses:     Number(data.totalExpenses     ?? 0),
         netProfit:         Number(data.netProfit         ?? 0),
         totalTransactions: Number(data.totalTransactions ?? 0),
-        todaySales:        Number(data.todaySales        ?? 0),
-        todayExpenses:     Number(data.todayExpenses     ?? 0),
         labourCostPct:     Number(data.labourCostPct     ?? 0),
         inventoryValue:    Number(data.inventoryValue    ?? 0),
         employeesPresent:  Number(data.employeesPresent  ?? 0),
         employeesTotal:    Number(data.employeesTotal    ?? 0),
         profitMargin:      Number(data.profitMargin      ?? 0),
-        monthSales:        Number(data.monthSales        ?? 0),
-        monthExpenses:     Number(data.monthExpenses     ?? 0),
         lastUpdated:       (data.lastUpdated as Timestamp) ?? null,
-      });
+      };
+      emit();
     },
     (err) => onError?.(err)
   );
+
+  // ── Today's daily sub-doc — live, correctly 0 if no entries today ──
+  const unsubDay = onSnapshot(
+    dailyStatsRef(restaurantId, today),
+    (snap) => {
+      const data = snap.exists() ? snap.data() : {};
+      todaySales    = Number(data.sales    ?? 0);
+      todayExpenses = Number(data.expenses ?? 0);
+      emit();
+    },
+    () => { /* doc doesn't exist yet — todaySales/Expenses stay 0 */ }
+  );
+
+  // ── This month's monthly sub-doc — live, correctly 0 if no
+  //    entries this month ──
+  const unsubMonth = onSnapshot(
+    monthlyStatsRef(restaurantId, month),
+    (snap) => {
+      const data = snap.exists() ? snap.data() : {};
+      monthSales    = Number(data.sales    ?? 0);
+      monthExpenses = Number(data.expenses ?? 0);
+      emit();
+    },
+    () => { /* doc doesn't exist yet — monthSales/Expenses stay 0 */ }
+  );
+
+  // ── This year's total — summed live across every monthly sub-doc
+  //    for the current year. Correctly 0 on Jan 1 before any entry. ──
+  const unsubYear = onSnapshot(
+    collection(db, COL.STATS, restaurantId, SCOL.YEARLY, year, SCOL.MONTHLY),
+    (snap) => {
+      let sSum = 0, eSum = 0;
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        sSum += Number(data.sales    ?? 0);
+        eSum += Number(data.expenses ?? 0);
+      });
+      yearSales    = sSum;
+      yearExpenses = eSum;
+      emit();
+    },
+    () => { /* no monthly docs yet this year — yearSales/Expenses stay 0 */ }
+  );
+
+  return () => {
+    unsubMain();
+    unsubDay();
+    unsubMonth();
+    unsubYear();
+  };
 }
 
 // ── ✅ Aggregate-based rebuild (kept for backward compatibility) —
 //    NOTE: this only re-sums the EXISTING monthly/daily sub-documents.
-//    If those sub-documents are themselves corrupted (e.g. from the
-//    date-bucketing bug this file just fixed), this will faithfully
-//    reproduce that same corruption. Prefer
-//    recomputeDashboardStatsFromSource() below for a true repair. ──
+//    Prefer recomputeDashboardStatsFromSource() below for a true
+//    repair. ──
 export async function rebuildDashboardStats(
   restaurantId: string
 ): Promise<void> {
@@ -330,6 +449,8 @@ export async function rebuildDashboardStats(
       todayExpenses,
       monthSales,
       monthExpenses,
+      yearSales:        Number(existingData.yearSales        ?? 0),
+      yearExpenses:     Number(existingData.yearExpenses     ?? 0),
       labourCostPct:    Number(existingData.labourCostPct    ?? 0),
       inventoryValue:   Number(existingData.inventoryValue   ?? 0),
       employeesPresent: Number(existingData.employeesPresent ?? 0),
@@ -342,13 +463,9 @@ export async function rebuildDashboardStats(
 }
 
 // ── ✅ TRUE source-of-truth repair — recomputes the main aggregate
-//    doc AND every daily/monthly sub-document by scanning the actual
-//    sales and expenses collections directly (never trusting any
-//    pre-existing aggregate/sub-document, since those may already be
-//    corrupted by the date-bucketing bug this file just fixed).
-//    Intended as a one-time repair after upgrading to the fixed
-//    updateDashboardStats() — safe to re-run any time if stats are
-//    ever suspected to have drifted again. ──
+//    doc (including yearSales/yearExpenses) AND every daily/monthly
+//    sub-document by scanning the actual sales/expenses collections
+//    directly. ──
 export async function recomputeDashboardStatsFromSource(
   restaurantId: string
 ): Promise<void> {
@@ -356,6 +473,7 @@ export async function recomputeDashboardStatsFromSource(
 
   const today = todayISO();
   const month = currentMonthStr();
+  const year  = currentYearStr();
 
   const [salesSnap, expensesSnap] = await Promise.all([
     getDocs(collection(db, COL.RESTAURANTS, restaurantId, RCOL.SALES)),
@@ -365,6 +483,7 @@ export async function recomputeDashboardStatsFromSource(
   let totalSales = 0, totalExpenses = 0;
   let todaySales = 0, todayExpenses = 0;
   let monthSales = 0, monthExpenses = 0;
+  let yearSales  = 0, yearExpenses  = 0;
   let totalTransactions = 0;
 
   const dailySales    = new Map<string, number>();
@@ -383,7 +502,9 @@ export async function recomputeDashboardStatsFromSource(
     if (date === today) todaySales += amount;
 
     const mo = date.slice(0, 7);
+    const yr = date.slice(0, 4);
     if (mo === month) monthSales += amount;
+    if (yr === year)  yearSales  += amount;
 
     dailySales.set(date, (dailySales.get(date) ?? 0) + amount);
     monthlySales.set(mo, (monthlySales.get(mo) ?? 0) + amount);
@@ -399,7 +520,9 @@ export async function recomputeDashboardStatsFromSource(
     if (date === today) todayExpenses += amount;
 
     const mo = date.slice(0, 7);
+    const yr = date.slice(0, 4);
     if (mo === month) monthExpenses += amount;
+    if (yr === year)  yearExpenses  += amount;
 
     dailyExpenses.set(date, (dailyExpenses.get(date) ?? 0) + amount);
     monthlyExpenses.set(mo, (monthlyExpenses.get(mo) ?? 0) + amount);
@@ -423,6 +546,8 @@ export async function recomputeDashboardStatsFromSource(
     todayExpenses,
     monthSales,
     monthExpenses,
+    yearSales,
+    yearExpenses,
     labourCostPct:    Number(existingData.labourCostPct    ?? 0),
     inventoryValue:   Number(existingData.inventoryValue   ?? 0),
     employeesPresent: Number(existingData.employeesPresent ?? 0),
@@ -430,9 +555,8 @@ export async function recomputeDashboardStatsFromSource(
     lastUpdated:      serverTimestamp(),
   });
 
-  // ── Repair every daily/monthly sub-document too, so future
-  //    incremental updates build on correct baselines. Full
-  //    overwrite (not merge) — these values ARE the corrected truth. ──
+  // ── Repair every daily/monthly sub-document too. Full overwrite
+  //    (not merge) — these values ARE the corrected truth. ──
   const allDates = new Set<string>([...dailySales.keys(), ...dailyExpenses.keys()]);
   await Promise.all(
     Array.from(allDates).map((date) =>

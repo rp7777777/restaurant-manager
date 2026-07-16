@@ -69,6 +69,9 @@ const en: Translation = {
   recentActivities:      "Recent Activities",
   viewAll:               "View All",
   quickActions:          "Quick Actions",
+  today:                 "Today",
+  year:                  "Year",
+  late:                  "Late",
 
   // ── KPI ──────────────────────────────────
   totalSales:         "Total Sales",
@@ -82,6 +85,7 @@ const en: Translation = {
   staffPresent:       "Staff Present",
   absent:             "absent",
   allPresent:         "All present",
+  
 
   // ── Monthly Summary ───────────────────────
   monthlySummary:     "Monthly Summary",

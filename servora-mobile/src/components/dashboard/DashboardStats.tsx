@@ -1,22 +1,29 @@
 // ============================================
 // SERVORA ERP — DashboardStats
-// ✅ 6 KPI stat cards
-// ✅ Labour Cost % — color threshold
-// ✅ Staff Present card
+// ✅ Multi-row KPI cards — Today/Month/Year breakdown
+//    for Sales, Expenses, Net Profit
+// ✅ Net Profit computed client-side per period
+//    (todaySales-todayExpenses, etc.) — no backend change needed
+// ✅ Clickable cards — navigate to relevant detail screens
+// ✅ Staff card — Present/Absent/Late breakdown
+// ✅ Labour Cost % — deferred (still N/A placeholder),
+//    pending Payroll module audit for real cost calculation
 // ✅ Theme compatible
 // ✅ React.memo
 // ✅ TypeScript typed props
 // ✅ useWindowDimensions — orientation safe
-// ✅ today — direct calculation, no midnight bug
-// ✅ t() — i18n compatible
+// ✅ t() — i18n compatible (today/year/late keys added to en.ts,
+//    other languages fall back to English automatically until
+//    translated)
 // FROZEN
 // ============================================
 
 import React, { memo } from "react";
 import {
   View, Text, StyleSheet,
-  Platform, useWindowDimensions,
+  Platform, useWindowDimensions, TouchableOpacity,
 } from "react-native";
+import { useRouter } from "expo-router";
 import { LinearGradient }              from "expo-linear-gradient";
 import { MaterialIcons }               from "@expo/vector-icons";
 import { useApp }                      from "../../context/AppContext";
@@ -32,38 +39,88 @@ interface DashboardStatsProps {
   attendance: AttendanceSummary;
 }
 
-// ── Stat Card ─────────────────────────────────
-interface StatCardProps {
+// ── Multi-Row Stat Card — Today/Month/Year breakdown ──
+interface MultiRowStatCardProps {
+  title:          string;
+  icon:           keyof typeof MaterialIcons.glyphMap;
+  gradientColors: readonly [string, string];
+  rows:           { label: string; value: string }[];
+  cardWidth:      number;
+  onPress?:       () => void;
+}
+
+const MultiRowStatCard = memo(function MultiRowStatCard({
+  title, icon, gradientColors, rows, cardWidth, onPress,
+}: MultiRowStatCardProps) {
+  const CardWrapper = onPress ? TouchableOpacity : View;
+  return (
+    <CardWrapper
+      {...(onPress ? { onPress, activeOpacity: 0.85 } : {})}
+      style={[styles.cardTouchable, { minWidth: cardWidth }]}
+    >
+      <LinearGradient colors={gradientColors} style={styles.card}>
+        <View style={styles.cardTop}>
+          <MaterialIcons name={icon} size={22} color="rgba(255,255,255,0.9)" />
+          <Text style={styles.cardTitle}>{title}</Text>
+          {onPress && (
+            <MaterialIcons
+              name="chevron-right"
+              size={18}
+              color="rgba(255,255,255,0.6)"
+              style={styles.chevron}
+            />
+          )}
+        </View>
+
+        <View style={styles.rowsContainer}>
+          {rows.map((row) => (
+            <View key={row.label} style={styles.statRow}>
+              <Text style={styles.rowLabel}>{row.label}</Text>
+              <Text style={styles.rowValue}>{row.value}</Text>
+            </View>
+          ))}
+        </View>
+      </LinearGradient>
+    </CardWrapper>
+  );
+});
+
+// ── Simple Single-Value Stat Card (Labour Cost, Staff) ──
+interface SimpleStatCardProps {
   title:          string;
   value:          string;
   icon:           keyof typeof MaterialIcons.glyphMap;
   gradientColors: readonly [string, string];
   sub?:           string;
-  change?:        string;
   cardWidth:      number;
+  onPress?:       () => void;
 }
 
-const StatCard = memo(function StatCard({
-  title, value, icon, gradientColors, sub, change, cardWidth,
-}: StatCardProps) {
+const SimpleStatCard = memo(function SimpleStatCard({
+  title, value, icon, gradientColors, sub, cardWidth, onPress,
+}: SimpleStatCardProps) {
+  const CardWrapper = onPress ? TouchableOpacity : View;
   return (
-    <LinearGradient
-      colors={gradientColors}
-      style={[styles.card, { minWidth: cardWidth }]}
+    <CardWrapper
+      {...(onPress ? { onPress, activeOpacity: 0.85 } : {})}
+      style={[styles.cardTouchable, { minWidth: cardWidth }]}
     >
-      <View style={styles.cardTop}>
-        <MaterialIcons name={icon} size={24} color="rgba(255,255,255,0.9)" />
-        {change && (
-          <View style={styles.badge}>
-            <MaterialIcons name="trending-up" size={10} color="#fff" />
-            <Text style={styles.badgeText}>{change}</Text>
-          </View>
-        )}
-      </View>
-      <Text style={styles.cardTitle}>{title}</Text>
-      <Text style={styles.cardValue}>{value}</Text>
-      {sub && <Text style={styles.cardSub}>{sub}</Text>}
-    </LinearGradient>
+      <LinearGradient colors={gradientColors} style={styles.card}>
+        <View style={styles.cardTop}>
+          <MaterialIcons name={icon} size={24} color="rgba(255,255,255,0.9)" />
+          {onPress && (
+            <MaterialIcons
+              name="chevron-right"
+              size={18}
+              color="rgba(255,255,255,0.6)"
+            />
+          )}
+        </View>
+        <Text style={styles.cardTitle}>{title}</Text>
+        <Text style={styles.cardValue}>{value}</Text>
+        {sub && <Text style={styles.cardSub}>{sub}</Text>}
+      </LinearGradient>
+    </CardWrapper>
   );
 });
 
@@ -78,56 +135,65 @@ function labourGradient(
 
 // ── Main Component ────────────────────────────
 function DashboardStats({ stats, attendance }: DashboardStatsProps) {
-  // ✅ t() — i18n compatible
   const { fmt, t } = useApp();
+  const router = useRouter();
 
-  // ✅ Direct calculation — no midnight bug
-  const today = new Date().toLocaleDateString("en-GB", {
-    day: "numeric", month: "short",
-  });
-
-  // ✅ useWindowDimensions — orientation safe
   const { width }  = useWindowDimensions();
-  const cardWidth  = isWeb ? 160 : (width - 52) / 2;
-  const profitable = stats.netProfit >= 0;
+  const cardWidth  = isWeb ? 210 : (width - 52) / 2;
+
+  // ── Net Profit computed per period (no backend field for this —
+  //    derived client-side from the already-available today/month/
+  //    year sales & expenses). ──
+  const todayProfit = stats.todaySales - stats.todayExpenses;
+  const monthProfit = stats.monthSales - stats.monthExpenses;
+  const yearProfit  = stats.yearSales  - stats.yearExpenses;
 
   return (
     <View style={styles.row}>
-      <StatCard
-        title={t("totalSales")}
-        value={fmt(stats.totalSales)}
+      <MultiRowStatCard
+        title={t("sales")}
         icon="point-of-sale"
         gradientColors={["#059669", "#10b981"]}
-        change={t("thisYear")}
         cardWidth={cardWidth}
+        onPress={() => router.push("/sales-list" as any)}
+        rows={[
+          { label: t("today"), value: fmt(stats.todaySales) },
+          { label: t("month"), value: fmt(stats.monthSales) },
+          { label: t("year"),  value: fmt(stats.yearSales)  },
+        ]}
       />
-      <StatCard
-        title={t("totalExpenses")}
-        value={fmt(stats.totalExpenses)}
+
+      <MultiRowStatCard
+        title={t("expenses")}
         icon="receipt"
         gradientColors={["#dc2626", "#ef4444"]}
         cardWidth={cardWidth}
+        onPress={() => router.push("/expense-history" as any)}
+        rows={[
+          { label: t("today"), value: fmt(stats.todayExpenses) },
+          { label: t("month"), value: fmt(stats.monthExpenses) },
+          { label: t("year"),  value: fmt(stats.yearExpenses)  },
+        ]}
       />
-      <StatCard
+
+      <MultiRowStatCard
         title={t("netProfit")}
-        value={fmt(stats.netProfit)}
         icon="trending-up"
         gradientColors={
-          profitable
+          yearProfit >= 0
             ? ["#0369a1", "#0ea5e9"]
             : ["#9f1239", "#e11d48"]
         }
         cardWidth={cardWidth}
+        onPress={() => router.push("/profit-loss" as any)}
+        rows={[
+          { label: t("today"), value: fmt(todayProfit) },
+          { label: t("month"), value: fmt(monthProfit) },
+          { label: t("year"),  value: fmt(yearProfit)  },
+        ]}
       />
-      <StatCard
-        title={t("todaySales")}
-        value={fmt(stats.todaySales)}
-        icon="today"
-        gradientColors={["#d97706", "#f59e0b"]}
-        sub={today}
-        cardWidth={cardWidth}
-      />
-      <StatCard
+
+      <SimpleStatCard
         title={t("labourCostPct")}
         value={
           stats.labourCostPct > 0
@@ -139,17 +205,22 @@ function DashboardStats({ stats, attendance }: DashboardStatsProps) {
         sub={t("ofTotalSales")}
         cardWidth={cardWidth}
       />
-      <StatCard
+
+      <SimpleStatCard
         title={t("staffPresent")}
         value={`${attendance.present} / ${attendance.total}`}
         icon="people"
         gradientColors={["#1d4ed8", "#3b82f6"]}
         sub={
-          attendance.absent > 0
-            ? `${attendance.absent} ${t("absent")}`
+          attendance.absent > 0 || attendance.late > 0
+            ? [
+                attendance.absent > 0 ? `${attendance.absent} ${t("absent")}` : null,
+                attendance.late   > 0 ? `${attendance.late} ${t("late")}`     : null,
+              ].filter(Boolean).join(" · ")
             : t("allPresent")
         }
         cardWidth={cardWidth}
+        onPress={() => router.push("/attendance-module" as any)}
       />
     </View>
   );
@@ -163,17 +234,18 @@ const styles = StyleSheet.create({
     gap:           10,
     marginBottom:  14,
   },
+  cardTouchable: { flex: 1 },
   card: {
-    flex:         1,
     borderRadius: 16,
     padding:      14,
-    gap:           4,
+    gap:          6,
   },
   cardTop: {
     flexDirection:  "row",
-    justifyContent: "space-between",
     alignItems:     "center",
+    gap:            8,
   },
+  chevron: { marginLeft: "auto" },
   badge: {
     flexDirection:     "row",
     alignItems:        "center",
@@ -184,9 +256,20 @@ const styles = StyleSheet.create({
     borderRadius:      8,
   },
   badgeText: { color: "#fff", fontSize: 9,  fontWeight: "600" },
-  cardTitle: { color: "rgba(255,255,255,0.8)", fontSize: 11, fontWeight: "600", marginTop: 6 },
+  cardTitle: {
+    color: "rgba(255,255,255,0.85)", fontSize: 11,
+    fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5,
+  },
   cardValue: { color: "#fff", fontSize: isWeb ? 20 : 16, fontWeight: "900" },
   cardSub:   { color: "rgba(255,255,255,0.6)", fontSize: 10 },
+  rowsContainer: { gap: 4, marginTop: 2 },
+  statRow: {
+    flexDirection:  "row",
+    justifyContent: "space-between",
+    alignItems:     "center",
+  },
+  rowLabel: { color: "rgba(255,255,255,0.7)", fontSize: 11, fontWeight: "600" },
+  rowValue: { color: "#fff", fontSize: 13, fontWeight: "800" },
 });
 
 export default memo(DashboardStats);

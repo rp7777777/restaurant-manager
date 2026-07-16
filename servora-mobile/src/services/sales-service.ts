@@ -17,6 +17,9 @@
 //       (single POS terminal per shift in practice). A
 //       fully atomic fix would require a separate per-shift
 //       counter document tracked via transaction.get/.set.
+// ✅ updateDashboardStats() calls now pass transactionCountDelta:
+//    +1 on create, -1 on delete, 0 on edit (default) — fixes the
+//    bug where edits also incorrectly incremented totalTransactions.
 // FROZEN
 // ============================================
 
@@ -100,7 +103,8 @@ export async function createSale(
     transaction.set(newRef, data);
   });
 
-  await updateDashboardStats(restaurantId, "sales", input.amount, "add", input.date);
+  // ✅ transactionCountDelta = 1 (new sale created)
+  await updateDashboardStats(restaurantId, "sales", input.amount, "add", input.date, 1);
 
   await logCreate("SALES", newRef.id, {
     date: input.date,
@@ -141,10 +145,11 @@ export async function updateSale(
     transaction.update(ref, cleanUpdates);
   });
 
- if (updates.amount !== undefined && oldSale.amount !== undefined) {
+  if (updates.amount !== undefined && oldSale.amount !== undefined) {
     const diff = updates.amount - oldSale.amount;
     if (diff !== 0) {
-      await updateDashboardStats(restaurantId, "sales", diff, "add", oldSale.date);
+      // ✅ transactionCountDelta = 0 (edit — count doesn't change)
+      await updateDashboardStats(restaurantId, "sales", diff, "add", oldSale.date, 0);
     }
   }
 
@@ -177,7 +182,8 @@ export async function deleteSale(
     transaction.delete(ref);
   });
 
- await updateDashboardStats(restaurantId, "sales", saleData.amount, "subtract", saleData.date);
+  // ✅ transactionCountDelta = -1 (sale deleted)
+  await updateDashboardStats(restaurantId, "sales", saleData.amount, "subtract", saleData.date, -1);
 
   await logDelete("SALES", saleId, saleData as unknown as Record<string, unknown>);
 }
