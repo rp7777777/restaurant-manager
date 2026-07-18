@@ -2,6 +2,8 @@
 // SERVORA ERP — Firestore Collection Constants
 // ✅ All collection names in one place
 // ✅ No magic strings anywhere
+// ✅ KITCHEN_REQUESTS/PURCHASE_ORDERS/SUPPLIERS/STOCK_MOVEMENTS
+//    added for the Store Module rebuild
 // FROZEN
 // ============================================
 
@@ -23,6 +25,10 @@ export const RCOL = {
   SCHEDULES:           "schedules",
   INVENTORY:           "inventory",
   KITCHEN:             "kitchen",
+  KITCHEN_REQUESTS:    "kitchenRequests",
+  PURCHASE_ORDERS:     "purchaseOrders",
+  SUPPLIERS:           "suppliers",
+  STOCK_MOVEMENTS:     "stockMovements",
   STORE:               "store",
   ACTIVITY_LOGS:       "activityLogs",
   HACCP:               "haccp",
