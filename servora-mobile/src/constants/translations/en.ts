@@ -72,6 +72,9 @@ const en: Translation = {
   today:                 "Today",
   year:                  "Year",
   late:                  "Late",
+  availableAfterPayroll: "Available after Payroll setup",
+  noSales:                "No Sales",
+  noExpenseData:          "No Expense",
 
   // ── KPI ──────────────────────────────────
   totalSales:         "Total Sales",

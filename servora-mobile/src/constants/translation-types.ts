@@ -85,7 +85,9 @@ export interface TranslationKeys {
   today:                string;
   year:                 string;
   late:                 string;
-
+  availableAfterPayroll: string;
+  noSales:                string;
+  noExpenseData:          string;
   // ── Auth ─────────────────────────────────
   login:              string;
   logout:             string;

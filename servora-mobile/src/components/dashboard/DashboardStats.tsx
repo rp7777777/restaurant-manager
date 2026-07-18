@@ -1,19 +1,15 @@
 // ============================================
 // SERVORA ERP — DashboardStats
 // ✅ Multi-row KPI cards — Today/Month/Year breakdown
-//    for Sales, Expenses, Net Profit
-// ✅ Net Profit computed client-side per period
-// ✅ Trend % badges — vs yesterday/last month/last year
-// ✅ Net Profit — static gradient + per-row red highlight + Margin
-// ✅ Today row visually emphasized (darker box)
-// ✅ Staff card redesigned — Present/Absent/Late + %
-// ✅ Labour Cost % — "Coming Soon" placeholder
-// ✅ Row-level onPress — Net Profit's Today/Month rows scroll to
-//    (and auto-expand) the DailyDetailsPanel/MonthlySummaryTable
-//    sections on the SAME dashboard page (via callbacks passed down
-//    from dashboard.tsx, which owns the scroll refs). Sales/
-//    Expenses cards keep their whole-card onPress navigating to
-//    /sales-list and /expense-history respectively.
+// ✅ calcTrend() — current=0 shows a card-specific "zero" label
+//    ("No Sales" for Sales, "No Expense" for Expenses) instead of a
+//    generic "NO DATA" or a confusing "↓100%"
+// ✅ Staff card — progress bar color now dynamic by percentage
+//    (red <40%, amber 40-70%, green 70%+) instead of always green
+// ✅ Labour Cost sub-text now via t("availableAfterPayroll")
+// ✅ Year row clickable (structure stays open for a future
+//    "vs Last Year" diff once 2025+ comparison data exists — just
+//    swap { type: "new" } for a real calcAbsDiff() call then)
 // ✅ Theme compatible, React.memo, TypeScript typed, responsive
 // FROZEN
 // ============================================
@@ -38,10 +34,11 @@ interface DashboardStatsProps {
   attendance:          AttendanceSummary;
   onProfitTodayPress?: () => void;
   onProfitMonthPress?: () => void;
+  onProfitYearPress?:  () => void;
 }
 
-// ── Trend calculation ─────────────────────────
-type TrendType = "up" | "down" | "flat" | "new" | "none";
+// ── % Trend calculation (Sales/Expenses) ──────
+type TrendType = "up" | "down" | "flat" | "new" | "zero" | "none";
 
 interface Trend {
   type: TrendType;
@@ -49,7 +46,8 @@ interface Trend {
 }
 
 function calcTrend(current: number, previous: number): Trend {
-  if (previous === 0 && current === 0) return { type: "none" };
+  if (current === 0 && previous === 0) return { type: "none" };
+  if (current === 0) return { type: "zero" };
   if (previous === 0) return { type: "new" };
   const diff = current - previous;
   if (diff === 0) return { type: "flat" };
@@ -57,11 +55,20 @@ function calcTrend(current: number, previous: number): Trend {
   return { type: diff > 0 ? "up" : "down", pct };
 }
 
+// ── ✅ zeroLabel is now card-specific ("No Sales" / "No Expense"),
+//    not a generic "NO DATA" ──
 const TrendBadge = memo(function TrendBadge({
-  trend, invert,
-}: { trend: Trend; invert?: boolean }) {
+  trend, invert, zeroLabel,
+}: { trend: Trend; invert?: boolean; zeroLabel: string }) {
   if (trend.type === "none") return null;
 
+  if (trend.type === "zero") {
+    return (
+      <View style={[styles.trendBadge, styles.trendBadgeNeutral]}>
+        <Text style={styles.trendBadgeText}>{zeroLabel.toUpperCase()}</Text>
+      </View>
+    );
+  }
   if (trend.type === "new") {
     return (
       <View style={[styles.trendBadge, styles.trendBadgeNeutral]}>
@@ -94,14 +101,68 @@ const TrendBadge = memo(function TrendBadge({
   );
 });
 
+// ── € Absolute Diff calculation (Net Profit only) ──
+type DiffType = "up" | "down" | "flat" | "new" | "none";
+
+interface AbsDiff {
+  type: DiffType;
+  amount?: number;
+}
+
+function calcAbsDiff(current: number, previous: number, hasBaseline: boolean): AbsDiff {
+  if (!hasBaseline) return { type: "new" };
+  const diff = current - previous;
+  if (diff === 0) return { type: "flat" };
+  return { type: diff > 0 ? "up" : "down", amount: Math.abs(diff) };
+}
+
+const DiffBadge = memo(function DiffBadge({
+  diff, label, fmt,
+}: { diff: AbsDiff; label: string; fmt: (n: number) => string }) {
+  if (diff.type === "none") return null;
+
+  if (diff.type === "new") {
+    return (
+      <View style={[styles.diffBadge, styles.trendBadgeNeutral]}>
+        <Text style={styles.trendBadgeText}>NEW</Text>
+      </View>
+    );
+  }
+  if (diff.type === "flat") {
+    return (
+      <View style={[styles.diffBadge, styles.trendBadgeNeutral]}>
+        <Text style={styles.diffBadgeText}>No change {label}</Text>
+      </View>
+    );
+  }
+
+  const isGood = diff.type === "up";
+  const arrow  = diff.type === "up" ? "▲" : "▼";
+
+  return (
+    <View
+      style={[
+        styles.diffBadge,
+        isGood ? styles.trendBadgeGood : styles.trendBadgeBad,
+      ]}
+    >
+      <Text style={styles.diffBadgeText}>
+        {arrow} {fmt(diff.amount!)} {label}
+      </Text>
+    </View>
+  );
+});
+
 // ── Multi-Row Stat Card — Today/Month/Year breakdown ──
 interface StatCardRow {
-  label:       string;
-  value:       string;
-  isNegative?: boolean;
-  trend?:      Trend;
-  emphasized?: boolean;
-  onPress?:    () => void;
+  label:        string;
+  value:        string;
+  isNegative?:  boolean;
+  trend?:       Trend;
+  diff?:        AbsDiff;
+  diffLabel?:   string;
+  emphasized?:  boolean;
+  onPress?:     () => void;
 }
 
 interface MultiRowStatCardProps {
@@ -113,12 +174,14 @@ interface MultiRowStatCardProps {
   footerValue?:   string;
   cardWidth:      number;
   invertTrend?:   boolean;
+  zeroLabel:      string;
   onPress?:       () => void;
+  fmt:            (n: number) => string;
 }
 
 const MultiRowStatCard = memo(function MultiRowStatCard({
   title, icon, gradientColors, rows, footerLabel, footerValue,
-  cardWidth, invertTrend, onPress,
+  cardWidth, invertTrend, zeroLabel, onPress, fmt,
 }: MultiRowStatCardProps) {
   const CardWrapper = onPress ? TouchableOpacity : View;
   return (
@@ -150,37 +213,45 @@ const MultiRowStatCard = memo(function MultiRowStatCard({
                 style={[
                   styles.statRowBox,
                   row.emphasized && styles.statRowBoxEmphasized,
+                  (row.diff && row.diff.type !== "none") && styles.statRowBoxTall,
                 ]}
               >
-                <Text
-                  style={[
-                    styles.rowLabel,
-                    row.emphasized && styles.rowLabelEmphasized,
-                  ]}
-                >
-                  {row.label}
-                </Text>
-                <View style={styles.rowRight}>
+                <View style={styles.rowTopLine}>
                   <Text
                     style={[
-                      styles.rowValue,
-                      row.emphasized && styles.rowValueEmphasized,
-                      row.isNegative && styles.rowValueNegative,
+                      styles.rowLabel,
+                      row.emphasized && styles.rowLabelEmphasized,
                     ]}
                   >
-                    {row.value}
+                    {row.label}
                   </Text>
-                  {row.trend && (
-                    <TrendBadge trend={row.trend} invert={invertTrend} />
-                  )}
-                  {row.onPress && (
-                    <MaterialIcons
-                      name="chevron-right"
-                      size={14}
-                      color="rgba(255,255,255,0.5)"
-                    />
-                  )}
+                  <View style={styles.rowRight}>
+                    <Text
+                      style={[
+                        styles.rowValue,
+                        row.emphasized && styles.rowValueEmphasized,
+                        row.isNegative && styles.rowValueNegative,
+                      ]}
+                    >
+                      {row.value}
+                    </Text>
+                    {row.trend && (
+                      <TrendBadge trend={row.trend} invert={invertTrend} zeroLabel={zeroLabel} />
+                    )}
+                    {row.onPress && (
+                      <MaterialIcons
+                        name="chevron-right"
+                        size={14}
+                        color="rgba(255,255,255,0.5)"
+                      />
+                    )}
+                  </View>
                 </View>
+                {row.diff && (
+                  <View style={styles.diffRow}>
+                    <DiffBadge diff={row.diff} label={row.diffLabel ?? ""} fmt={fmt} />
+                  </View>
+                )}
               </RowWrapper>
             );
           })}
@@ -197,12 +268,19 @@ const MultiRowStatCard = memo(function MultiRowStatCard({
   );
 });
 
-// ── Staff Card — Present/Absent/Late breakdown + % ──
+// ── Staff Card — Present/Absent/Late breakdown + % + dynamic
+//    progress bar color (red <40%, amber 40-70%, green 70%+) ──
 interface StaffCardProps {
   attendance: AttendanceSummary;
   cardWidth:  number;
   onPress?:   () => void;
   t:          (key: any) => string;
+}
+
+function progressColor(pct: number): string {
+  if (pct < 40) return "#f87171";
+  if (pct < 70) return "#fbbf24";
+  return "#4ade80";
 }
 
 const StaffCard = memo(function StaffCard({
@@ -251,6 +329,15 @@ const StaffCard = memo(function StaffCard({
           </View>
         </View>
 
+        <View style={styles.progressTrack}>
+          <View
+            style={[
+              styles.progressFill,
+              { width: `${pct}%`, backgroundColor: progressColor(pct) },
+            ]}
+          />
+        </View>
+
         <View style={styles.footerRow}>
           <Text style={styles.footerLabel}>
             {attendance.present}/{attendance.total}
@@ -291,7 +378,7 @@ const SimpleStatCard = memo(function SimpleStatCard({
 
 // ── Main Component ────────────────────────────
 function DashboardStats({
-  stats, attendance, onProfitTodayPress, onProfitMonthPress,
+  stats, attendance, onProfitTodayPress, onProfitMonthPress, onProfitYearPress,
 }: DashboardStatsProps) {
   const { fmt, t } = useApp();
   const router = useRouter();
@@ -305,7 +392,9 @@ function DashboardStats({
 
   const yesterdayProfit = stats.yesterdaySales - stats.yesterdayExpenses;
   const lastMonthProfit = stats.lastMonthSales - stats.lastMonthExpenses;
-  const lastYearProfit  = stats.lastYearSales  - stats.lastYearExpenses;
+
+  const hasYesterdayBaseline = stats.yesterdaySales > 0 || stats.yesterdayExpenses > 0;
+  const hasLastMonthBaseline = stats.lastMonthSales > 0 || stats.lastMonthExpenses > 0;
 
   const yearMargin = stats.yearSales > 0
     ? Math.round((yearProfit / stats.yearSales) * 1000) / 10
@@ -318,6 +407,8 @@ function DashboardStats({
         icon="point-of-sale"
         gradientColors={["#059669", "#10b981"]}
         cardWidth={cardWidth}
+        fmt={fmt}
+        zeroLabel={t("noSales")}
         onPress={() => router.push("/sales-list" as any)}
         rows={[
           {
@@ -340,7 +431,9 @@ function DashboardStats({
         icon="receipt"
         gradientColors={["#dc2626", "#ef4444"]}
         cardWidth={cardWidth}
+        fmt={fmt}
         invertTrend
+        zeroLabel={t("noExpenseData")}
         onPress={() => router.push("/expense-history" as any)}
         rows={[
           {
@@ -363,23 +456,31 @@ function DashboardStats({
         icon="trending-up"
         gradientColors={["#0369a1", "#0ea5e9"]}
         cardWidth={cardWidth}
+        fmt={fmt}
+        zeroLabel={t("noSales")}
         rows={[
           {
             label: t("today"), value: fmt(todayProfit),
             isNegative: todayProfit < 0, emphasized: true,
-            trend: calcTrend(todayProfit, yesterdayProfit),
+            diff: calcAbsDiff(todayProfit, yesterdayProfit, hasYesterdayBaseline),
+            diffLabel: "vs Yesterday",
             onPress: onProfitTodayPress,
           },
           {
             label: t("month"), value: fmt(monthProfit),
             isNegative: monthProfit < 0,
-            trend: calcTrend(monthProfit, lastMonthProfit),
+            diff: calcAbsDiff(monthProfit, lastMonthProfit, hasLastMonthBaseline),
+            diffLabel: "vs Last Month",
             onPress: onProfitMonthPress,
           },
           {
+            // ✅ Structure stays open — swap for a real calcAbsDiff()
+            //    once a "last year" comparison actually exists
+            //    (currently always "new" since there's no 2025 data).
             label: t("year"), value: fmt(yearProfit),
             isNegative: yearProfit < 0,
-            trend: calcTrend(yearProfit, lastYearProfit),
+            diff: { type: "new" },
+            onPress: onProfitYearPress,
           },
         ]}
         footerLabel="Margin"
@@ -391,7 +492,7 @@ function DashboardStats({
         value="Coming Soon"
         icon="payments"
         gradientColors={["#6d28d9", "#8b5cf6"]}
-        sub={t("ofTotalSales")}
+        sub={t("availableAfterPayroll")}
         cardWidth={cardWidth}
       />
 
@@ -434,9 +535,6 @@ const styles = StyleSheet.create({
   rowsContainer: { gap: 6, marginTop: 4 },
 
   statRowBox: {
-    flexDirection:     "row",
-    justifyContent:    "space-between",
-    alignItems:        "center",
     backgroundColor:   "rgba(0,0,0,0.12)",
     borderRadius:      8,
     paddingHorizontal: 8,
@@ -444,6 +542,14 @@ const styles = StyleSheet.create({
   },
   statRowBoxEmphasized: {
     backgroundColor: "rgba(0,0,0,0.28)",
+  },
+  statRowBoxTall: {
+    paddingBottom: 8,
+  },
+  rowTopLine: {
+    flexDirection:  "row",
+    justifyContent: "space-between",
+    alignItems:     "center",
   },
   rowLabel:           { color: "rgba(255,255,255,0.75)", fontSize: 11, fontWeight: "600" },
   rowLabelEmphasized: { color: "rgba(255,255,255,0.95)", fontWeight: "800" },
@@ -461,6 +567,27 @@ const styles = StyleSheet.create({
   trendBadgeBad:     { backgroundColor: "rgba(239,68,68,0.35)" },
   trendBadgeNeutral: { backgroundColor: "rgba(255,255,255,0.2)" },
   trendBadgeText:    { color: "#fff", fontSize: 9, fontWeight: "800" },
+
+  diffRow:   { marginTop: 4 },
+  diffBadge: {
+    alignSelf:         "flex-start",
+    borderRadius:      6,
+    paddingHorizontal: 6,
+    paddingVertical:   2,
+  },
+  diffBadgeText: { color: "#fff", fontSize: 10, fontWeight: "700" },
+
+  progressTrack: {
+    height:           6,
+    borderRadius:     3,
+    backgroundColor:  "rgba(0,0,0,0.25)",
+    marginTop:        6,
+    overflow:         "hidden",
+  },
+  progressFill: {
+    height:          "100%",
+    borderRadius:    3,
+  },
 
   footerRow: {
     flexDirection:  "row",
