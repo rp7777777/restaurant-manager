@@ -14,9 +14,10 @@
 // ✅ Recalculate Stats — OWNER-only, with ConfirmModal (cross-
 //    platform, since Alert.alert() silently no-ops on web) before
 //    calling recomputeDashboardStatsFromSource()
-// ✅ Net Profit card's Today/Month rows scroll to (and auto-expand)
-//    the existing DailyDetailsPanel/MonthlySummaryTable sections on
-//    this same page, instead of navigating to a separate screen
+// ✅ Net Profit card's Today/Month/Year rows all scroll to (and
+//    auto-expand where relevant) the existing DailyDetailsPanel/
+//    MonthlySummaryTable sections on this same page, instead of
+//    navigating to a separate screen
 // FROZEN
 // ============================================
 
@@ -232,6 +233,12 @@ export default function DashboardScreen() {
     scrollRef.current?.scrollTo({ y: monthlySummaryY.current, animated: true });
   }, []);
 
+  // ✅ Net Profit "Year" row — scroll to the same MonthlySummaryTable
+  //    section (its top area shows the year total already)
+  const onProfitYearPress = useCallback(() => {
+    scrollRef.current?.scrollTo({ y: monthlySummaryY.current, animated: true });
+  }, []);
+
   // ── Loading ───────────────────────────────
   if (loading) {
     return <LoadingScreen text={t("loadingDashboard")} />;
@@ -264,6 +271,7 @@ export default function DashboardScreen() {
           attendance={attendance}
           onProfitTodayPress={onProfitTodayPress}
           onProfitMonthPress={onProfitMonthPress}
+          onProfitYearPress={onProfitYearPress}
         />
 
         <AlertsPanel
