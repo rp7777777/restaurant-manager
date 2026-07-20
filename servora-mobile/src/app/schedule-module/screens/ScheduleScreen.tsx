@@ -275,9 +275,9 @@ export default function ScheduleScreen() {
           `${copied} employees copied, but attendance sync failed for ${syncFailedCount} day(s). Re-save affected days to retry.`
         );
       } else if (Platform.OS === "web") {
-        window.alert(`✅ ${copied} employees copied!`);
+        window.alert(`✅ ${copied} employees copied! Attendance synced for all copied days.`);
       } else {
-        Alert.alert("✅ Copied!", `${copied} employees copied`);
+        Alert.alert("✅ Copied!", `${copied} employees copied. Attendance synced for all copied days.`);
       }
     } catch (err: any) {
       Alert.alert("Error", err?.message ?? "Failed");
