@@ -2,8 +2,8 @@
 // SERVORA ERP — Firestore Collection Constants
 // ✅ All collection names in one place
 // ✅ No magic strings anywhere
-// ✅ KITCHEN_REQUESTS/PURCHASE_ORDERS/SUPPLIERS/STOCK_MOVEMENTS
-//    added for the Store Module rebuild
+// ✅ INVENTORY_CATEGORIES added for the Store Module rebuild
+//    (separate from EXPENSE_CATEGORIES, which is unrelated)
 // FROZEN
 // ============================================
 
@@ -16,26 +16,27 @@ export const COL = {
 
 // ── Restaurant subcollections ─────────────────
 export const RCOL = {
-  SALES:              "sales",
-  EXPENSES:            "expenses",
-  EXPENSE_CATEGORIES:  "expense-categories",
-  ATTENDANCE:          "attendance",
-  PAYROLL:             "payroll",
-  EMPLOYEES:           "employees",
-  SCHEDULES:           "schedules",
-  INVENTORY:           "inventory",
-  KITCHEN:             "kitchen",
-  KITCHEN_REQUESTS:    "kitchenRequests",
-  PURCHASE_ORDERS:     "purchaseOrders",
-  SUPPLIERS:           "suppliers",
-  STOCK_MOVEMENTS:     "stockMovements",
-  STORE:               "store",
-  ACTIVITY_LOGS:       "activityLogs",
-  HACCP:               "haccp",
-  DOCUMENTS:           "documents",
-  CONTRACTS:           "contracts",
-  LICENSES:            "licenses",
-  CERTIFICATES:        "certificates",
+  SALES:               "sales",
+  EXPENSES:             "expenses",
+  EXPENSE_CATEGORIES:   "expense-categories",
+  ATTENDANCE:           "attendance",
+  PAYROLL:              "payroll",
+  EMPLOYEES:            "employees",
+  SCHEDULES:            "schedules",
+  INVENTORY:            "inventory",
+  INVENTORY_CATEGORIES: "categories",
+  KITCHEN:              "kitchen",
+  KITCHEN_REQUESTS:     "kitchenRequests",
+  PURCHASE_ORDERS:      "purchaseOrders",
+  SUPPLIERS:            "suppliers",
+  STOCK_MOVEMENTS:      "stockMovements",
+  STORE:                "store",
+  ACTIVITY_LOGS:        "activityLogs",
+  HACCP:                "haccp",
+  DOCUMENTS:            "documents",
+  CONTRACTS:            "contracts",
+  LICENSES:             "licenses",
+  CERTIFICATES:         "certificates",
 } as const;
 
 // ── Stats subcollections ──────────────────────
