@@ -70,8 +70,10 @@ export async function createCategory(
 
   const ref = await addDoc(categoriesCollection(restaurantId), {
     name:         input.name.trim(),
+    departmentId: input.departmentId ?? null,
     color:        input.color ?? null,
     icon:         input.icon ?? null,
+    isSystem:     input.isSystem ?? false,
     restaurantId,
     createdAt:    serverTimestamp(),
     updatedAt:    serverTimestamp(),

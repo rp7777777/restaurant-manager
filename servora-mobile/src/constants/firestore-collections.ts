@@ -24,6 +24,7 @@ export const RCOL = {
   EMPLOYEES:            "employees",
   SCHEDULES:            "schedules",
   INVENTORY:            "inventory",
+  DEPARTMENTS:          "departments",
   INVENTORY_CATEGORIES: "categories",
   KITCHEN:              "kitchen",
   KITCHEN_REQUESTS:     "kitchenRequests",
