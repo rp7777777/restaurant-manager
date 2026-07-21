@@ -280,7 +280,11 @@ export default function ScheduleScreen() {
         Alert.alert("✅ Copied!", `${copied} employees copied. Attendance synced for all copied days.`);
       }
     } catch (err: any) {
-      Alert.alert("Error", err?.message ?? "Failed");
+      if (Platform.OS === "web") {
+        window.alert(`Error: ${err?.message ?? "Failed"}`);
+      } else {
+        Alert.alert("Error", err?.message ?? "Failed");
+      }
     } finally {
       setSaving(false);
     }
