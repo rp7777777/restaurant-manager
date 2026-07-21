@@ -5,19 +5,17 @@
 // ✅ Holiday batch write
 // ✅ Apply whole week all statuses
 // ✅ updateScheduleDay() is the single source of truth for
-//    schedule-day mutation + Attendance sync (sync happens inside
-//    the repository function itself, re-reading the latest
-//    committed day before syncing) — saveCellEdit() no longer
-//    calls sync separately, it just reads the syncFailed/syncError
-//    result back.
-// ✅ Set Holiday remains a documented exception: it bypasses
-//    updateScheduleDay() for bulk-write performance (writeBatch),
-//    so it still calls the batch sync helper explicitly afterward.
-// ✅ createSchedule() now receives real restaurant settings
-//    (mandatory parameter — no silent hardcoded fallback).
-// ✅ deleteSchedule() now cleans up SCHEDULE-origin Attendance
-//    records for the deleted week — handleDelete() surfaces a
-//    warning if any couldn't be cleaned up automatically.
+//    schedule-day mutation + Attendance sync
+// ✅ Set Holiday remains a documented exception: bulk-write
+//    performance, calls the batch sync helper explicitly
+// ✅ createSchedule() receives real restaurant settings
+// ✅ deleteSchedule() cleans up SCHEDULE-origin Attendance records
+// ✅ Resync Attendance — re-syncs the CURRENTLY VIEWED week's
+//    already-existing schedule data to Attendance. Does NOT copy or
+//    create any new schedule days — purely re-runs the sync for
+//    what's already saved, fixing any historical gap (e.g. from an
+//    older Copy Next Week that predates a sync fix, or any other
+//    reason Attendance drifted out of sync with Schedule).
 // ============================================
 
 import React, { useState } from "react";
@@ -76,6 +74,7 @@ export default function ScheduleScreen() {
   const [generatingPdf,     setGeneratingPdf]     = useState(false);
   const [generatingPayroll, setGeneratingPayroll] = useState(false);
   const [applyingHoliday,   setApplyingHoliday]   = useState(false);
+  const [resyncing,         setResyncing]         = useState(false);
   const [showCalendar,      setShowCalendar]      = useState(false);
   const [showCellEditor,    setShowCellEditor]    = useState(false);
   const [showEmpPicker,     setShowEmpPicker]     = useState(false);
@@ -108,8 +107,7 @@ export default function ScheduleScreen() {
     defaultShiftStart: SCHEDULE_CONFIG.DEFAULT_START_TIME,
   });
 
-  // ── Add employee — passes real restaurant settings (was
-  //    previously silently falling back to a hardcoded default) ──
+  // ── Add employee — passes real restaurant settings ──
   const handleAddEmployee = async (emp: EmployeeDB) => {
     if (!restaurantId) return;
     setSaving(true);
@@ -144,10 +142,7 @@ export default function ScheduleScreen() {
     setShowCellEditor(true);
   };
 
-  // ✅ Save with break threshold — updateScheduleDay() now syncs
-  //    Attendance internally (re-reading the latest committed day
-  //    value), so this function just reads back syncFailed/syncError
-  //    to surface a warning if needed.
+  // ✅ Save with break threshold
   const saveCellEdit = async () => {
     if (!editingCell || !restaurantId) return;
     const { scheduleId, dayKey } = editingCell;
@@ -158,7 +153,6 @@ export default function ScheduleScreen() {
       ? calcHours(cellStart, cellEnd)
       : 0;
 
-    // ✅ Break only if shift >= threshold
     const breakHours =
       settings?.autoDeductBreak &&
       totalHours >= (settings?.autoDeductBreakAfterHours ?? 6)
@@ -224,9 +218,7 @@ export default function ScheduleScreen() {
     }
   };
 
-  // ── Delete — deleteSchedule() now also cleans up SCHEDULE-origin
-  //    Attendance records for the deleted week; surface a warning
-  //    if any couldn't be cleaned up automatically. ──
+  // ── Delete ────────────────────────────────
   const handleDelete = (emp: EmployeeSchedule) => {
     const doDelete = async () => {
       try {
@@ -290,10 +282,54 @@ export default function ScheduleScreen() {
     }
   };
 
-  // ── Set Holiday batch write — bypasses updateScheduleDay() on
-  //    purpose for bulk-write performance (writeBatch across every
-  //    employee at once). Documented exception: this is the one
-  //    place that still calls the batch sync helper explicitly. ──
+  // ── Resync Attendance — re-syncs the CURRENTLY VIEWED week's
+  //    already-existing schedule data to Attendance. Does NOT copy
+  //    or create any new schedule days — purely re-runs the sync
+  //    for what's already saved, fixing any historical gap (e.g.
+  //    from an older Copy Next Week that predates a sync fix). ──
+  const handleResyncAttendance = async () => {
+    if (!restaurantId || resyncing || schedules.length === 0) return;
+    setResyncing(true);
+    try {
+      const normalDailyHours = settings?.normalDailyHours ?? 8;
+      const allItems: ScheduleSyncItem[] = [];
+
+      schedules.forEach((schedule) => {
+        Object.entries(schedule.days).forEach(([date, day]) => {
+          allItems.push({
+            employeeId: schedule.employeeId,
+            date,
+            status: day.status,
+            startTime: day.startTime || undefined,
+            endTime: day.endTime || undefined,
+            hours: day.hours,
+          });
+        });
+      });
+
+      const { failures } = await syncScheduleDaysToAttendance(
+        restaurantId, allItems, normalDailyHours
+      );
+
+      if (failures.length > 0) {
+        const msg = `Resynced with ${failures.length} failure(s) out of ${allItems.length} day(s). You can try again.`;
+        if (Platform.OS === "web") window.alert(msg);
+        else Alert.alert("Resync Partial", msg);
+      } else {
+        const msg = `✅ Attendance resynced for ${schedules.length} employee(s), ${allItems.length} day(s) total.`;
+        if (Platform.OS === "web") window.alert(msg);
+        else Alert.alert("✅ Resynced!", msg);
+      }
+    } catch (err: any) {
+      const msg = err?.message ?? "Resync failed";
+      if (Platform.OS === "web") window.alert(`Error: ${msg}`);
+      else Alert.alert("Error", msg);
+    } finally {
+      setResyncing(false);
+    }
+  };
+
+  // ── Set Holiday batch write ───────────────
   const handleSetHoliday = async (date: string) => {
     if (!restaurantId || applyingHoliday) return;
     setApplyingHoliday(true);
@@ -409,11 +445,13 @@ export default function ScheduleScreen() {
           generatingPdf={generatingPdf}
           generatingPayroll={generatingPayroll}
           saving={saving}
+          resyncing={resyncing}
           onPrint={handlePDF}
           onToggleAddEmployee={() => setShowEmpPicker(true)}
           onCopyNextWeek={handleCopyNextWeek}
           onGeneratePayroll={handleGeneratePayroll}
           onSetHoliday={() => setShowHoliday(true)}
+          onResyncAttendance={handleResyncAttendance}
         />
         <WeekSelector
           weekDates={weekDates}

@@ -1,6 +1,11 @@
 // ============================================
 // SERVORA ERP — ScheduleHeader Component
 // ✅ Set Holiday button added
+// ✅ Resync Attendance button — re-syncs the CURRENTLY VIEWED
+//    week's already-existing schedule data to Attendance (does not
+//    copy/create any new schedule days). Useful when a schedule was
+//    populated via an older Copy Next Week that predates a sync fix,
+//    or any other historical gap between Schedule and Attendance.
 // ✅ fontWeight "800" Android safe
 // ✅ Generate Payroll disabled when saving
 // ============================================
@@ -19,11 +24,13 @@ interface Props {
   generatingPdf: boolean;
   generatingPayroll: boolean;
   saving: boolean;
+  resyncing: boolean;
   onPrint: () => void;
   onToggleAddEmployee: () => void;
   onCopyNextWeek: () => void;
   onGeneratePayroll: () => void;
   onSetHoliday: () => void;
+  onResyncAttendance: () => void;
 }
 
 export function ScheduleHeader({
@@ -33,11 +40,13 @@ export function ScheduleHeader({
   generatingPdf,
   generatingPayroll,
   saving,
+  resyncing,
   onPrint,
   onToggleAddEmployee,
   onCopyNextWeek,
   onGeneratePayroll,
   onSetHoliday,
+  onResyncAttendance,
 }: Props) {
   return (
     <View>
@@ -100,6 +109,21 @@ export function ScheduleHeader({
                 <MaterialIcons name="celebration" size={13} color="#fff" />
                 <Text style={styles.holidayBtnText}>Set Holiday</Text>
               </TouchableOpacity>
+
+              {/* ✅ Resync Attendance — re-syncs this week's already
+                  existing schedule to Attendance, for fixing any
+                  historical gap without re-copying anything. */}
+              <TouchableOpacity
+                style={[styles.resyncBtn, resyncing && { opacity: 0.7 }]}
+                onPress={onResyncAttendance}
+                disabled={resyncing}
+              >
+                {resyncing
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <MaterialIcons name="sync" size={13} color="#fff" />
+                }
+                <Text style={styles.resyncBtnText}>Resync Attendance</Text>
+              </TouchableOpacity>
             </>
           )}
 
@@ -153,7 +177,6 @@ const styles = StyleSheet.create({
     borderRadius:    8,
   },
   copyBtnText: { color: "#00154f", fontSize: 11, fontWeight: "800" },
-  // ✅ Set Holiday button
   holidayBtn: {
     flexDirection:   "row",
     alignItems:      "center",
@@ -164,6 +187,17 @@ const styles = StyleSheet.create({
     borderRadius:    8,
   },
   holidayBtnText: { color: "#fff", fontSize: 11, fontWeight: "800" },
+  // ✅ Resync Attendance button
+  resyncBtn: {
+    flexDirection:   "row",
+    alignItems:      "center",
+    gap:             5,
+    backgroundColor: "#0891b2",
+    paddingHorizontal: 10,
+    paddingVertical:   6,
+    borderRadius:    8,
+  },
+  resyncBtnText: { color: "#fff", fontSize: 11, fontWeight: "800" },
   payrollBtn: {
     flexDirection:   "row",
     alignItems:      "center",
