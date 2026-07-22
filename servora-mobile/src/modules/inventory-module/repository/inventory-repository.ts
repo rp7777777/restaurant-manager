@@ -4,10 +4,26 @@
 // ✅ isLowStock/totalValue always recomputed server-side
 // ✅ Validation — itemName/quantity/unit required, negative
 //    quantity/unitCost/minStock rejected
-// ✅ NOTE: quantity here is a full REPLACE (manual add/edit form),
-//    not an increment. Concurrent quantity ADJUSTMENTS will be
-//    handled by a separate, transaction-safe function in the
-//    Stock Movements phase.
+// ✅ ARCHITECTURE BOUNDARY (important — do not blur this):
+//    - Manual form edits (name/price/category/expiry/etc, or a
+//      full quantity RESET via this repository's updateInventoryItem)
+//      → sync via THIS file's own syncStoreSummaryForItemChange() calls.
+//    - Quantity ADJUSTMENTS from real operations (receiving a PO,
+//      issuing to kitchen, waste, stock-take correction)
+//      → MUST go through stock-movement-service.ts's
+//      recordStockMovement() instead, which does its OWN summary
+//      sync. Never call both for the same logical change — Phase 8
+//      screens must route quantity-adjustment actions to
+//      recordStockMovement(), not updateInventoryItem(), to avoid a
+//      double-sync (the summary would be updated twice for one
+//      real-world event).
+// ✅ Defensive try/catch around the summary sync call here too,
+//    even though syncStoreSummaryForItemChange() already
+//    best-effort-swallows its own errors — belt-and-suspenders in
+//    case that internal guarantee is ever changed later.
+// ✅ Reuses InventorySummarySnapshot (from store-module/types) for
+//    the before/after shape instead of duplicating an inline object
+//    type — one shape, defined once.
 // FROZEN
 // ============================================
 
@@ -23,6 +39,8 @@ import {
   CreateInventoryItemInput,
   UpdateInventoryItemInput,
 } from "../types/inventory";
+import { syncStoreSummaryForItemChange } from "../../store-module/services/store-summary-service";
+import { InventorySummarySnapshot } from "../../store-module/types/store-summary";
 
 function inventoryCollection(restaurantId: string) {
   return collection(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY);
@@ -44,6 +62,25 @@ function validateInput(input: CreateInventoryItemInput | UpdateInventoryItemInpu
   }
   if (input.minStock !== undefined && input.minStock < 0) {
     throw new Error("Minimum stock cannot be negative");
+  }
+}
+
+// ── Defensive wrapper — never let a summary-sync error propagate
+//    out and fail the caller's actual inventory operation.
+//    NOTE: this logs separately from syncStoreSummaryForItemChange()'s
+//    own internal log — intentional, since this log identifies WHICH
+//    repository operation triggered the failure, while the service's
+//    log shows the underlying Firestore error itself. Some log
+//    duplication is an accepted trade-off for that extra context. ──
+async function safeSyncSummary(
+  restaurantId: string,
+  before: InventorySummarySnapshot | null,
+  after: InventorySummarySnapshot | null,
+): Promise<void> {
+  try {
+    await syncStoreSummaryForItemChange(restaurantId, before, after);
+  } catch (error) {
+    console.warn("Inventory repository: store summary sync failed:", error);
   }
 }
 
@@ -80,6 +117,12 @@ export async function createInventoryItem(
     updatedAt:        serverTimestamp(),
   });
 
+  await safeSyncSummary(
+    restaurantId,
+    null,
+    { totalValue, isLowStock, quantity }
+  );
+
   return ref.id;
 }
 
@@ -97,6 +140,9 @@ export async function updateInventoryItem(
   const unitCost = input.unitCost ?? existing.unitCost;
   const minStock = input.minStock ?? existing.minStock;
 
+  const newTotalValue = quantity * unitCost;
+  const newIsLowStock = quantity <= minStock;
+
   const updates: Record<string, unknown> = {
     ...(input.itemName        !== undefined && { itemName: input.itemName.trim() }),
     ...(input.category        !== undefined && { category: input.category }),
@@ -108,21 +154,37 @@ export async function updateInventoryItem(
     ...(input.batchNo         !== undefined && { batchNo: input.batchNo?.trim() || null }),
     ...(input.storageLocation !== undefined && { storageLocation: input.storageLocation?.trim() || null }),
     ...(input.supplierId      !== undefined && { supplierId: input.supplierId || null }),
-    totalValue: quantity * unitCost,
-    isLowStock: quantity <= minStock,
+    totalValue: newTotalValue,
+    isLowStock: newIsLowStock,
     updatedAt:  serverTimestamp(),
   };
 
   await updateDoc(inventoryDoc(restaurantId, itemId), updates);
+
+  await safeSyncSummary(
+    restaurantId,
+    { totalValue: existing.totalValue, isLowStock: existing.isLowStock, quantity: existing.quantity },
+    { totalValue: newTotalValue, isLowStock: newIsLowStock, quantity }
+  );
 }
 
+// ✅ Now requires the `existing` snapshot (same pattern as
+// updateInventoryItem) so its before-state can be passed to the
+// summary sync.
 export async function deleteInventoryItem(
   restaurantId: string,
-  itemId: string
+  itemId: string,
+  existing: InventoryItem
 ): Promise<void> {
   if (!restaurantId) throw new Error("Restaurant not configured");
   if (!auth.currentUser) throw new Error("User not authenticated");
   await deleteDoc(inventoryDoc(restaurantId, itemId));
+
+  await safeSyncSummary(
+    restaurantId,
+    { totalValue: existing.totalValue, isLowStock: existing.isLowStock, quantity: existing.quantity },
+    null
+  );
 }
 
 export async function getInventoryItemById(
