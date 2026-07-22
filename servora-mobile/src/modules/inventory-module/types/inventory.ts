@@ -121,3 +121,15 @@ export function classifyExpiry(
   if (diffDays <= resolvedAlertDays) return "expiringSoon";
   return "ok";
 }
+
+// ── Shared inventory valuation helper — used by both
+//    inventory-repository.ts and stock-movement-service.ts so
+//    rounding rules (currently 2 decimals) live in exactly ONE
+//    place. If this ever needs to change (e.g. 3 decimals, or
+//    banker's rounding), both callers update automatically. ──
+export function calculateInventoryTotalValue(
+  quantity: number,
+  unitCost: number
+): number {
+  return Math.round(quantity * unitCost * 100) / 100;
+}

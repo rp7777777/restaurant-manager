@@ -38,6 +38,7 @@ import {
   InventoryItem,
   CreateInventoryItemInput,
   UpdateInventoryItemInput,
+  calculateInventoryTotalValue,
 } from "../types/inventory";
 import { syncStoreSummaryForItemChange } from "../../store-module/services/store-summary-service";
 import { InventorySummarySnapshot } from "../../store-module/types/store-summary";
@@ -95,7 +96,7 @@ export async function createInventoryItem(
   const quantity   = input.quantity;
   const unitCost   = input.unitCost;
   const minStock   = input.minStock;
-  const totalValue = quantity * unitCost;
+  const totalValue = calculateInventoryTotalValue(quantity, unitCost);
   const isLowStock = quantity <= minStock;
 
   const ref = await addDoc(inventoryCollection(restaurantId), {
@@ -140,7 +141,7 @@ export async function updateInventoryItem(
   const unitCost = input.unitCost ?? existing.unitCost;
   const minStock = input.minStock ?? existing.minStock;
 
-  const newTotalValue = quantity * unitCost;
+  const newTotalValue = calculateInventoryTotalValue(quantity, unitCost);
   const newIsLowStock = quantity <= minStock;
 
   const updates: Record<string, unknown> = {

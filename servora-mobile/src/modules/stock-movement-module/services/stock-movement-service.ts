@@ -18,6 +18,14 @@
 //    retroactively alter historical movement values.
 // ✅ totalValue/isLowStock on the inventory item are recomputed
 //    here too, so they never drift out of sync with quantity.
+// ✅ syncStoreSummaryForItemChange() is called after every
+//    successful movement, using the SAME unitCostAtTime for both
+//    the before and after totalValue (cost doesn't change during a
+//    movement — only quantity does), keeping the Store Summary's
+//    totalStockValue/lowStockCount/outOfStockCount in sync.
+//    See inventory-repository.ts's header comment for the
+//    architecture boundary: quantity ADJUSTMENTS always come
+//    through here, never through updateInventoryItem().
 // FROZEN
 // ============================================
 
@@ -32,6 +40,9 @@ import {
   StockMovementType,
   RecordStockMovementInput,
 } from "../types/stock-movement";
+import { calculateInventoryTotalValue } from "../../inventory-module/types/inventory";
+import { syncStoreSummaryForItemChange } from "../../store-module/services/store-summary-service";
+import { InventorySummarySnapshot } from "../../store-module/types/store-summary";
 
 function inventoryDoc(restaurantId: string, inventoryId: string) {
   return doc(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY, inventoryId);
@@ -61,6 +72,20 @@ function validateInput(input: RecordStockMovementInput): void {
   // otherwise the record is unreportable/uninvestigable later.
   if (input.reasonCategory === "OTHER" && !input.reason?.trim()) {
     throw new Error("Please enter a reason.");
+  }
+}
+
+// ── Defensive wrapper — never let a summary-sync error propagate
+//    out and fail the actual stock movement that already committed. ──
+async function safeSyncSummary(
+  restaurantId: string,
+  before: InventorySummarySnapshot | null,
+  after: InventorySummarySnapshot | null,
+): Promise<void> {
+  try {
+    await syncStoreSummaryForItemChange(restaurantId, before, after);
+  } catch (error) {
+    console.warn("Stock movement service: store summary sync failed:", error);
   }
 }
 
@@ -111,8 +136,13 @@ export async function recordStockMovement(
       }
     }
 
-    const totalValue    = Math.round(afterQuantity * unitCostAtTime * 100) / 100;
-    const isLowStock    = afterQuantity <= minStock;
+    // ── Before/after values — SAME unitCostAtTime for both, since
+    //    cost doesn't change during a movement, only quantity does. ──
+    const beforeTotalValue = calculateInventoryTotalValue(beforeQuantity, unitCostAtTime);
+    const beforeIsLowStock = beforeQuantity <= minStock;
+
+    const totalValue        = calculateInventoryTotalValue(afterQuantity, unitCostAtTime);
+    const isLowStock     = afterQuantity <= minStock;
     const movementValue = Math.round(Math.abs(quantityChanged) * unitCostAtTime * 100) / 100;
 
     transaction.update(itemRef, {
@@ -143,8 +173,20 @@ export async function recordStockMovement(
       createdAt:       serverTimestamp(),
     });
 
-    return { beforeQuantity, afterQuantity, movementValue };
+    return {
+      beforeQuantity, afterQuantity, movementValue,
+      beforeTotalValue, beforeIsLowStock,
+      totalValue, isLowStock,
+    };
   });
+
+  // ✅ Sync Store Summary — outside the transaction (summary sync
+  // has its own internal transaction), best-effort.
+  await safeSyncSummary(
+    restaurantId,
+    { totalValue: result.beforeTotalValue, isLowStock: result.beforeIsLowStock, quantity: result.beforeQuantity },
+    { totalValue: result.totalValue, isLowStock: result.isLowStock, quantity: result.afterQuantity }
+  );
 
   return {
     movementId:     movementRef.id,
