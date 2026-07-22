@@ -30,6 +30,8 @@
 //    inventory scan).
 // ✅ getPendingCounts() similarly computed on-demand via targeted
 //    status-filtered queries (small result sets, not full scans).
+// ✅ DEFAULT_SUMMARY exported — useStoreSummary.ts (and any other
+//    future caller) reuses this one shape instead of duplicating it.
 // FROZEN
 // ============================================
 
@@ -48,7 +50,7 @@ import {
 import { classifyExpiry, resolveExpiryAlertDays } from "../../inventory-module/types/inventory";
 import { todayISO } from "../../../utils/date-utils";
 
-const DEFAULT_SUMMARY: StoreSummary = {
+export const DEFAULT_SUMMARY: StoreSummary = {
   totalItems:       0,
   totalStockValue:  0,
   lowStockCount:    0,
