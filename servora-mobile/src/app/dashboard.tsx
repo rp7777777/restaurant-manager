@@ -11,13 +11,14 @@
 // ✅ useMemo — computed data
 // ✅ selectedM — null safe
 // ✅ selectedYear change — expandedDay reset
-// ✅ Recalculate Stats — OWNER-only, with ConfirmModal (cross-
-//    platform, since Alert.alert() silently no-ops on web) before
-//    calling recomputeDashboardStatsFromSource()
+// ✅ Recalculate Stats — OWNER-only, with ConfirmModal
 // ✅ Net Profit card's Today/Month/Year rows all scroll to (and
 //    auto-expand where relevant) the existing DailyDetailsPanel/
-//    MonthlySummaryTable sections on this same page, instead of
-//    navigating to a separate screen
+//    MonthlySummaryTable sections on this same page
+// ✅ Store Card — useStoreSummary() hook (live summary +
+//    on-demand expiry/pending counts), tapping navigates to
+//    /store-module. onRefresh (pull-to-refresh) now also refreshes
+//    the Store's on-demand counts alongside alerts/attendance.
 // FROZEN
 // ============================================
 
@@ -38,6 +39,7 @@ import { useDashboardAlerts }     from "../hooks/dashboard/useDashboardAlerts";
 import { useDashboardActivities } from "../hooks/dashboard/useDashboardActivities";
 import { useDashboardAttendance } from "../hooks/dashboard/useDashboardAttendance";
 import { useDashboardReport }     from "../hooks/dashboard/useDashboardReport";
+import { useStoreSummary }        from "../modules/store-module/hooks/useStoreSummary";
 
 // ── Services ──────────────────────────────────
 import {
@@ -61,6 +63,7 @@ import LoadingScreen        from "../components/dashboard/LoadingScreen";
 import YearPickerModal      from "../components/dashboard/YearPickerModal";
 import DashboardHeader      from "../components/dashboard/DashboardHeader";
 import DashboardStats       from "../components/dashboard/DashboardStats";
+import StoreCard            from "../components/dashboard/StoreCard";
 import AlertsPanel          from "../components/dashboard/AlertsPanel";
 import ActivityPanel        from "../components/dashboard/ActivityPanel";
 import DashboardChart       from "../components/dashboard/DashboardChart";
@@ -74,7 +77,7 @@ const isWeb = Platform.OS === "web";
 
 // ── Controller ────────────────────────────────
 export default function DashboardScreen() {
-  const { restaurantId, fmt, t, userProfile } = useApp();
+  const { restaurant, restaurantId, fmt, t, userProfile } = useApp();
 
   const [selectedYear,   setSelectedYear]   = useState(() => new Date().getFullYear());
   const [selectedMonth,  setSelectedMonth]  = useState(() => new Date().getMonth());
@@ -102,6 +105,11 @@ export default function DashboardScreen() {
   const { activities                             } = useDashboardActivities(restaurantId, 8);
   const { attendance, refresh: refreshAttendance } = useDashboardAttendance(restaurantId);
   const { generating, generate                   } = useDashboardReport();
+  const {
+    data: storeData,
+    loading: storeLoading,
+    refresh: refreshStore,
+  } = useStoreSummary(restaurantId, restaurant?.defaultExpiryAlertDays);
 
   const loading = statsLoading || salesLoading;
 
@@ -142,11 +150,12 @@ export default function DashboardScreen() {
       await Promise.all([
         refreshAlerts(),
         refreshAttendance(),
+        refreshStore(),
       ]);
     } finally {
       setRefreshing(false);
     }
-  }, [refreshAlerts, refreshAttendance]);
+  }, [refreshAlerts, refreshAttendance, refreshStore]);
 
   const onToggleDay = useCallback((date: string) => {
     setExpandedDay((prev) => prev === date ? null : date);
@@ -195,6 +204,11 @@ export default function DashboardScreen() {
 
   const onYearPickerClose = useCallback(() => {
     setShowYearPicker(false);
+  }, []);
+
+  // ✅ Store Card — navigate to Store module
+  const onStorePress = useCallback(() => {
+    router.push("/store-module" as Href);
   }, []);
 
   // ✅ Recalculate Stats — request → confirm → run
@@ -272,6 +286,13 @@ export default function DashboardScreen() {
           onProfitTodayPress={onProfitTodayPress}
           onProfitMonthPress={onProfitMonthPress}
           onProfitYearPress={onProfitYearPress}
+        />
+
+        <StoreCard
+          data={storeData}
+          loading={storeLoading}
+          fmt={fmt}
+          onPress={onStorePress}
         />
 
         <AlertsPanel
