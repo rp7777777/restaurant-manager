@@ -1,20 +1,15 @@
 // ============================================
 // SERVORA ERP — Inventory Category Repository
 // ✅ Single gateway for all category Firestore operations
-// ✅ Duplicate-name prevention — case-insensitive check before
-//    create/rename, so "Fish"/"fish"/"FISH" can never coexist as
-//    separate categories for the same restaurant
-// ✅ NOTE: the duplicate check is a query-based read, not wrapped
-//    in a transaction — Firestore transactions only track
-//    single-document reads, not queries. Two near-simultaneous
-//    category creates with the same name could rarely both pass
-//    the check in a race. Accepted as low-risk (category creation
-//    is an infrequent admin action, not a high-frequency operation
-//    like Sales/Attendance).
-// ✅ Duplicate check currently fetches all categories client-side
-//    (fine at typical scale of 20-50 categories per restaurant).
-//    A normalizedName field + where() query is a valid future
-//    optimization, deferred until it's actually needed.
+// ✅ Duplicate-name prevention — case-insensitive check
+// ✅ RCOL.DEPARTMENTS constant used — no hardcoded collection string
+// ✅ isSystem — set only at creation time (never editable)
+// ✅ expiryAlertDays — validated: must be >= 0 (0 = disabled for
+//    this category, falls through to Restaurant Default otherwise).
+//    Negative values rejected outright.
+// ✅ FUTURE (Phase 8+, not built here): deleteCategory() should
+//    check whether any Inventory item still references this
+//    categoryId.
 // FROZEN
 // ============================================
 
@@ -39,7 +34,6 @@ function categoryDoc(restaurantId: string, categoryId: string) {
   return doc(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY_CATEGORIES, categoryId);
 }
 
-// ── Case-insensitive duplicate check ──────────
 async function assertNameNotTaken(
   restaurantId: string,
   name: string,
@@ -57,6 +51,14 @@ async function assertNameNotTaken(
   }
 }
 
+// ── Validation — expiryAlertDays must be >= 0 (0 = disabled) ──
+function validateExpiryAlertDays(days: number | undefined): void {
+  if (days === undefined) return;
+  if (days < 0) {
+    throw new Error("Expiry alert days cannot be negative");
+  }
+}
+
 // ── Create ──────────────────────────────────────
 export async function createCategory(
   restaurantId: string,
@@ -65,24 +67,26 @@ export async function createCategory(
   if (!restaurantId) throw new Error("Restaurant not configured");
   if (!auth.currentUser) throw new Error("User not authenticated");
   if (!input.name.trim()) throw new Error("Category name is required");
+  validateExpiryAlertDays(input.expiryAlertDays);
 
   await assertNameNotTaken(restaurantId, input.name);
 
   const ref = await addDoc(categoriesCollection(restaurantId), {
-    name:         input.name.trim(),
-    departmentId: input.departmentId ?? null,
-    color:        input.color ?? null,
-    icon:         input.icon ?? null,
-    isSystem:     input.isSystem ?? false,
+    name:            input.name.trim(),
+    departmentId:    input.departmentId ?? null,
+    color:           input.color ?? null,
+    icon:            input.icon ?? null,
+    isSystem:        input.isSystem ?? false,
+    expiryAlertDays: input.expiryAlertDays ?? null,
     restaurantId,
-    createdAt:    serverTimestamp(),
-    updatedAt:    serverTimestamp(),
+    createdAt:       serverTimestamp(),
+    updatedAt:       serverTimestamp(),
   });
 
   return ref.id;
 }
 
-// ── Update (rename / recolor / re-icon) ────────
+// ── Update ──────────────────────────────────────
 export async function updateCategory(
   restaurantId: string,
   categoryId: string,
@@ -95,11 +99,14 @@ export async function updateCategory(
     if (!input.name.trim()) throw new Error("Category name is required");
     await assertNameNotTaken(restaurantId, input.name, categoryId);
   }
+  validateExpiryAlertDays(input.expiryAlertDays);
 
   const updates: Record<string, unknown> = {
-    ...(input.name  !== undefined && { name: input.name.trim() }),
-    ...(input.color !== undefined && { color: input.color ?? null }),
-    ...(input.icon  !== undefined && { icon: input.icon ?? null }),
+    ...(input.name            !== undefined && { name: input.name.trim() }),
+    ...(input.departmentId    !== undefined && { departmentId: input.departmentId ?? null }),
+    ...(input.color           !== undefined && { color: input.color ?? null }),
+    ...(input.icon            !== undefined && { icon: input.icon ?? null }),
+    ...(input.expiryAlertDays !== undefined && { expiryAlertDays: input.expiryAlertDays ?? null }),
     updatedAt: serverTimestamp(),
   };
 
@@ -107,12 +114,6 @@ export async function updateCategory(
 }
 
 // ── Delete ──────────────────────────────────────
-// NOTE: does NOT check whether inventory items still reference
-// this categoryId — that check belongs in the service layer once
-// inventory-repository.ts is wired to use categoryId (Phase 8).
-// Phase 8 should reject the delete with a clear error (e.g.
-// "Cannot delete category — 12 inventory items still use it")
-// rather than silently orphaning references.
 export async function deleteCategory(
   restaurantId: string,
   categoryId: string
