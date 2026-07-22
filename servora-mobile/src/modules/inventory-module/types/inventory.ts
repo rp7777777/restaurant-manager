@@ -107,6 +107,13 @@ export function classifyExpiry(
   const today  = new Date(`${todayISO}T00:00:00`);
   const expiry = new Date(`${expiryDate}T00:00:00`);
 
+  // ✅ Guard against malformed date strings (e.g. "abc",
+  // "2026-13-40") producing Invalid Date — silently treat as
+  // "no usable expiry data" rather than misclassifying or crashing.
+  if (Number.isNaN(expiry.getTime()) || Number.isNaN(today.getTime())) {
+    return "none";
+  }
+
   if (expiry < today) return "expired";
 
   const diffDays = Math.round((expiry.getTime() - today.getTime()) / 86400000);
