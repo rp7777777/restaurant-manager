@@ -1,30 +1,25 @@
 // ============================================
 // SERVORA ERP — Inventory Types
-// ✅ Backward compatible — same core fields as the existing
-//    src/app/inventory-module/index.tsx screen
+// ✅ MIGRATION 1: quantity → currentStock — canonical field name
+//    across ALL Store Module files.
+// ✅ MIGRATION 2: category (hardcoded string union) → categoryId
+//    (reference to the real Category collection from Phase 2 —
+//    inventory-module/types/category.ts). InventoryCategory union
+//    type REMOVED entirely — superseded by real Category documents
+//    (id, name, departmentId, expiryAlertDays, isSystem).
+// ✅ Both migrations need the one-time data migration script
+//    (separate file — migrate-inventory-schema.ts) run once against
+//    existing Firestore documents. Idempotent (safe to re-run).
+// ✅ DEFAULT_EXPIRY_ALERT_DAYS — exported shared constant, replacing
+//    the magic number that was local to resolveExpiryAlertDays().
 // ✅ expiryAlertDaysOverride — item-level override (HIGHEST
 //    priority in the expiry-alert hierarchy)
 // ✅ resolveExpiryAlertDays() — 3-tier priority: Item Override →
-//    Category Setting → Restaurant Default → hardcoded 7-day
-//    fallback. Consistent 0-means-disabled semantics at every tier.
-// ✅ classifyExpiry() — compares Date OBJECTS (not raw date
-//    strings) for both the "is expired" check and the day-count
-//    difference, using the SAME two Date instances for both — a
-//    malformed/non-zero-padded date string (e.g. "2026-7-3") would
-//    silently break a raw string comparison, but Date parsing
-//    handles it correctly either way, and reusing one comparison
-//    method avoids any inconsistency between the two checks.
-// ✅ Math.round (not floor/ceil) for the day-count — both dates are
-//    normalized to local T00:00:00, so a normal day is exactly
-//    86400000ms and round is a no-op. On a DST-transition day
-//    (23 or 25 real hours), floor could round DOWN and undercount
-//    by one day; round gives the correct nearest whole calendar day.
+//    Category Setting → Restaurant Default → DEFAULT_EXPIRY_ALERT_DAYS.
+// ✅ classifyExpiry() — Date-object comparison, NaN guard.
+// ✅ calculateInventoryTotalValue() — shared rounding helper.
 // FROZEN
 // ============================================
-
-export type InventoryCategory =
-  | "Meat" | "Vegetables" | "Dairy" | "Dry Goods"
-  | "Beverages" | "Sauces" | "Spices" | "Oils" | "Other";
 
 export type InventoryUnit =
   | "kg" | "g" | "L" | "ml" | "pcs" | "box" | "bag" | "bottle" | "pac";
@@ -32,8 +27,8 @@ export type InventoryUnit =
 export interface InventoryItem {
   id:                       string;
   itemName:                 string;
-  category:                 InventoryCategory;
-  quantity:                 number;
+  categoryId:               string;  // reference to Category document
+  currentStock:             number;
   unit:                     InventoryUnit;
   unitCost:                 number;
   totalValue:               number;
@@ -52,8 +47,8 @@ export interface InventoryItem {
 
 export interface CreateInventoryItemInput {
   itemName:                 string;
-  category:                 InventoryCategory;
-  quantity:                 number;
+  categoryId:               string;
+  currentStock:             number;
   unit:                     InventoryUnit;
   unitCost:                 number;
   minStock:                 number;
@@ -66,8 +61,22 @@ export interface CreateInventoryItemInput {
 
 export type UpdateInventoryItemInput = Partial<CreateInventoryItemInput>;
 
+// ── Shared inventory valuation helper — used by both
+//    inventory-repository.ts and stock-movement-service.ts so
+//    rounding rules live in exactly ONE place. ──
+export function calculateInventoryTotalValue(
+  currentStock: number,
+  unitCost: number
+): number {
+  return Math.round(currentStock * unitCost * 100) / 100;
+}
+
 // ── Expiry classification ──────────────────────
 export type ExpiryStatus = "expired" | "expiringSoon" | "ok" | "none" | "disabled";
+
+// ── Shared fallback constant — replaces the magic number that was
+//    previously local to resolveExpiryAlertDays(). ──
+export const DEFAULT_EXPIRY_ALERT_DAYS = 7;
 
 // ── Resolve the EFFECTIVE alert threshold for one item, following
 //    the 3-tier priority. Consistent 0-means-disabled semantics at
@@ -78,8 +87,6 @@ export function resolveExpiryAlertDays(
   categoryDefault: number | undefined | null,
   restaurantDefault: number | undefined | null,
 ): number {
-  const HARDCODED_FALLBACK = 7;
-
   if (itemOverride !== undefined && itemOverride !== null) {
     return itemOverride;
   }
@@ -89,7 +96,7 @@ export function resolveExpiryAlertDays(
   if (restaurantDefault !== undefined && restaurantDefault !== null) {
     return restaurantDefault;
   }
-  return HARDCODED_FALLBACK;
+  return DEFAULT_EXPIRY_ALERT_DAYS;
 }
 
 // ── Classify an item's expiry status using its resolved threshold.
@@ -107,9 +114,6 @@ export function classifyExpiry(
   const today  = new Date(`${todayISO}T00:00:00`);
   const expiry = new Date(`${expiryDate}T00:00:00`);
 
-  // ✅ Guard against malformed date strings (e.g. "abc",
-  // "2026-13-40") producing Invalid Date — silently treat as
-  // "no usable expiry data" rather than misclassifying or crashing.
   if (Number.isNaN(expiry.getTime()) || Number.isNaN(today.getTime())) {
     return "none";
   }
@@ -120,16 +124,4 @@ export function classifyExpiry(
 
   if (diffDays <= resolvedAlertDays) return "expiringSoon";
   return "ok";
-}
-
-// ── Shared inventory valuation helper — used by both
-//    inventory-repository.ts and stock-movement-service.ts so
-//    rounding rules (currently 2 decimals) live in exactly ONE
-//    place. If this ever needs to change (e.g. 3 decimals, or
-//    banker's rounding), both callers update automatically. ──
-export function calculateInventoryTotalValue(
-  quantity: number,
-  unitCost: number
-): number {
-  return Math.round(quantity * unitCost * 100) / 100;
 }

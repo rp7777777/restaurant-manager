@@ -2,28 +2,21 @@
 // SERVORA ERP — Inventory Repository
 // ✅ Single gateway for all inventory Firestore operations
 // ✅ isLowStock/totalValue always recomputed server-side
-// ✅ Validation — itemName/quantity/unit required, negative
-//    quantity/unitCost/minStock rejected
+// ✅ Validation — itemName/currentStock/unit required, negative
+//    currentStock/unitCost/minStock rejected
+// ✅ MIGRATION: quantity → currentStock, category (string) →
+//    categoryId (real Category collection reference)
+// ✅ Delete guard — an item cannot be deleted while it still has
+//    stock (currentStock > 0) or has any stock movement history.
+//    Deleting an item with movement history would silently orphan
+//    those audit records.
 // ✅ ARCHITECTURE BOUNDARY (important — do not blur this):
-//    - Manual form edits (name/price/category/expiry/etc, or a
-//      full quantity RESET via this repository's updateInventoryItem)
-//      → sync via THIS file's own syncStoreSummaryForItemChange() calls.
-//    - Quantity ADJUSTMENTS from real operations (receiving a PO,
-//      issuing to kitchen, waste, stock-take correction)
-//      → MUST go through stock-movement-service.ts's
-//      recordStockMovement() instead, which does its OWN summary
-//      sync. Never call both for the same logical change — Phase 8
-//      screens must route quantity-adjustment actions to
-//      recordStockMovement(), not updateInventoryItem(), to avoid a
-//      double-sync (the summary would be updated twice for one
-//      real-world event).
-// ✅ Defensive try/catch around the summary sync call here too,
-//    even though syncStoreSummaryForItemChange() already
-//    best-effort-swallows its own errors — belt-and-suspenders in
-//    case that internal guarantee is ever changed later.
-// ✅ Reuses InventorySummarySnapshot (from store-module/types) for
-//    the before/after shape instead of duplicating an inline object
-//    type — one shape, defined once.
+//    - Manual form edits → sync via THIS file's own
+//      syncStoreSummaryForItemChange() calls.
+//    - Quantity ADJUSTMENTS from real operations → MUST go through
+//      stock-movement-service.ts's recordStockMovement() instead.
+// ✅ Defensive try/catch around the summary sync call here too.
+// ✅ Reuses InventorySummarySnapshot for the before/after shape.
 // FROZEN
 // ============================================
 
@@ -42,6 +35,7 @@ import {
 } from "../types/inventory";
 import { syncStoreSummaryForItemChange } from "../../store-module/services/store-summary-service";
 import { InventorySummarySnapshot } from "../../store-module/types/store-summary";
+import { getMovementsForItem } from "../../stock-movement-module/services/stock-movement-service";
 
 function inventoryCollection(restaurantId: string) {
   return collection(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY);
@@ -55,8 +49,11 @@ function validateInput(input: CreateInventoryItemInput | UpdateInventoryItemInpu
   if (input.itemName !== undefined && !input.itemName.trim()) {
     throw new Error("Item name is required");
   }
-  if (input.quantity !== undefined && input.quantity < 0) {
-    throw new Error("Quantity cannot be negative");
+  if (input.categoryId !== undefined && !input.categoryId.trim()) {
+    throw new Error("Category is required");
+  }
+  if (input.currentStock !== undefined && input.currentStock < 0) {
+    throw new Error("Current stock cannot be negative");
   }
   if (input.unitCost !== undefined && input.unitCost < 0) {
     throw new Error("Unit cost cannot be negative");
@@ -66,13 +63,6 @@ function validateInput(input: CreateInventoryItemInput | UpdateInventoryItemInpu
   }
 }
 
-// ── Defensive wrapper — never let a summary-sync error propagate
-//    out and fail the caller's actual inventory operation.
-//    NOTE: this logs separately from syncStoreSummaryForItemChange()'s
-//    own internal log — intentional, since this log identifies WHICH
-//    repository operation triggered the failure, while the service's
-//    log shows the underlying Firestore error itself. Some log
-//    duplication is an accepted trade-off for that extra context. ──
 async function safeSyncSummary(
   restaurantId: string,
   before: InventorySummarySnapshot | null,
@@ -93,16 +83,16 @@ export async function createInventoryItem(
   if (!auth.currentUser) throw new Error("User not authenticated");
   validateInput(input);
 
-  const quantity   = input.quantity;
-  const unitCost   = input.unitCost;
-  const minStock   = input.minStock;
-  const totalValue = calculateInventoryTotalValue(quantity, unitCost);
-  const isLowStock = quantity <= minStock;
+  const currentStock = input.currentStock;
+  const unitCost      = input.unitCost;
+  const minStock      = input.minStock;
+  const totalValue    = calculateInventoryTotalValue(currentStock, unitCost);
+  const isLowStock    = currentStock <= minStock;
 
   const ref = await addDoc(inventoryCollection(restaurantId), {
     itemName:         input.itemName.trim(),
-    category:         input.category,
-    quantity,
+    categoryId:       input.categoryId,
+    currentStock,
     unit:             input.unit,
     unitCost,
     totalValue,
@@ -121,7 +111,7 @@ export async function createInventoryItem(
   await safeSyncSummary(
     restaurantId,
     null,
-    { totalValue, isLowStock, quantity }
+    { totalValue, isLowStock, quantity: currentStock }
   );
 
   return ref.id;
@@ -137,17 +127,17 @@ export async function updateInventoryItem(
   if (!auth.currentUser) throw new Error("User not authenticated");
   validateInput(input);
 
-  const quantity = input.quantity ?? existing.quantity;
-  const unitCost = input.unitCost ?? existing.unitCost;
-  const minStock = input.minStock ?? existing.minStock;
+  const currentStock = input.currentStock ?? existing.currentStock;
+  const unitCost      = input.unitCost ?? existing.unitCost;
+  const minStock      = input.minStock ?? existing.minStock;
 
-  const newTotalValue = calculateInventoryTotalValue(quantity, unitCost);
-  const newIsLowStock = quantity <= minStock;
+  const newTotalValue = calculateInventoryTotalValue(currentStock, unitCost);
+  const newIsLowStock = currentStock <= minStock;
 
   const updates: Record<string, unknown> = {
     ...(input.itemName        !== undefined && { itemName: input.itemName.trim() }),
-    ...(input.category        !== undefined && { category: input.category }),
-    ...(input.quantity        !== undefined && { quantity: input.quantity }),
+    ...(input.categoryId      !== undefined && { categoryId: input.categoryId }),
+    ...(input.currentStock    !== undefined && { currentStock: input.currentStock }),
     ...(input.unit             !== undefined && { unit: input.unit }),
     ...(input.unitCost        !== undefined && { unitCost: input.unitCost }),
     ...(input.minStock        !== undefined && { minStock: input.minStock }),
@@ -164,14 +154,13 @@ export async function updateInventoryItem(
 
   await safeSyncSummary(
     restaurantId,
-    { totalValue: existing.totalValue, isLowStock: existing.isLowStock, quantity: existing.quantity },
-    { totalValue: newTotalValue, isLowStock: newIsLowStock, quantity }
+    { totalValue: existing.totalValue, isLowStock: existing.isLowStock, quantity: existing.currentStock },
+    { totalValue: newTotalValue, isLowStock: newIsLowStock, quantity: currentStock }
   );
 }
 
-// ✅ Now requires the `existing` snapshot (same pattern as
-// updateInventoryItem) so its before-state can be passed to the
-// summary sync.
+// ✅ Delete guard — cannot delete while stock remains, or if any
+// stock movement history exists for this item (audit integrity).
 export async function deleteInventoryItem(
   restaurantId: string,
   itemId: string,
@@ -179,11 +168,25 @@ export async function deleteInventoryItem(
 ): Promise<void> {
   if (!restaurantId) throw new Error("Restaurant not configured");
   if (!auth.currentUser) throw new Error("User not authenticated");
+
+  if (existing.currentStock > 0) {
+    throw new Error(
+      `Cannot delete "${existing.itemName}" — it still has ${existing.currentStock}${existing.unit} in stock. Adjust stock to 0 first.`
+    );
+  }
+
+  const movements = await getMovementsForItem(restaurantId, itemId, 1);
+  if (movements.length > 0) {
+    throw new Error(
+      `Cannot delete "${existing.itemName}" — it has stock movement history. Archiving is planned for a future phase.`
+    );
+  }
+
   await deleteDoc(inventoryDoc(restaurantId, itemId));
 
   await safeSyncSummary(
     restaurantId,
-    { totalValue: existing.totalValue, isLowStock: existing.isLowStock, quantity: existing.quantity },
+    { totalValue: existing.totalValue, isLowStock: existing.isLowStock, quantity: existing.currentStock },
     null
   );
 }
