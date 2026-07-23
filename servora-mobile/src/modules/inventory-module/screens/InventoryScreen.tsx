@@ -6,6 +6,10 @@
 // ✅ Add/Edit via a modal wrapping InventoryForm.
 // ✅ Delete uses the Platform-safe confirm pattern.
 // ✅ Category lookup built once (useMemo).
+// ✅ "Seed Defaults" button — shown ONLY when no categories exist
+//    yet (fresh/existing restaurant that predates the seeding
+//    system), manager-only. Runs the idempotent
+//    seedDefaultStoreTaxonomy() once.
 // FROZEN
 // ============================================
 
@@ -26,6 +30,7 @@ import {
 import {
   InventoryItem, CreateInventoryItemInput, UpdateInventoryItemInput,
 } from "../types/inventory";
+import { seedDefaultStoreTaxonomy } from "../../store-module/services/seed-store-defaults-service";
 import InventoryCard from "../../../components/inventory/InventoryCard";
 import { InventoryForm } from "../../../components/inventory/InventoryForm";
 import { todayISO } from "../../../utils/date-utils";
@@ -60,6 +65,7 @@ export default function InventoryScreen() {
   const [showForm,   setShowForm]   = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | undefined>(undefined);
   const [saving,      setSaving]      = useState(false);
+  const [seeding,      setSeeding]      = useState(false);
 
   const categoryMap = useMemo(() => {
     return new Map(categories.map((c) => [c.id, c]));
@@ -127,6 +133,25 @@ export default function InventoryScreen() {
     }
   }, [restaurantId, closeForm]);
 
+  // ✅ Seed default Department + Category taxonomy — shown only
+  // when no categories exist yet.
+  const handleSeedDefaults = useCallback(async () => {
+    if (!restaurantId || seeding) return;
+    setSeeding(true);
+    try {
+      const result = await seedDefaultStoreTaxonomy(restaurantId);
+      const msg = `✅ Created ${result.departmentsCreated} departments, ${result.categoriesCreated} categories.`;
+      if (isWeb) window.alert(msg);
+      else Alert.alert("Defaults Seeded", msg);
+    } catch (err: any) {
+      const msg = err?.message ?? "Failed to seed defaults";
+      if (isWeb) window.alert(`Error: ${msg}`);
+      else Alert.alert("Error", msg);
+    } finally {
+      setSeeding(false);
+    }
+  }, [restaurantId, seeding]);
+
   const loading = itemsLoading || categoriesLoading;
 
   return (
@@ -140,6 +165,23 @@ export default function InventoryScreen() {
           </TouchableOpacity>
         )}
       </View>
+
+      {/* ✅ Seed Defaults — only when no categories exist yet */}
+      {!categoriesLoading && categories.length === 0 && isManager && (
+        <TouchableOpacity
+          style={[styles.seedBanner, seeding && { opacity: 0.7 }]}
+          onPress={handleSeedDefaults}
+          disabled={seeding}
+        >
+          {seeding
+            ? <ActivityIndicator size="small" color="#fff" />
+            : <MaterialIcons name="auto-awesome" size={16} color="#fff" />
+          }
+          <Text style={styles.seedBannerText}>
+            {seeding ? "Setting up..." : "No categories yet — Tap to set up default categories"}
+          </Text>
+        </TouchableOpacity>
+      )}
 
       <View style={styles.searchRow}>
         <MaterialIcons name="search" size={18} color="#94a3b8" />
@@ -171,7 +213,6 @@ export default function InventoryScreen() {
         ))}
       </View>
 
-      {/* ✅ Category filter — horizontal scrollable chips */}
       {categories.length > 0 && (
         <ScrollView
           horizontal
@@ -213,7 +254,6 @@ export default function InventoryScreen() {
         </ScrollView>
       )}
 
-      {/* ✅ Sort selector */}
       <View style={styles.sortRow}>
         <Text style={styles.sortLabel}>Sort:</Text>
         {SORT_OPTIONS.map((opt) => (
@@ -314,6 +354,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#0369a1", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
   },
   addBtnText: { color: "#fff", fontWeight: "700", fontSize: 13 },
+  seedBanner: {
+    flexDirection: "row", alignItems: "center", gap: 8, justifyContent: "center",
+    backgroundColor: "#7c3aed", marginHorizontal: 16, marginBottom: 8,
+    paddingVertical: 10, borderRadius: 10,
+  },
+  seedBannerText: { color: "#fff", fontSize: 12, fontWeight: "700" },
   searchRow: {
     flexDirection: "row", alignItems: "center", gap: 8,
     backgroundColor: "#fff", marginHorizontal: 16, paddingHorizontal: 12, paddingVertical: 8,
