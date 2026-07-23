@@ -10,9 +10,8 @@
 import React, { memo } from "react";
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { InventoryItem, classifyExpiry, resolveExpiryAlertDays } from "../types/inventory";
-import { Category } from "../types/category";
-
+import { InventoryItem, classifyExpiry, resolveExpiryAlertDays } from "../../modules/inventory-module/types/inventory";
+import { Category } from "../../modules/inventory-module/types/category";
 interface InventoryCardProps {
   item:                    InventoryItem;
   category:                Category | undefined;
