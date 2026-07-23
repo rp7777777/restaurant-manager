@@ -1,9 +1,15 @@
 // ============================================
 // SERVORA ERP — Stock Movement Service
 // ✅ THE ONLY function anywhere in Servora that changes an
-//    inventory item's quantity.
-// ✅ Fully transaction-safe — reads current quantity + writes new
-//    quantity + writes the movement audit log ATOMICALLY.
+//    inventory item's currentStock.
+// ✅ MIGRATION: reads/writes InventoryItem's `currentStock` field
+//    (was `quantity`) — matches inventory-repository.ts's schema.
+//    NOTE: the StockMovement audit record's OWN fields
+//    (beforeQuantity/afterQuantity/quantityChanged) are UNCHANGED —
+//    those describe the movement itself, not the InventoryItem
+//    schema, so they keep their existing names.
+// ✅ Fully transaction-safe — reads current currentStock + writes
+//    new currentStock + writes the movement audit log ATOMICALLY.
 // ✅ Validation enforced here:
 //    PURCHASE/RETURN/TRANSFER_IN/KITCHEN_ISSUE/WASTE/TRANSFER_OUT
 //    → quantity must be > 0
@@ -17,15 +23,9 @@
 //    unitCostAtTime), so future valuation-method changes never
 //    retroactively alter historical movement values.
 // ✅ totalValue/isLowStock on the inventory item are recomputed
-//    here too, so they never drift out of sync with quantity.
+//    here too, so they never drift out of sync with currentStock.
 // ✅ syncStoreSummaryForItemChange() is called after every
-//    successful movement, using the SAME unitCostAtTime for both
-//    the before and after totalValue (cost doesn't change during a
-//    movement — only quantity does), keeping the Store Summary's
-//    totalStockValue/lowStockCount/outOfStockCount in sync.
-//    See inventory-repository.ts's header comment for the
-//    architecture boundary: quantity ADJUSTMENTS always come
-//    through here, never through updateInventoryItem().
+//    successful movement.
 // FROZEN
 // ============================================
 
@@ -40,9 +40,9 @@ import {
   StockMovementType,
   RecordStockMovementInput,
 } from "../types/stock-movement";
-import { calculateInventoryTotalValue } from "../../inventory-module/types/inventory";
 import { syncStoreSummaryForItemChange } from "../../store-module/services/store-summary-service";
 import { InventorySummarySnapshot } from "../../store-module/types/store-summary";
+import { calculateInventoryTotalValue } from "../../inventory-module/types/inventory";
 
 function inventoryDoc(restaurantId: string, inventoryId: string) {
   return doc(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY, inventoryId);
@@ -54,7 +54,6 @@ function stockMovementsCollection(restaurantId: string) {
 
 const INCREASING_TYPES: StockMovementType[] = ["PURCHASE", "RETURN", "TRANSFER_IN"];
 
-// ── Validation — enforced here, not left to the caller ──
 function validateInput(input: RecordStockMovementInput): void {
   if (!input.inventoryId) throw new Error("Inventory item is required");
 
@@ -68,15 +67,11 @@ function validateInput(input: RecordStockMovementInput): void {
     }
   }
 
-  // ✅ "OTHER" reason category requires a free-text explanation —
-  // otherwise the record is unreportable/uninvestigable later.
   if (input.reasonCategory === "OTHER" && !input.reason?.trim()) {
     throw new Error("Please enter a reason.");
   }
 }
 
-// ── Defensive wrapper — never let a summary-sync error propagate
-//    out and fail the actual stock movement that already committed. ──
 async function safeSyncSummary(
   restaurantId: string,
   before: InventorySummarySnapshot | null,
@@ -90,7 +85,7 @@ async function safeSyncSummary(
 }
 
 // ── Record a stock movement — THE single entry point for changing
-//    an inventory item's quantity. ──
+//    an inventory item's currentStock. ──
 export async function recordStockMovement(
   restaurantId: string,
   input: RecordStockMovementInput
@@ -109,11 +104,12 @@ export async function recordStockMovement(
     }
 
     const itemData       = itemSnap.data();
-    const beforeQuantity  = Number(itemData.quantity  ?? 0);
-    const unitCostAtTime  = Number(itemData.unitCost  ?? 0);
-    const minStock        = Number(itemData.minStock  ?? 0);
-    const unit            = itemData.unit             as string;
-    const itemName        = itemData.itemName         as string;
+    // ✅ Reads currentStock (migrated field name)
+    const beforeQuantity  = Number(itemData.currentStock ?? 0);
+    const unitCostAtTime  = Number(itemData.unitCost     ?? 0);
+    const minStock        = Number(itemData.minStock     ?? 0);
+    const unit            = itemData.unit                as string;
+    const itemName        = itemData.itemName            as string;
 
     let afterQuantity: number;
     let quantityChanged: number;
@@ -136,20 +132,19 @@ export async function recordStockMovement(
       }
     }
 
-    // ── Before/after values — SAME unitCostAtTime for both, since
-    //    cost doesn't change during a movement, only quantity does. ──
     const beforeTotalValue = calculateInventoryTotalValue(beforeQuantity, unitCostAtTime);
     const beforeIsLowStock = beforeQuantity <= minStock;
 
-    const totalValue        = calculateInventoryTotalValue(afterQuantity, unitCostAtTime);
-    const isLowStock     = afterQuantity <= minStock;
-    const movementValue = Math.round(Math.abs(quantityChanged) * unitCostAtTime * 100) / 100;
+    const totalValue     = calculateInventoryTotalValue(afterQuantity, unitCostAtTime);
+    const isLowStock      = afterQuantity <= minStock;
+    const movementValue  = Math.round(Math.abs(quantityChanged) * unitCostAtTime * 100) / 100;
 
+    // ✅ Writes currentStock (migrated field name)
     transaction.update(itemRef, {
-      quantity:   afterQuantity,
+      currentStock: afterQuantity,
       totalValue,
       isLowStock,
-      updatedAt:  serverTimestamp(),
+      updatedAt:    serverTimestamp(),
     });
 
     transaction.set(movementRef, {
@@ -180,8 +175,6 @@ export async function recordStockMovement(
     };
   });
 
-  // ✅ Sync Store Summary — outside the transaction (summary sync
-  // has its own internal transaction), best-effort.
   await safeSyncSummary(
     restaurantId,
     { totalValue: result.beforeTotalValue, isLowStock: result.beforeIsLowStock, quantity: result.beforeQuantity },
