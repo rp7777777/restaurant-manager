@@ -8,10 +8,12 @@
 //    the repository layer (inventory-repository.ts); this form
 //    does light client-side checks for immediate feedback only.
 // ✅ Edit mode shows a "Manual correction only" warning above
-//    Current Stock — real quantity ADJUSTMENTS (receive/issue/
-//    waste) must go through Stock Movement (a separate screen),
-//    not this form. The warning makes that boundary visible to
-//    the manager, not just documented in code comments.
+//    Current Stock.
+// ✅ FIX: Category/Unit/Supplier dropdown lists are now ScrollView
+//    (not plain View) with nestedScrollEnabled — a plain View
+//    ignores maxHeight for scrolling purposes, so a long list (60+
+//    categories) pushed the rest of the form off-screen instead of
+//    scrolling internally within its own bounded box.
 // FROZEN
 // ============================================
 
@@ -125,7 +127,7 @@ export function InventoryForm({
         <MaterialIcons name={showCategoryPicker ? "expand-less" : "expand-more"} size={20} color="#64748b" />
       </TouchableOpacity>
       {showCategoryPicker && (
-        <View style={styles.pickerList}>
+        <ScrollView style={styles.pickerList} nestedScrollEnabled>
           {categoryGroups.map((group) => (
             <View key={group.department?.id ?? "none"}>
               {group.department && (
@@ -144,7 +146,7 @@ export function InventoryForm({
               ))}
             </View>
           ))}
-        </View>
+        </ScrollView>
       )}
 
       {/* ✅ Current Stock — Manual correction warning in Edit mode */}
@@ -176,7 +178,7 @@ export function InventoryForm({
             <MaterialIcons name={showUnitPicker ? "expand-less" : "expand-more"} size={18} color="#64748b" />
           </TouchableOpacity>
           {showUnitPicker && (
-            <View style={styles.pickerList}>
+            <ScrollView style={styles.pickerList} nestedScrollEnabled>
               {UNITS.map((u) => (
                 <TouchableOpacity
                   key={u}
@@ -186,7 +188,7 @@ export function InventoryForm({
                   <Text style={styles.pickerItemText}>{u}</Text>
                 </TouchableOpacity>
               ))}
-            </View>
+            </ScrollView>
           )}
         </View>
       </View>
@@ -247,7 +249,7 @@ export function InventoryForm({
         <MaterialIcons name={showSupplierPicker ? "expand-less" : "expand-more"} size={20} color="#64748b" />
       </TouchableOpacity>
       {showSupplierPicker && (
-        <View style={styles.pickerList}>
+        <ScrollView style={styles.pickerList} nestedScrollEnabled>
           <TouchableOpacity
             style={styles.pickerItem}
             onPress={() => { setSupplierId(""); setShowSupplierPicker(false); }}
@@ -263,7 +265,7 @@ export function InventoryForm({
               <Text style={styles.pickerItemText}>{s.name}</Text>
             </TouchableOpacity>
           ))}
-        </View>
+        </ScrollView>
       )}
 
       <View style={styles.actionRow}>
@@ -307,6 +309,7 @@ const styles = StyleSheet.create({
   pickerList: {
     borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 8,
     marginTop: 4, maxHeight: 220, backgroundColor: "#f8fafc",
+    overflow: "hidden",
   },
   pickerGroupLabel: {
     fontSize: 11, fontWeight: "800", color: "#94a3b8",
