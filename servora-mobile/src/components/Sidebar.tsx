@@ -1,4 +1,4 @@
-import React from "react";
+﻿import React from "react";
 import {
   View, Text, TouchableOpacity,
   StyleSheet, ScrollView, Platform,
@@ -30,6 +30,7 @@ const MENU_SECTIONS: { titleKey: string; items: MenuItem[] }[] = [
       { labelKey: "inventory",   icon: "inventory",      route: "/inventory-module"  },
       { labelKey: "kitchen",     icon: "restaurant",     route: "/kitchen-module"    },
       { labelKey: "store",       icon: "store",          route: "/store-module"      },
+      { labelKey: "purchaseOrders", icon: "receipt-long", route: "/purchase-orders" },
       { labelKey: "employees",   icon: "badge",          route: "/employees-module"  },
       { labelKey: "attendance",  icon: "fact-check",     route: "/attendance-module" },
     ],
@@ -39,7 +40,7 @@ const MENU_SECTIONS: { titleKey: string; items: MenuItem[] }[] = [
     items: [
       { labelKey: "payroll",    icon: "payments",       route: "/payroll-module"      },
       { labelKey: "schedule",   icon: "calendar-month", route: "/schedule-module"     },
-      // ✅ Labour Cost added
+      // âœ… Labour Cost added
       { labelKey: "labourCost", icon: "trending-up",    route: "/labour-cost-module"  },
       { labelKey: "reports",    icon: "bar-chart",      route: "/analytics"           },
     ],

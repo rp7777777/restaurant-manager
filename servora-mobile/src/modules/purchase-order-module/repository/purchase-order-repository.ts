@@ -79,14 +79,15 @@ export async function createPurchaseOrder(
   const counterRef = poCounterDoc(restaurantId);
   const newPoRef    = doc(purchaseOrdersCollection(restaurantId));
 
-  const items: PurchaseOrderItem[] = input.items.map((item) => ({
-    itemId:    item.itemId,
-    itemName:  item.itemName.trim(),
-    quantity:  item.quantity,
-    unit:      item.unit,
-    unitCost:  item.unitCost,
-    lineTotal: Math.round(item.quantity * item.unitCost * 100) / 100,
-  }));
+  const items: PurchaseOrderItem[] = input.items.map((item, idx) => ({
+  lineId:    `${newPoRef.id}-L${idx + 1}`,  // stable, deterministic, unique within this PO
+  itemId:    item.itemId,
+  itemName:  item.itemName.trim(),
+  quantity:  item.quantity,
+  unit:      item.unit,
+  unitCost:  item.unitCost,
+  lineTotal: Math.round(item.quantity * item.unitCost * 100) / 100,
+}));
   const totalAmount = Math.round(
     items.reduce((sum, i) => sum + i.lineTotal, 0) * 100
   ) / 100;
