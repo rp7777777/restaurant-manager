@@ -21,7 +21,7 @@ import {
   createSupplier,
   updateSupplier,
 } from "../repository/supplier-repository";
-import { Supplier, SupplierStatus } from "../types/supplier";
+import { Supplier, SupplierStatus, CreateSupplierInput } from "../types/supplier";
 
 export interface UseSupplierFormResult {
   name:             string;
@@ -78,7 +78,7 @@ export function useSupplierForm(existing?: Supplier): UseSupplierFormResult {
         return false;
       }
 
-      const input = {
+      const input: CreateSupplierInput = {
         name:          name.trim(),
         companyName:   companyName.trim() || undefined,
         contactPerson: contactPerson.trim() || undefined,
