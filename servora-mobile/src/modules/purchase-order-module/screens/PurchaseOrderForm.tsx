@@ -22,7 +22,7 @@
 // PHASE 8.2b
 // ============================================
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, ScrollView, Platform, ActivityIndicator,
@@ -32,9 +32,13 @@ import { useApp } from "../../../context/AppContext";
 import { usePurchaseOrderForm, DraftPOItem } from "../hooks/usePurchaseOrderForm";
 import { useSuppliers } from "../../supplier-module/hooks/useSuppliers";
 import { useInventory } from "../../inventory-module/hooks/useInventory";
-import { InventoryItem } from "../../inventory-module/types/inventory";
+import { InventoryItem, InventoryUnit } from "../../inventory-module/types/inventory";
+import { Supplier } from "../../supplier-module/types/supplier";
 
-const UNITS = ["kg", "g", "L", "ml", "pcs", "box", "bag", "bottle", "pac"];
+// ✅ Typed as InventoryUnit[] (not string[]) — these are exactly
+// the values Inventory itself allows, so the two can never drift
+// apart into "kg" vs "Kg" vs "KG" duplicates.
+const UNITS: InventoryUnit[] = ["kg", "g", "L", "ml", "pcs", "box", "bag", "bottle", "pac"];
 
 interface PurchaseOrderFormProps {
   onSaved:  () => void;
@@ -58,7 +62,7 @@ export default function PurchaseOrderForm({ onSaved, onCancel }: PurchaseOrderFo
   const [showSupplierPicker, setShowSupplierPicker] = useState(false);
   const [openItemPickerRowId, setOpenItemPickerRowId] = useState<string | null>(null);
 
-  const selectedSupplier = suppliers.find((s) => s.id === supplierId);
+  const selectedSupplier = suppliers.find((s: Supplier) => s.id === supplierId);
 
   const handleSave = async () => {
     if (!restaurantId) return;
@@ -83,10 +87,11 @@ export default function PurchaseOrderForm({ onSaved, onCancel }: PurchaseOrderFo
         <ActivityIndicator size="large" color="#0369a1" style={{ marginTop: 30 }} />
       ) : (
         <>
+          {/* ── Supplier ── */}
           <Text style={styles.label}>Supplier *</Text>
           <TouchableOpacity
             style={styles.pickerButton}
-            onPress={() => setShowSupplierPicker((v) => !v)}
+            onPress={() => setShowSupplierPicker((v: boolean) => !v)}
           >
             <Text style={styles.pickerButtonText}>
               {selectedSupplier ? selectedSupplier.name : "Select a supplier"}
@@ -102,7 +107,7 @@ export default function PurchaseOrderForm({ onSaved, onCancel }: PurchaseOrderFo
               {suppliers.length === 0 && (
                 <Text style={styles.pickerEmptyText}>No suppliers yet</Text>
               )}
-              {suppliers.map((s) => (
+              {suppliers.map((s: Supplier) => (
                 <TouchableOpacity
                   key={s.id}
                   style={styles.pickerItem}
@@ -114,6 +119,7 @@ export default function PurchaseOrderForm({ onSaved, onCancel }: PurchaseOrderFo
             </ScrollView>
           )}
 
+          {/* ── Expected Delivery Date ── */}
           <Text style={styles.label}>Expected Delivery Date (optional)</Text>
           <TextInput
             style={styles.input}
@@ -122,6 +128,7 @@ export default function PurchaseOrderForm({ onSaved, onCancel }: PurchaseOrderFo
             placeholder="YYYY-MM-DD"
           />
 
+          {/* ── Items ── */}
           <View style={styles.itemsHeader}>
             <Text style={styles.label}>Items *</Text>
             <TouchableOpacity style={styles.addRowBtn} onPress={addItemRow}>
@@ -130,7 +137,7 @@ export default function PurchaseOrderForm({ onSaved, onCancel }: PurchaseOrderFo
             </TouchableOpacity>
           </View>
 
-          {items.map((row, idx) => (
+          {items.map((row: DraftPOItem, idx: number) => (
             <ItemRow
               key={row.rowId}
               row={row}
@@ -139,19 +146,23 @@ export default function PurchaseOrderForm({ onSaved, onCancel }: PurchaseOrderFo
               inventoryItems={inventoryItems}
               isPickerOpen={openItemPickerRowId === row.rowId}
               onTogglePicker={() =>
-                setOpenItemPickerRowId((cur) => (cur === row.rowId ? null : row.rowId))
+                setOpenItemPickerRowId((cur: string | null) =>
+                  cur === row.rowId ? null : row.rowId
+                )
               }
-              onChange={(patch) => updateItemRow(row.rowId, patch)}
+              onChange={(patch: Partial<DraftPOItem>) => updateItemRow(row.rowId, patch)}
               onRemove={() => removeItemRow(row.rowId)}
               fmt={fmt}
             />
           ))}
 
+          {/* ── Total Preview ── */}
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>Estimated Total</Text>
             <Text style={styles.totalValue}>{fmt(previewTotal)}</Text>
           </View>
 
+          {/* ── Actions ── */}
           <View style={styles.actionRow}>
             <TouchableOpacity style={styles.cancelBtn} onPress={onCancel} disabled={saving}>
               <Text style={styles.cancelBtnText}>Cancel</Text>
@@ -172,7 +183,10 @@ export default function PurchaseOrderForm({ onSaved, onCancel }: PurchaseOrderFo
 
 // ── Single item row — its own component so the Inventory-search
 // filtering (recomputed on every keystroke) only re-renders this
-// row, not the whole form. ──
+// row, not the whole form. NOTE: "key" is intentionally NOT part
+// of this props interface — React reserves "key" and strips it
+// before props reach the component, so declaring it here would be
+// misleading (it would never actually be readable as props.key). ──
 interface ItemRowProps {
   row:            DraftPOItem;
   index:          number;
@@ -191,25 +205,48 @@ function ItemRow({
 }: ItemRowProps) {
   const [showUnitPicker, setShowUnitPicker] = useState(false);
 
+  // ✅ Debounced search (300ms, same pattern as EmployeeSearch.tsx)
+  // — the text INPUT stays instant (row.itemName updates on every
+  // keystroke via onChange), only the Inventory filter itself waits
+  // for a pause in typing. Matters once Inventory has thousands of
+  // items — filtering on every keystroke would lag; filtering only
+  // after the user pauses does not.
+  const [debouncedQuery, setDebouncedQuery] = useState(row.itemName);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setDebouncedQuery(row.itemName);
+    }, 300);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [row.itemName]);
+
   const matches = useMemo(() => {
-    const q = row.itemName.trim().toLowerCase();
-    if (!q) return [];
+    const q = debouncedQuery.trim().toLowerCase();
+    // ✅ 2-character minimum — a single letter ("s") can match
+    // hundreds of items in a large Inventory; waiting for 2
+    // characters cuts the match set down before the list even
+    // renders, on top of the debounce above.
+    if (q.length < 2) return [];
     return inventoryItems
       .filter((it) => it.itemName.toLowerCase().includes(q))
       .slice(0, 8);
-  }, [row.itemName, inventoryItems]);
+  }, [debouncedQuery, inventoryItems]);
 
   const lineTotal = useMemo(() => {
     const qty  = Number(row.quantity);
     const cost = Number(row.unitCost);
-    if (Number.isNaN(qty) || Number.isNaN(cost)) return 0;
+    if (!Number.isFinite(qty) || !Number.isFinite(cost)) return 0;
     return qty * cost;
   }, [row.quantity, row.unitCost]);
 
-  const pickMatch = (item: InventoryItem) => {
+  const pickMatch = useCallback((item: InventoryItem) => {
     onChange({ itemId: item.id, itemName: item.itemName, unit: item.unit });
     onTogglePicker();
-  };
+  }, [onChange, onTogglePicker]);
 
   return (
     <View style={styles.itemRowBox}>
@@ -227,6 +264,9 @@ function ItemRow({
         style={styles.input}
         value={row.itemName}
         onChangeText={(text) => {
+          // ✅ Typing after a previous pick clears itemId — the
+          // user is now describing something else, so the old
+          // link would silently mismatch the new name.
           onChange({ itemName: text, itemId: undefined });
           if (!isPickerOpen) onTogglePicker();
         }}
