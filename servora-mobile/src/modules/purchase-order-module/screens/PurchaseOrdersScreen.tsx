@@ -14,7 +14,7 @@
 // PHASE 8.2
 // ============================================
 
-import React, { useMemo, useCallback } from "react";
+import React, { useMemo, useCallback, useState } from "react";
 import {
   View, Text, TextInput, FlatList, TouchableOpacity,
   StyleSheet, Platform, ActivityIndicator,
@@ -30,6 +30,7 @@ import {
 import { useSuppliers } from "../../supplier-module/hooks/useSuppliers";
 import { PurchaseOrder } from "../types/purchase-order";
 import PurchaseOrderCard from "../../../components/purchase-orders/PurchaseOrderCard";
+import PurchaseOrderForm from "./PurchaseOrderForm";
 
 const STATUS_FILTER_OPTIONS: { value: PurchaseOrderStatusFilter; label: string }[] = [
   { value: "all",       label: "All" },
@@ -57,24 +58,51 @@ export default function PurchaseOrdersScreen() {
   } = usePurchaseOrderFilters(orders);
   const { suppliers, loading: suppliersLoading } = useSuppliers(restaurantId);
 
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  // ✅ Bumped every time the form opens, forcing React to remount
+  // PurchaseOrderForm (and therefore reset usePurchaseOrderForm's
+  // internal state) — explicit reset-on-open rather than relying
+  // on unmount timing, which stays correct even if this later
+  // becomes a Modal that doesn't fully unmount between opens.
+  const [formKey, setFormKey] = useState(0);
+
   const supplierMap = useMemo(() => {
     return new Map(suppliers.map((s) => [s.id, s]));
   }, [suppliers]);
 
   // ✅ Placeholder — will open a detail/edit view once the
-  // create/edit form (Phase 8.2b) lands.
+  // PO detail/receive screen (Phase 8.2c) lands.
   const openOrder = useCallback((order: PurchaseOrder) => {
     console.log("Open purchase order:", order.poNumber);
   }, []);
 
+  const openCreateForm = useCallback(() => {
+    setFormKey((k) => k + 1);
+    setShowCreateForm(true);
+  }, []);
+
   const loading = ordersLoading || suppliersLoading;
+
+  // ✅ The Create form replaces the whole screen while open (own
+  // scroll view, own header) rather than rendering as a modal on
+  // top of the list — simpler for Phase 8.2b, matches how
+  // InventoryScreen's create/edit currently swaps content in place.
+  if (showCreateForm) {
+    return (
+      <PurchaseOrderForm
+        key={formKey}
+        onSaved={() => setShowCreateForm(false)}
+        onCancel={() => setShowCreateForm(false)}
+      />
+    );
+  }
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Purchase Orders</Text>
         {isManager && (
-          <TouchableOpacity style={styles.addBtn} disabled>
+          <TouchableOpacity style={styles.addBtn} onPress={openCreateForm}>
             <MaterialIcons name="add" size={18} color="#fff" />
             <Text style={styles.addBtnText}>New PO</Text>
           </TouchableOpacity>
@@ -183,7 +211,6 @@ const styles = StyleSheet.create({
   addBtn: {
     flexDirection: "row", alignItems: "center", gap: 6,
     backgroundColor: "#0369a1", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
-    opacity: 0.5,
   },
   addBtnText: { color: "#fff", fontWeight: "700", fontSize: 13 },
   searchRow: {
