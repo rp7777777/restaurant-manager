@@ -336,7 +336,7 @@ function ItemRow({
         </View>
       </View>
 
-      <Text style={styles.smallLabel}>Unit Cost *</Text>
+      <Text style={styles.smallLabel}>Unit Cost (optional — fill in when known)</Text>
       <TextInput
         style={styles.input}
         value={row.unitCost}
