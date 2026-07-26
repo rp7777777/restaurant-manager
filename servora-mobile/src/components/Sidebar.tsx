@@ -31,6 +31,7 @@ const MENU_SECTIONS: { titleKey: string; items: MenuItem[] }[] = [
       { labelKey: "kitchen",     icon: "restaurant",     route: "/kitchen-module"    },
       { labelKey: "store",       icon: "store",          route: "/store-module"      },
       { labelKey: "purchaseOrders", icon: "receipt-long", route: "/purchase-orders" },
+      { labelKey: "suppliers",   icon: "local-shipping", route: "/suppliers" },
       { labelKey: "employees",   icon: "badge",          route: "/employees-module"  },
       { labelKey: "attendance",  icon: "fact-check",     route: "/attendance-module" },
     ],
