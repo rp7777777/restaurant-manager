@@ -30,7 +30,7 @@ export type PurchaseOrderStatus =
 
 export interface PurchaseOrderItem {
   lineId:       string;  // stable identifier — server-generated, survives add/remove/reorder
-  itemId?:      string;  // optional link to an existing inventory item
+  itemId?:      string | null;  // optional link to an existing inventory item — null when free-text (Firestore rejects undefined)  // optional link to an existing inventory item
   itemName:     string;
   quantity:     number;  // ORDERED quantity, set at creation
   unit:         string;

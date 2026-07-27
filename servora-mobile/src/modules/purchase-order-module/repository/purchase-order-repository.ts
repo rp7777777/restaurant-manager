@@ -81,7 +81,7 @@ export async function createPurchaseOrder(
 
   const items: PurchaseOrderItem[] = input.items.map((item, idx) => ({
   lineId:    `${newPoRef.id}-L${idx + 1}`,  // stable, deterministic, unique within this PO
-  itemId:    item.itemId,
+  itemId:    item.itemId ?? null,  // ✅ Firestore rejects undefined — free-text items (no Inventory link) must write null instead
   itemName:  item.itemName.trim(),
   quantity:  item.quantity,
   unit:      item.unit,
