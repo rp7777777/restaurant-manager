@@ -2,19 +2,14 @@
 // SERVORA ERP — PurchaseOrdersScreen
 // ✅ Composition only — hooks provide data, components render.
 //    Mirrors InventoryScreen.tsx's structure exactly.
-// ✅ PHASE 8.2 SCOPE: List/Card view only — search, status filter
-//    chips, sort. Create/Edit form (multi-item builder) is
-//    deliberately deferred to a follow-up phase (8.2b), same as
-//    Inventory split Card (8.1) from Form (8.1) into separate
-//    reviewable steps.
+// ✅ Tapping a card opens PurchaseOrderDetailScreen (Phase 8.2c) —
+//    replaces the earlier console.log placeholder.
 // ✅ Supplier lookup built once (useMemo) — same pattern as
 //    InventoryScreen's categoryMap.
-// ✅ Tapping a card currently only logs — wired to a detail/edit
-//    view once the form lands.
-// PHASE 8.2
+// PHASE 8.2c
 // ============================================
 
-import React, { useMemo, useCallback, useState } from "react";
+import React, { useMemo, useCallback, useState, useEffect } from "react";
 import {
   View, Text, TextInput, FlatList, TouchableOpacity,
   StyleSheet, Platform, ActivityIndicator,
@@ -31,6 +26,7 @@ import { useSuppliers } from "../../supplier-module/hooks/useSuppliers";
 import { PurchaseOrder } from "../types/purchase-order";
 import PurchaseOrderCard from "../../../components/purchase-orders/PurchaseOrderCard";
 import PurchaseOrderForm from "./PurchaseOrderForm";
+import PurchaseOrderDetailScreen from "./PurchaseOrderDetailScreen";
 
 const STATUS_FILTER_OPTIONS: { value: PurchaseOrderStatusFilter; label: string }[] = [
   { value: "all",       label: "All" },
@@ -70,10 +66,16 @@ export default function PurchaseOrdersScreen() {
     return new Map(suppliers.map((s) => [s.id, s]));
   }, [suppliers]);
 
-  // ✅ Placeholder — will open a detail/edit view once the
-  // PO detail/receive screen (Phase 8.2c) lands.
+  // ✅ Kept as an id (not the whole PurchaseOrder object) — the
+  // list's live subscription (usePurchaseOrders) keeps orders[]
+  // fresh, so re-deriving the current object from that array on
+  // every render means the Detail screen always reflects the
+  // latest data (e.g. right after Approve/Receive) without needing
+  // its own separate fetch or a manual "refresh" callback.
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+
   const openOrder = useCallback((order: PurchaseOrder) => {
-    console.log("Open purchase order:", order.poNumber);
+    setSelectedOrderId(order.id);
   }, []);
 
   const openCreateForm = useCallback(() => {
@@ -82,6 +84,20 @@ export default function PurchaseOrdersScreen() {
   }, []);
 
   const loading = ordersLoading || suppliersLoading;
+
+  const selectedOrder = selectedOrderId
+    ? orders.find((o) => o.id === selectedOrderId)
+    : undefined;
+
+  // ✅ If the selected order vanishes from the live list (e.g.
+  // deleted elsewhere) fall back to the list — done in an effect,
+  // not directly in the render body, since calling setState while
+  // rendering is unsafe in React.
+  useEffect(() => {
+    if (selectedOrderId && !selectedOrder) {
+      setSelectedOrderId(null);
+    }
+  }, [selectedOrderId, selectedOrder]);
 
   // ✅ The Create form replaces the whole screen while open (own
   // scroll view, own header) rather than rendering as a modal on
@@ -93,6 +109,18 @@ export default function PurchaseOrdersScreen() {
         key={formKey}
         onSaved={() => setShowCreateForm(false)}
         onCancel={() => setShowCreateForm(false)}
+      />
+    );
+  }
+
+  if (selectedOrder) {
+    return (
+      <PurchaseOrderDetailScreen
+        order={selectedOrder}
+        supplier={supplierMap.get(selectedOrder.supplierId)}
+        fmt={fmt}
+        onBack={() => setSelectedOrderId(null)}
+        onChanged={() => {}}
       />
     );
   }
