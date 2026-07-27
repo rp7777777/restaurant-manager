@@ -155,14 +155,21 @@ export async function receivePurchaseOrder(
         referenceId:   poId,
       });
     } else {
-      // ── New item — create it with the received quantity as its
-      //    starting stock, then still log a movement for audit
-      //    consistency (every unit in Inventory traces to a
-      //    movement, whether the item is brand-new or not). ──
+      // ── New item — create it with ZERO starting stock, THEN let
+      //    recordStockMovement add receivedQty. Setting
+      //    currentStock: receivedQty here AND recording a movement
+      //    of the same quantity would double-count: the movement
+      //    always computes afterQuantity = beforeQuantity + quantity,
+      //    so if beforeQuantity already equals receivedQty (from
+      //    createInventoryItem), the result becomes 2× receivedQty.
+      //    A movement is still recorded for audit consistency (every
+      //    unit in Inventory traces to a movement, whether the item
+      //    is brand-new or not) — it just does the ONLY stock
+      //    increase, rather than duplicating one already done here. ──
       const newItemId = await createInventoryItem(restaurantId, {
         itemName:     item.itemName,
         categoryId:   line.newItemCategoryId!,
-        currentStock: line.receivedQty,
+        currentStock: 0,
         unit:         item.unit as InventoryUnit,
         unitCost:     (line.unitCost !== undefined && line.unitCost > 0) ? line.unitCost : item.unitCost,
         minStock:     line.newItemMinStock ?? 0,
