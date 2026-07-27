@@ -99,20 +99,37 @@ export default function PurchaseOrderDetailScreen({
   }, [restaurantId, order.id, onChanged]);
 
   const handleApprove = useCallback(() => {
+    const message = `${order.poNumber}${supplier ? ` — Supplier: ${supplier.name}` : ""}\n\nYou can still receive goods afterward.`;
+    // ✅ Alert.alert() doesn't reliably render on react-native-web
+    // (it silently no-ops in some setups) — window.confirm() is the
+    // web-native equivalent and always works in a browser.
+    if (Platform.OS === "web") {
+      if (window.confirm(`Approve Purchase Order?\n\n${message}`)) {
+        doApprove();
+      }
+      return;
+    }
     Alert.alert(
       "Approve Purchase Order?",
-      `This will approve ${order.poNumber}. You can still receive goods afterward.`,
+      message,
       [
         { text: "Cancel", style: "cancel" },
         { text: "Approve", onPress: doApprove },
       ]
     );
-  }, [order.poNumber, doApprove]);
+  }, [order.poNumber, supplier, doApprove]);
 
   const handleCancel = useCallback(() => {
+    const message = `This will cancel ${order.poNumber}. This cannot be undone.`;
+    if (Platform.OS === "web") {
+      if (window.confirm(`Cancel Purchase Order?\n\n${message}`)) {
+        doCancel();
+      }
+      return;
+    }
     Alert.alert(
       "Cancel Purchase Order?",
-      `This will cancel ${order.poNumber}. This cannot be undone.`,
+      message,
       [
         { text: "No", style: "cancel" },
         { text: "Yes, Cancel", style: "destructive", onPress: doCancel },
