@@ -137,9 +137,9 @@ export interface TranslationKeys {
   actions:            string;
   totalThisYear:      string;
 
-  // ── Daily Details ─────────────────────────
+ // ── Daily Details ─────────────────────────
   dailyDetails:       string;
-  reports:            string;
+  report:             string;
   dailyReport:        string;
   date:               string;
   total:              string;

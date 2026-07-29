@@ -134,6 +134,15 @@ export default function DailyReportScreen() {
     : activeSection === "stockIn" ? stockInGroups
     : stockOutGroups;
 
+  // ✅ FlatList's typings need ONE consistent generic type for its
+  // `data` prop — activeGroups is a union (InventoryItem groups OR
+  // StockMovement groups) because it can be either depending on
+  // activeSection, which FlatList's overloads can't resolve. This
+  // cast doesn't change what's rendered — renderItem below still
+  // correctly branches on activeSection and casts each row back to
+  // its real type before reading item-specific fields.
+  const flatListData = activeGroups as unknown as CategorySection<unknown>[];
+
   const stockInTotal  = useMemo(() => stockIn.reduce((s, m) => s + m.movementValue, 0), [stockIn]);
   const stockOutTotal = useMemo(() => stockOut.reduce((s, m) => s + m.movementValue, 0), [stockOut]);
 
@@ -202,21 +211,21 @@ export default function DailyReportScreen() {
         </View>
       ) : (
         <FlatList
-          data={activeGroups}
+          data={flatListData}
           keyExtractor={(g) => g.categoryId}
           contentContainerStyle={styles.list}
           renderItem={({ item: group }) => (
             <View style={styles.categoryBlock}>
               <Text style={styles.categoryTitle}>{group.categoryName}</Text>
               {activeSection === "inventory"
-                ? (group.rows as InventoryItem[]).map((row) => (
+                ? (group.rows as unknown as InventoryItem[]).map((row) => (
                     <View key={row.id} style={styles.row}>
                       <Text style={styles.rowName}>{row.itemName}</Text>
                       <Text style={styles.rowMeta}>{row.currentStock} {row.unit}</Text>
                       <Text style={styles.rowValue}>{fmt(row.totalValue)}</Text>
                     </View>
                   ))
-                : (group.rows as StockMovement[]).map((row) => (
+                : (group.rows as unknown as StockMovement[]).map((row) => (
                     <View key={row.id} style={styles.row}>
                       <Text style={styles.rowName}>{row.itemName}</Text>
                       <Text style={styles.rowMeta}>
