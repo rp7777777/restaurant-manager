@@ -534,9 +534,11 @@ const styles = StyleSheet.create({
   },
   cardTouchable: { flex: 1 },
   card: {
-    borderRadius: 16,
-    padding:      14,
-    gap:          6,
+    flex:           1,
+    justifyContent: "space-between",
+    borderRadius:   16,
+    padding:        14,
+    gap:            6,
   },
   cardTop: {
     flexDirection:  "row",

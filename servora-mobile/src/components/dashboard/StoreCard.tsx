@@ -140,10 +140,12 @@ function StoreCard({
 
 const styles = StyleSheet.create({
  cardTouchable: { flex: 1, marginBottom: 14 },
-  card: {
-    borderRadius: 16,
-    padding:      14,
-    gap:          6,
+ card: {
+    flex:           1,
+    justifyContent: "space-between",
+    borderRadius:   16,
+    padding:        14,
+    gap:            6,
   },
   cardTop: {
     flexDirection: "row",
