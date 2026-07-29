@@ -16,9 +16,13 @@
 //    auto-expand where relevant) the existing DailyDetailsPanel/
 //    MonthlySummaryTable sections on this same page
 // ✅ Store Card — useStoreSummary() hook (live summary +
-//    on-demand expiry/pending counts), tapping navigates to
-//    /store-module. onRefresh (pull-to-refresh) now also refreshes
-//    the Store's on-demand counts alongside alerts/attendance.
+//    on-demand expiry/pending counts). Whole-card tap still goes to
+//    /store-module; individual rows (Low Stock, Expiring Soon,
+//    Expired) now navigate to their own relevant screens instead.
+//    Rendered as a child of DashboardStats so it sits in the same
+//    row/width as Sales/Expenses/Net Profit/Labour Cost/Staff.
+//    onRefresh (pull-to-refresh) also refreshes the Store's
+//    on-demand counts alongside alerts/attendance.
 // FROZEN
 // ============================================
 
@@ -211,6 +215,20 @@ export default function DashboardScreen() {
     router.push("/store-module" as Href);
   }, []);
 
+  // ✅ Store Card row taps — each opens the relevant filtered/
+  // grouped list directly, instead of always going to Store module.
+  const onLowStockPress = useCallback(() => {
+    router.push("/inventory-module?stockStatus=lowStock" as Href);
+  }, []);
+
+  const onExpiringSoonPress = useCallback(() => {
+    router.push("/expiry-list?focus=expiringSoon" as Href);
+  }, []);
+
+  const onExpiredPress = useCallback(() => {
+    router.push("/expiry-list?focus=expired" as Href);
+  }, []);
+
   // ✅ Recalculate Stats — request → confirm → run
   const onRecalculateRequest = useCallback(() => {
     setShowRecalcConfirm(true);
@@ -286,14 +304,19 @@ export default function DashboardScreen() {
           onProfitTodayPress={onProfitTodayPress}
           onProfitMonthPress={onProfitMonthPress}
           onProfitYearPress={onProfitYearPress}
-        />
-
-        <StoreCard
-          data={storeData}
-          loading={storeLoading}
-          fmt={fmt}
-          onPress={onStorePress}
-        />
+        >
+          <View style={styles.storeCardRow}>
+            <StoreCard
+              data={storeData}
+              loading={storeLoading}
+              fmt={fmt}
+              onPress={onStorePress}
+              onLowStockPress={onLowStockPress}
+              onExpiringSoonPress={onExpiringSoonPress}
+              onExpiredPress={onExpiredPress}
+            />
+          </View>
+        </DashboardStats>
 
         <AlertsPanel
           alerts={alerts}
@@ -382,6 +405,14 @@ export default function DashboardScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   body:      { padding: 14 },
+  // ✅ Wraps StoreCard to visually match DashboardStats's card
+  // sizing (220px on web) — StoreCard itself is unchanged/FROZEN-
+  // compatible; this just constrains the space it's given, since
+  // its own cardTouchable style has no width/flex set and simply
+  // fills whatever container it's placed in.
+  storeCardRow: {
+    ...(Platform.OS === "web" ? { width: 220 } : {}),
+  },
   webRow: {
     flexDirection: "row",
     gap:           14,

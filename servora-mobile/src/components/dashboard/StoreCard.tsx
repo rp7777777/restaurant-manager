@@ -4,7 +4,14 @@
 //    counts) from useStoreSummary() — Low Stock, Pending Kitchen
 //    Requests, Approved Purchase Orders, Expiring Soon, Expired,
 //    Stock Value.
-// ✅ Tapping the card navigates to the Store module.
+// ✅ EACH row can now navigate independently (onLowStockPress,
+//    onExpiringSoonPress, onExpiredPress) — previously the whole
+//    card had one onPress that always went to /store-module
+//    regardless of which row was tapped. All three per-row props
+//    are optional; the whole-card onPress remains as a fallback for
+//    the header/chevron tap area and rows without their own
+//    handler, so existing callers that only pass onPress keep
+//    working unchanged.
 // ✅ Pure presentation — no Firestore/business logic here (the hook
 //    owns that).
 // FROZEN
@@ -25,29 +32,45 @@ interface StoreCardProps {
   data:      StoreSummaryData;
   loading:   boolean;
   fmt:       (n: number) => string;
-  onPress?:  () => void;
+  onPress?:  () => void;               // fallback — whole-card tap / header
+  onLowStockPress?:     () => void;    // "Low Stock" row
+  onExpiringSoonPress?: () => void;    // "Expiring Soon" row
+  onExpiredPress?:      () => void;    // "Expired" row
 }
 
 interface StatusRowProps {
-  icon:  keyof typeof MaterialIcons.glyphMap;
-  color: string;
-  label: string;
-  value: number;
+  icon:     keyof typeof MaterialIcons.glyphMap;
+  color:    string;
+  label:    string;
+  value:    number;
+  onPress?: () => void;
 }
 
-const StatusRow = memo(function StatusRow({ icon, color, label, value }: StatusRowProps) {
+const StatusRow = memo(function StatusRow({ icon, color, label, value, onPress }: StatusRowProps) {
+  const RowWrapper = onPress ? TouchableOpacity : View;
   return (
-    <View style={styles.row}>
+    <RowWrapper
+      {...(onPress ? { onPress, activeOpacity: 0.7 } : {})}
+      style={styles.row}
+    >
       <View style={styles.rowLeft}>
         <MaterialIcons name={icon} size={16} color={color} />
         <Text style={styles.rowLabel}>{label}</Text>
       </View>
-      <Text style={[styles.rowValue, value > 0 && { color }]}>{value}</Text>
-    </View>
+      <View style={styles.rowRight}>
+        <Text style={[styles.rowValue, value > 0 && { color }]}>{value}</Text>
+        {onPress && (
+          <MaterialIcons name="chevron-right" size={14} color="rgba(255,255,255,0.35)" />
+        )}
+      </View>
+    </RowWrapper>
   );
 });
 
-function StoreCard({ data, loading, fmt, onPress }: StoreCardProps) {
+function StoreCard({
+  data, loading, fmt, onPress,
+  onLowStockPress, onExpiringSoonPress, onExpiredPress,
+}: StoreCardProps) {
   const CardWrapper = onPress ? TouchableOpacity : View;
 
   return (
@@ -76,6 +99,7 @@ function StoreCard({ data, loading, fmt, onPress }: StoreCardProps) {
             color="#ef4444"
             label="Low Stock"
             value={data.lowStockCount}
+            onPress={onLowStockPress}
           />
           <StatusRow
             icon="restaurant"
@@ -94,12 +118,14 @@ function StoreCard({ data, loading, fmt, onPress }: StoreCardProps) {
             color="#fb923c"
             label="Expiring Soon"
             value={data.expiringSoon}
+            onPress={onExpiringSoonPress}
           />
           <StatusRow
             icon="dangerous"
             color="#dc2626"
             label="Expired"
             value={data.expired}
+            onPress={onExpiredPress}
           />
         </View>
 
@@ -140,6 +166,7 @@ const styles = StyleSheet.create({
     paddingVertical:   7,
   },
   rowLeft:  { flexDirection: "row", alignItems: "center", gap: 8 },
+  rowRight: { flexDirection: "row", alignItems: "center", gap: 2 },
   rowLabel: { color: "rgba(255,255,255,0.75)", fontSize: 12, fontWeight: "600" },
   rowValue: { color: "rgba(255,255,255,0.5)", fontSize: 14, fontWeight: "800" },
   footerRow: {

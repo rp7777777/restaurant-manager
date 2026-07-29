@@ -131,9 +131,29 @@ export async function receivePurchaseOrder(
     const line = lineByLineId.get(item.lineId)!;
 
     if (item.itemId) {
-      // ── Existing item — update cost/expiry/batch FIRST, then
-      //    record the movement (which snapshots the NOW-current
-      //    unitCost). ──
+      // ── Existing item — compute a WEIGHTED AVERAGE unit cost
+      //    before updating, then record the movement (which
+      //    snapshots the NOW-current, already-averaged unitCost).
+      //
+      //    Why weighted average, not simple replace: if 22kg is
+      //    already in stock at €16/kg (€352 total) and 11kg more
+      //    arrives at €11/kg (€121), simply overwriting unitCost to
+      //    €11 would silently rewrite the value of the ORIGINAL
+      //    22kg too — Stock Value would read 33kg × €11 = €363
+      //    instead of the true €352 + €121 = €473 actually spent.
+      //    Weighted average keeps the total euro value correct:
+      //    (22×16 + 11×11) / 33 = €14.33/kg × 33kg = €473. ✔
+      //
+      //    This does NOT preserve which kg came from which batch/
+      //    price (that needs a proper per-batch ledger — see
+      //    InventoryBatch in servora-roadmap.md, a larger future
+      //    phase) — but unlike simple replace, it never corrupts
+      //    the TOTAL value, and every individual receive's real
+      //    price is still separately preserved forever on its own
+      //    StockMovement record via unitCostAtTime (mandatory,
+      //    snapshotted, never re-derived) — so the full price
+      //    history is not lost even though this item's single
+      //    unitCost field only shows the current blended average. ──
       const existing = await getInventoryItemById(restaurantId, item.itemId);
       if (!existing) {
         throw new Error(
@@ -141,8 +161,19 @@ export async function receivePurchaseOrder(
         );
       }
 
+      const receivedUnitCost = (line.unitCost !== undefined && line.unitCost > 0)
+        ? line.unitCost
+        : existing.unitCost;
+
+      const oldValue      = existing.currentStock * existing.unitCost;
+      const newValue      = line.receivedQty * receivedUnitCost;
+      const combinedStock = existing.currentStock + line.receivedQty;
+      const weightedUnitCost = combinedStock > 0
+        ? Math.round(((oldValue + newValue) / combinedStock) * 100) / 100
+        : receivedUnitCost;
+
       await updateInventoryItem(restaurantId, item.itemId, existing, {
-        unitCost:   (line.unitCost !== undefined && line.unitCost > 0) ? line.unitCost : existing.unitCost,
+        unitCost:   weightedUnitCost,
         expiryDate: line.expiryDate,
         batchNo:    line.lotNumber,
       });

@@ -10,14 +10,19 @@
 //    yet (fresh/existing restaurant that predates the seeding
 //    system), manager-only. Runs the idempotent
 //    seedDefaultStoreTaxonomy() once.
+// ✅ Deep-link support — Dashboard's "Low Stock" row can open this
+//    screen pre-filtered via ?stockStatus=lowStock, applied once on
+//    mount so it doesn't fight the user if they change the filter
+//    chips afterward.
 // FROZEN
 // ============================================
 
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
 import {
   View, Text, TextInput, FlatList, Modal, ScrollView,
   TouchableOpacity, StyleSheet, Platform, ActivityIndicator, Alert,
 } from "react-native";
+import { useLocalSearchParams } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useApp } from "../../../context/AppContext";
 import { useInventory } from "../hooks/useInventory";
@@ -58,6 +63,18 @@ export default function InventoryScreen() {
     filters, filteredItems,
     setSearchQuery, setCategoryId, setStockStatus, setSort,
   } = useInventoryFilters(items);
+
+  // ✅ Deep-link support — Dashboard's "Low Stock" row navigates to
+  // /inventory-module?stockStatus=lowStock. Applied once on mount
+  // (empty dep array) so it sets the initial filter without fighting
+  // the user if they change it afterward via the filter chips.
+  const params = useLocalSearchParams<{ stockStatus?: string }>();
+  useEffect(() => {
+    if (params.stockStatus === "lowStock" || params.stockStatus === "outOfStock") {
+      setStockStatus(params.stockStatus);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const { groups: categoryGroups, categories, loading: categoriesLoading } =
     useCategoriesForPicker(restaurantId);
   const { suppliers } = useSuppliers(restaurantId);

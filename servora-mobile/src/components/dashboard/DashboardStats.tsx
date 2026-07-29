@@ -10,6 +10,9 @@
 // ✅ Year row clickable (structure stays open for a future
 //    "vs Last Year" diff once 2025+ comparison data exists — just
 //    swap { type: "new" } for a real calcAbsDiff() call then)
+// ✅ Optional children slot at the end of the row — lets a caller
+//    render an extra card (e.g. Dashboard's StoreCard) inside the
+//    same flex-wrap row as the cards below, at the same width.
 // ✅ Theme compatible, React.memo, TypeScript typed, responsive
 // FROZEN
 // ============================================
@@ -35,6 +38,12 @@ interface DashboardStatsProps {
   onProfitTodayPress?: () => void;
   onProfitMonthPress?: () => void;
   onProfitYearPress?:  () => void;
+  // ✅ Optional extra card(s) rendered inside the SAME flex-wrap row
+  // as the cards above — lets a caller (e.g. StoreCard on the
+  // Dashboard) sit visually alongside Sales/Expenses/Net Profit/
+  // Labour Cost/Staff at the same card width, without this
+  // component needing to know anything about what's being passed in.
+  children?: React.ReactNode;
 }
 
 // ── % Trend calculation (Sales/Expenses) ──────
@@ -378,7 +387,7 @@ const SimpleStatCard = memo(function SimpleStatCard({
 
 // ── Main Component ────────────────────────────
 function DashboardStats({
-  stats, attendance, onProfitTodayPress, onProfitMonthPress, onProfitYearPress,
+  stats, attendance, onProfitTodayPress, onProfitMonthPress, onProfitYearPress, children,
 }: DashboardStatsProps) {
   const { fmt, t } = useApp();
   const router = useRouter();
@@ -502,6 +511,8 @@ function DashboardStats({
         onPress={() => router.push("/attendance-module" as any)}
         t={t}
       />
+
+      {children}
     </View>
   );
 }
