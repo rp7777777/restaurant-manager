@@ -12,7 +12,10 @@
 //    swap { type: "new" } for a real calcAbsDiff() call then)
 // ✅ Optional children slot at the end of the row — lets a caller
 //    render an extra card (e.g. Dashboard's StoreCard) inside the
-//    same flex-wrap row as the cards below, at the same width.
+//    same flex-wrap row as the cards below.
+// ✅ cardWidth is a MINIMUM only (not fixed) — combined with
+//    cardTouchable's flex:1, every card stretches equally to fill
+//    the row's available width, so they all end up the same size.
 // ✅ Theme compatible, React.memo, TypeScript typed, responsive
 // FROZEN
 // ============================================
@@ -41,7 +44,7 @@ interface DashboardStatsProps {
   // ✅ Optional extra card(s) rendered inside the SAME flex-wrap row
   // as the cards above — lets a caller (e.g. StoreCard on the
   // Dashboard) sit visually alongside Sales/Expenses/Net Profit/
-  // Labour Cost/Staff at the same card width, without this
+  // Labour Cost/Staff, stretching to the same size, without this
   // component needing to know anything about what's being passed in.
   children?: React.ReactNode;
 }
@@ -393,7 +396,11 @@ function DashboardStats({
   const router = useRouter();
 
   const { width }  = useWindowDimensions();
-  const cardWidth  = isWeb ? 220 : (width - 52) / 2;
+  // ✅ minWidth, not a fixed width — cardTouchable already has
+  // flex: 1, so cards stretch to equally fill the row's available
+  // width (all ending up the same size, matching Net Profit's
+  // width) rather than staying pinned at a fixed narrow size.
+  const cardWidth  = isWeb ? 180 : (width - 52) / 2;
 
   const todayProfit = stats.todaySales - stats.todayExpenses;
   const monthProfit = stats.monthSales - stats.monthExpenses;

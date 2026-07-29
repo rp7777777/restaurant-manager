@@ -405,13 +405,15 @@ export default function DashboardScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   body:      { padding: 14 },
-  // ✅ Wraps StoreCard to visually match DashboardStats's card
-  // sizing (220px on web) — StoreCard itself is unchanged/FROZEN-
-  // compatible; this just constrains the space it's given, since
-  // its own cardTouchable style has no width/flex set and simply
-  // fills whatever container it's placed in.
+ // ✅ Wraps StoreCard so it stretches equally with DashboardStats's
+  // other cards (flex: 1, same as their own cardTouchable style) —
+  // StoreCard itself has no flex/width set and simply fills
+  // whatever container it's placed in, so this gives it the same
+  // growth behavior as Sales/Expenses/Net Profit/Labour Cost/Staff,
+  // all ending up the same size rather than pinned at a fixed width.
   storeCardRow: {
-    ...(Platform.OS === "web" ? { width: 220 } : {}),
+    flex:     1,
+    minWidth: isWeb ? 180 : undefined,
   },
   webRow: {
     flexDirection: "row",

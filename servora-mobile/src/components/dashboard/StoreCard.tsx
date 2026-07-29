@@ -139,7 +139,7 @@ function StoreCard({
 }
 
 const styles = StyleSheet.create({
-  cardTouchable: { marginBottom: 14 },
+ cardTouchable: { flex: 1, marginBottom: 14 },
   card: {
     borderRadius: 16,
     padding:      14,
