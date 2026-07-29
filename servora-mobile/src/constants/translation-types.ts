@@ -139,7 +139,8 @@ export interface TranslationKeys {
 
   // ── Daily Details ─────────────────────────
   dailyDetails:       string;
-  report:             string;
+  reports:            string;
+  dailyReport:        string;
   date:               string;
   total:              string;
 

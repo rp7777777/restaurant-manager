@@ -20,6 +20,7 @@ const en: Translation = {
   billing:            "Billing",
   kitchen:            "Kitchen",
   reports:            "Reports",
+  dailyReport:        "Daily Report",
   payroll:            "Payroll",
   employees:          "Employees",
   suppliers:          "Suppliers",

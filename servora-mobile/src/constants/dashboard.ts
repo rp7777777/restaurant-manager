@@ -55,6 +55,7 @@ export const MENU_ITEMS: DashboardMenuItem[] = [
   { labelKey: "payroll",    icon: "payments",        route: "/payroll-module",     color: "#14b8a6" },
   { labelKey: "schedule",   icon: "calendar-month",  route: "/schedule-module",    color: "#f97316" },
   { labelKey: "reports",    icon: "bar-chart",       route: "/analytics",          color: "#3b82f6" },
+  { labelKey: "dailyReport", icon: "receipt-long",   route: "/daily-report",       color: "#0891b2" },
   { labelKey: "settings",   icon: "settings",        route: "/settings",           color: "#64748b" },
 ];
 
