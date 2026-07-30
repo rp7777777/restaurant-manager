@@ -13,11 +13,13 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   collection, onSnapshot, query, orderBy,
-  doc, updateDoc, serverTimestamp, where,
-  addDoc, getDoc,
+  doc, updateDoc, serverTimestamp,
 } from "firebase/firestore";
 import { db, auth } from "../../firebase";
 import { useApp } from "../../context/AppContext";
+import { recordStockMovement } from "../../modules/stock-movement-module/services/stock-movement-service";
+import { useInventory } from "../../modules/inventory-module/hooks/useInventory";
+import { InventoryItem } from "../../modules/inventory-module/types/inventory";
 
 // ── Types ────────────────────────────────────
 type RequestStatus = "PENDING" | "APPROVED" | "ISSUED" | "REJECTED";
@@ -25,6 +27,7 @@ type RequestStatus = "PENDING" | "APPROVED" | "ISSUED" | "REJECTED";
 interface KitchenRequest {
   id: string;
   itemName: string;
+  inventoryId?: string | null;  // ✅ links to a real Inventory item, when known
   closingStock: number;
   minimumLevel: number;
   orderQuantity: number;
@@ -65,6 +68,15 @@ export default function StoreScreen() {
   const [issueQty, setIssueQty] = useState("");
   const [showIssueModal, setShowIssueModal] = useState(false);
   const [processing, setProcessing] = useState(false);
+
+  // ✅ Only relevant when selectedRequest.inventoryId is missing
+  // (an older request created before Kitchen requests linked to
+  // Inventory) — lets the Store Keeper search and pick the real
+  // Inventory item at issue time instead of guessing by name match.
+  const { items: inventoryItems } = useInventory(restaurantId);
+  const [linkItemQuery, setLinkItemQuery] = useState("");
+  const [linkedItem, setLinkedItem] = useState<InventoryItem | undefined>(undefined);
+  const [showLinkPicker, setShowLinkPicker] = useState(false);
 
   // ── Load requests ─────────────────────────
   useEffect(() => {
@@ -130,6 +142,20 @@ export default function StoreScreen() {
   const openIssueModal = (req: KitchenRequest) => {
     setSelectedRequest(req);
     setIssueQty(req.orderQuantity.toString());
+    setLinkItemQuery("");
+    setShowLinkPicker(false);
+    // ✅ Suggest an exact-name match as a starting point when the
+    // request isn't linked yet — the Store Keeper still has to see
+    // and effectively confirm it (it's shown as "Suggested match",
+    // changeable via the search picker), never silently auto-applied.
+    if (!req.inventoryId) {
+      const suggested = inventoryItems.find(
+        (it) => it.itemName.toLowerCase() === req.itemName.toLowerCase()
+      );
+      setLinkedItem(suggested);
+    } else {
+      setLinkedItem(undefined);
+    }
     setShowIssueModal(true);
   };
 
@@ -142,9 +168,41 @@ export default function StoreScreen() {
       return;
     }
 
+    // ✅ Resolve which Inventory item this issue applies to — either
+    // already linked on the request, or the one just picked/
+    // confirmed in this modal (required for older, unlinked
+    // requests). No itemName-matching fallback — an unresolved link
+    // blocks issuing rather than silently guessing.
+    const resolvedInventoryId = selectedRequest.inventoryId ?? linkedItem?.id;
+    if (!resolvedInventoryId) {
+      Alert.alert("Error", "Please link this request to an Inventory item first");
+      return;
+    }
+
     setProcessing(true);
     try {
-      // Update request status
+      // ✅ THE single source of truth for this deduction —
+      // recordStockMovement() (FROZEN) atomically: decreases
+      // InventoryItem.currentStock, recomputes totalValue/
+      // isLowStock, writes a StockMovement audit record (with
+      // unitCostAtTime/movementValue), and syncs the Store Summary.
+      // Replaces the old itemName-matching query + manual
+      // quantity/isLowStock write + separate stockIssues log, none
+      // of which touched currentStock or created a StockMovement —
+      // which is why Kitchen issues never showed up in Daily
+      // Report's Stock-Out or in real Inventory deductions.
+      await recordStockMovement(restaurantId, {
+        inventoryId:   resolvedInventoryId,
+        movementType:  "KITCHEN_ISSUE",
+        quantity:      qty,
+        referenceType: "KITCHEN_REQUEST",
+        referenceId:   selectedRequest.id,
+        createdByName: userProfile?.name ?? auth.currentUser?.email ?? "Store",
+      });
+
+      // Update request status — and save the resolved inventoryId
+      // back onto it if it wasn't already linked, so this request
+      // never needs re-linking again.
       await updateDoc(
         doc(db, "restaurants", restaurantId, "kitchenRequests", selectedRequest.id),
         {
@@ -153,48 +211,7 @@ export default function StoreScreen() {
           issuedBy: userProfile?.name ?? auth.currentUser?.email ?? "Store",
           issuedAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-        }
-      );
-
-      // Auto deduct from inventory
-      const inventorySnap = await new Promise<any>((resolve) => {
-        const unsub = onSnapshot(
-          query(
-            collection(db, "restaurants", restaurantId, "inventory"),
-            where("itemName", "==", selectedRequest.itemName)
-          ),
-          (snap) => { unsub(); resolve(snap); }
-        );
-      });
-
-      if (!inventorySnap.empty) {
-        const inventoryDoc = inventorySnap.docs[0];
-        const currentQty = Number(inventoryDoc.data().quantity ?? 0);
-        const newQty = Math.max(0, currentQty - qty);
-        const minStock = Number(inventoryDoc.data().minStock ?? 0);
-
-        await updateDoc(
-          doc(db, "restaurants", restaurantId, "inventory", inventoryDoc.id),
-          {
-            quantity: newQty,
-            isLowStock: newQty <= minStock,
-            updatedAt: serverTimestamp(),
-          }
-        );
-      }
-
-      // Log issue transaction
-      await addDoc(
-        collection(db, "restaurants", restaurantId, "stockIssues"),
-        {
-          itemName: selectedRequest.itemName,
-          unit: selectedRequest.unit,
-          requestedQty: selectedRequest.orderQuantity,
-          issuedQty: qty,
-          issuedBy: userProfile?.name ?? "Store",
-          kitchenRequestId: selectedRequest.id,
-          restaurantId,
-          createdAt: serverTimestamp(),
+          ...(selectedRequest.inventoryId ? {} : { inventoryId: resolvedInventoryId }),
         }
       );
 
@@ -411,6 +428,63 @@ export default function StoreScreen() {
                 <Text style={[styles.modalSubText, { color: theme.textSecondary }]}>
                   Requested: {selectedRequest.orderQuantity} {selectedRequest.unit}
                 </Text>
+
+                {!selectedRequest.inventoryId && (
+                  <View style={styles.linkSection}>
+                    <View style={styles.linkWarningRow}>
+                      <MaterialIcons name="link-off" size={14} color="#d97706" />
+                      <Text style={styles.linkWarningText}>Inventory Item Not Linked</Text>
+                    </View>
+
+                    {linkedItem ? (
+                      <View style={styles.suggestedMatchRow}>
+                        <View style={styles.suggestedMatchLeft}>
+                          <MaterialIcons name="check-circle" size={14} color="#059669" />
+                          <Text style={[styles.suggestedMatchText, { color: theme.text }]}>
+                            {linkItemQuery.trim() ? "Selected" : "Suggested match"}: {linkedItem.itemName}
+                          </Text>
+                        </View>
+                        <TouchableOpacity onPress={() => { setLinkedItem(undefined); setShowLinkPicker(true); }}>
+                          <Text style={styles.changeLinkText}>Change</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <>
+                        <View style={[styles.inputWrapper, { backgroundColor: theme.bg, borderColor: theme.border }]}>
+                          <MaterialIcons name="search" size={14} color={theme.textSecondary} />
+                          <TextInput
+                            style={[styles.input, { color: theme.text }]}
+                            placeholder={`Search Inventory for "${selectedRequest.itemName}"...`}
+                            placeholderTextColor={theme.textSecondary}
+                            value={linkItemQuery}
+                            onChangeText={(text) => { setLinkItemQuery(text); setShowLinkPicker(true); }}
+                            onFocus={() => setShowLinkPicker(true)}
+                          />
+                        </View>
+                        {showLinkPicker && linkItemQuery.trim().length >= 2 && (
+                          <ScrollView style={[styles.itemPickerList, { backgroundColor: theme.bg, borderColor: theme.border }]} nestedScrollEnabled>
+                            {inventoryItems
+                              .filter((it) => it.itemName.toLowerCase().includes(linkItemQuery.trim().toLowerCase()))
+                              .slice(0, 8)
+                              .map((it) => (
+                                <TouchableOpacity
+                                  key={it.id}
+                                  style={styles.itemPickerRow}
+                                  onPress={() => { setLinkedItem(it); setShowLinkPicker(false); }}
+                                >
+                                  <Text style={[styles.itemPickerRowText, { color: theme.text }]}>{it.itemName}</Text>
+                                  <Text style={[styles.itemPickerRowSub, { color: theme.textSecondary }]}>
+                                    {it.currentStock} {it.unit} in stock
+                                  </Text>
+                                </TouchableOpacity>
+                              ))}
+                          </ScrollView>
+                        )}
+                      </>
+                    )}
+                  </View>
+                )}
+
                 <Text style={[styles.fieldLabel, { color: theme.textSecondary, marginTop: 14 }]}>
                   ISSUE QUANTITY ({selectedRequest.unit})
                 </Text>
@@ -438,9 +512,12 @@ export default function StoreScreen() {
             )}
             <View style={styles.modalBtns}>
               <TouchableOpacity
-                style={[styles.modalBtn, { backgroundColor: "#10b981" }, processing && { opacity: 0.7 }]}
+                style={[
+                  styles.modalBtn, { backgroundColor: "#10b981" },
+                  (processing || (!selectedRequest?.inventoryId && !linkedItem)) && { opacity: 0.5 },
+                ]}
                 onPress={handleIssue}
-                disabled={processing}
+                disabled={processing || (!selectedRequest?.inventoryId && !linkedItem)}
               >
                 {processing ? <ActivityIndicator color="#fff" size="small" /> : (
                   <>
@@ -465,6 +542,24 @@ export default function StoreScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  // ✅ New styles for the "link unlinked request to Inventory" UI
+  linkSection: { marginTop: 10 },
+  linkWarningRow: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 6 },
+  linkWarningText: { fontSize: 12, fontWeight: "700", color: "#d97706" },
+  suggestedMatchRow: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    backgroundColor: "#05966915", borderRadius: 8, padding: 10,
+  },
+  suggestedMatchLeft: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1 },
+  suggestedMatchText: { fontSize: 13, fontWeight: "600" },
+  changeLinkText: { fontSize: 12, fontWeight: "700", color: "#0369a1" },
+  itemPickerList: {
+    borderWidth: 1, borderRadius: 8,
+    marginTop: 4, maxHeight: 160, overflow: "hidden",
+  },
+  itemPickerRow: { paddingHorizontal: 12, paddingVertical: 10 },
+  itemPickerRowText: { fontSize: 14, fontWeight: "600" },
+  itemPickerRowSub: { fontSize: 11, marginTop: 2 },
   header: {
     paddingTop: Platform.OS === "web" ? 28 : 50,
     paddingBottom: 24, paddingHorizontal: 20,

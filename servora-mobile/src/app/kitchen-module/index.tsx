@@ -3,7 +3,7 @@
 // Ingredient Request → Store notification
 // ============================================
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import {
   View, Text, StyleSheet, ScrollView, TextInput,
   TouchableOpacity, Alert, ActivityIndicator,
@@ -17,6 +17,8 @@ import {
 } from "firebase/firestore";
 import { db, auth } from "../../firebase";
 import { useApp } from "../../context/AppContext";
+import { useInventory } from "../../modules/inventory-module/hooks/useInventory";
+import { InventoryItem } from "../../modules/inventory-module/types/inventory";
 
 // ── Types ────────────────────────────────────
 type RequestStatus = "PENDING" | "APPROVED" | "ISSUED" | "REJECTED";
@@ -24,6 +26,7 @@ type RequestStatus = "PENDING" | "APPROVED" | "ISSUED" | "REJECTED";
 interface IngredientRequest {
   id: string;
   itemName: string;
+  inventoryId?: string;  // ✅ links this request to a real Inventory item — lets Store's Issue step call recordStockMovement() directly instead of matching by name
   closingStock: number;
   minimumLevel: number;
   orderQuantity: number;
@@ -72,6 +75,8 @@ export default function KitchenScreen() {
 
   // Form
   const [itemName, setItemName] = useState("");
+  const [inventoryId, setInventoryId] = useState<string | undefined>(undefined);
+  const [showItemPicker, setShowItemPicker] = useState(false);
   const [closingStock, setClosingStock] = useState("");
   const [minimumLevel, setMinimumLevel] = useState("");
   const [orderQuantity, setOrderQuantity] = useState("");
@@ -79,9 +84,38 @@ export default function KitchenScreen() {
   const [requiredDate, setRequiredDate] = useState(todayStr());
   const [note, setNote] = useState("");
 
+  // ✅ Live Inventory list to search against — same debounced
+  // search-or-freetext pattern as the Purchase Order Create form's
+  // item picker, so a Kitchen request can link to a real
+  // inventoryId when the item already exists, while still allowing
+  // a free-text name for something not yet in Inventory.
+  const { items: inventoryItems } = useInventory(restaurantId);
+  const [debouncedItemName, setDebouncedItemName] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedItemName(itemName), 300);
+    return () => clearTimeout(timer);
+  }, [itemName]);
+
+  const itemMatches = useMemo(() => {
+    const q = debouncedItemName.trim().toLowerCase();
+    if (q.length < 2) return [];
+    return inventoryItems
+      .filter((it) => it.itemName.toLowerCase().includes(q))
+      .slice(0, 8);
+  }, [debouncedItemName, inventoryItems]);
+
+  const pickInventoryItem = (item: InventoryItem) => {
+    setItemName(item.itemName);
+    setInventoryId(item.id);
+    setUnit(item.unit);
+    setShowItemPicker(false);
+  };
+
   // Multi-item form
   const [requestItems, setRequestItems] = useState<{
     itemName: string;
+    inventoryId?: string;
     closingStock: string;
     minimumLevel: string;
     orderQuantity: string;
@@ -110,12 +144,13 @@ export default function KitchenScreen() {
     }
     setRequestItems([...requestItems, {
       itemName: itemName.trim(),
+      inventoryId,
       closingStock,
       minimumLevel,
       orderQuantity,
       unit,
     }]);
-    setItemName(""); setClosingStock("");
+    setItemName(""); setInventoryId(undefined); setClosingStock("");
     setMinimumLevel(""); setOrderQuantity("");
   };
 
@@ -139,6 +174,7 @@ export default function KitchenScreen() {
           collection(db, "restaurants", restaurantId, "kitchenRequests"),
           {
             itemName: item.itemName,
+            inventoryId: item.inventoryId ?? null,  // ✅ null (not undefined) — Firestore rejects undefined
             closingStock: Number(item.closingStock || 0),
             minimumLevel: Number(item.minimumLevel || 0),
             orderQuantity: Number(item.orderQuantity),
@@ -252,12 +288,42 @@ export default function KitchenScreen() {
                 <MaterialIcons name="restaurant" size={14} color={theme.textSecondary} />
                 <TextInput
                   style={[styles.input, { color: theme.text }]}
-                  placeholder="Item Name"
+                  placeholder="Item Name — search or type new"
                   placeholderTextColor={theme.textSecondary}
                   value={itemName}
-                  onChangeText={setItemName}
+                  onChangeText={(text) => {
+                    // ✅ Typing after a previous pick clears inventoryId —
+                    // the user is now describing something else, so the
+                    // old link would silently mismatch the new name.
+                    setItemName(text);
+                    setInventoryId(undefined);
+                    setShowItemPicker(true);
+                  }}
+                  onFocus={() => setShowItemPicker(true)}
                 />
               </View>
+              {inventoryId && (
+                <View style={styles.linkedBadge}>
+                  <MaterialIcons name="link" size={12} color="#059669" />
+                  <Text style={styles.linkedBadgeText}>Linked to Inventory</Text>
+                </View>
+              )}
+              {showItemPicker && itemMatches.length > 0 && (
+                <ScrollView style={[styles.itemPickerList, { backgroundColor: theme.surface, borderColor: theme.border }]} nestedScrollEnabled>
+                  {itemMatches.map((it) => (
+                    <TouchableOpacity
+                      key={it.id}
+                      style={styles.itemPickerRow}
+                      onPress={() => pickInventoryItem(it)}
+                    >
+                      <Text style={[styles.itemPickerRowText, { color: theme.text }]}>{it.itemName}</Text>
+                      <Text style={[styles.itemPickerRowSub, { color: theme.textSecondary }]}>
+                        {it.currentStock} {it.unit} in stock
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
 
               <View style={styles.row3}>
                 <View style={styles.thirdField}>
@@ -445,6 +511,19 @@ export default function KitchenScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  // ✅ New styles for the Inventory search/link UI
+  linkedBadge: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    marginTop: 4, marginBottom: 4, alignSelf: "flex-start",
+  },
+  linkedBadgeText: { fontSize: 11, color: "#059669", fontWeight: "700" },
+  itemPickerList: {
+    borderWidth: 1, borderRadius: 8,
+    marginBottom: 8, maxHeight: 160, overflow: "hidden",
+  },
+  itemPickerRow: { paddingHorizontal: 12, paddingVertical: 10 },
+  itemPickerRowText: { fontSize: 14, fontWeight: "600" },
+  itemPickerRowSub: { fontSize: 11, marginTop: 2 },
   header: {
     paddingTop: Platform.OS === "web" ? 28 : 50,
     paddingBottom: 24, paddingHorizontal: 20,
