@@ -13,11 +13,12 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   collection, addDoc, onSnapshot, query,
-  orderBy, doc, updateDoc, serverTimestamp, where,
+  orderBy, serverTimestamp,
 } from "firebase/firestore";
 import { db, auth } from "../../firebase";
 import { useApp } from "../../context/AppContext";
 import { useInventory } from "../../modules/inventory-module/hooks/useInventory";
+import { useCategoriesForPicker } from "../../modules/inventory-module/hooks/useCategoriesForPicker";
 import { InventoryItem } from "../../modules/inventory-module/types/inventory";
 
 // ── Types ────────────────────────────────────
@@ -27,6 +28,7 @@ interface IngredientRequest {
   id: string;
   itemName: string;
   inventoryId?: string;  // ✅ links this request to a real Inventory item — lets Store's Issue step call recordStockMovement() directly instead of matching by name
+  categoryId?: string | null;  // ✅ same category the item belongs to in Inventory, for grouping/reporting
   closingStock: number;
   minimumLevel: number;
   orderQuantity: number;
@@ -72,6 +74,11 @@ export default function KitchenScreen() {
   const [showForm, setShowForm] = useState(false);
   const [showUnitPicker, setShowUnitPicker] = useState(false);
   const [activeTab, setActiveTab] = useState<"new" | "history">("new");
+  // ✅ Day-by-day view for Request History — same pattern as Store
+  // module's "All Requests" tab: defaults to today, filters by
+  // requiredDate, prev/next-day navigation instead of one endless
+  // mixed list of every request ever sent.
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
 
   // Form
   const [itemName, setItemName] = useState("");
@@ -90,7 +97,14 @@ export default function KitchenScreen() {
   // inventoryId when the item already exists, while still allowing
   // a free-text name for something not yet in Inventory.
   const { items: inventoryItems } = useInventory(restaurantId);
+  const { categories } = useCategoriesForPicker(restaurantId);
   const [debouncedItemName, setDebouncedItemName] = useState("");
+  // ✅ Selecting a category first narrows the item search to that
+  // category's items only, and groups the added-items list below by
+  // category — mirrors how Inventory itself is organized, so Chefs
+  // pick from the same categories Store already uses.
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | undefined>(undefined);
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedItemName(itemName), 300);
@@ -101,21 +115,32 @@ export default function KitchenScreen() {
     const q = debouncedItemName.trim().toLowerCase();
     if (q.length < 2) return [];
     return inventoryItems
+      .filter((it) => !selectedCategoryId || it.categoryId === selectedCategoryId)
       .filter((it) => it.itemName.toLowerCase().includes(q))
       .slice(0, 8);
-  }, [debouncedItemName, inventoryItems]);
+  }, [debouncedItemName, inventoryItems, selectedCategoryId]);
 
   const pickInventoryItem = (item: InventoryItem) => {
     setItemName(item.itemName);
     setInventoryId(item.id);
     setUnit(item.unit);
+    // ✅ Auto-fill from Inventory's real numbers rather than making
+    // the Chef re-type them — closingStock/minimumLevel are just a
+    // snapshot of what Inventory already knows at request time.
+    setClosingStock(String(item.currentStock));
+    setMinimumLevel(String(item.minStock));
     setShowItemPicker(false);
+    // ✅ Auto-select the item's own category if none was chosen yet,
+    // so category-grouping below works even if the Chef searched by
+    // name first instead of picking a category up front.
+    if (!selectedCategoryId) setSelectedCategoryId(item.categoryId);
   };
 
   // Multi-item form
   const [requestItems, setRequestItems] = useState<{
     itemName: string;
     inventoryId?: string;
+    categoryId?: string;
     closingStock: string;
     minimumLevel: string;
     orderQuantity: string;
@@ -145,11 +170,16 @@ export default function KitchenScreen() {
     setRequestItems([...requestItems, {
       itemName: itemName.trim(),
       inventoryId,
+      categoryId: selectedCategoryId,
       closingStock,
       minimumLevel,
       orderQuantity,
       unit,
     }]);
+    // ✅ selectedCategoryId is intentionally KEPT (not cleared) —
+    // Chefs commonly add several items from the same category in a
+    // row (e.g. multiple Dairy items), so staying on the same
+    // category saves re-selecting it each time.
     setItemName(""); setInventoryId(undefined); setClosingStock("");
     setMinimumLevel(""); setOrderQuantity("");
   };
@@ -175,6 +205,7 @@ export default function KitchenScreen() {
           {
             itemName: item.itemName,
             inventoryId: item.inventoryId ?? null,  // ✅ null (not undefined) — Firestore rejects undefined
+            categoryId: item.categoryId ?? null,
             closingStock: Number(item.closingStock || 0),
             minimumLevel: Number(item.minimumLevel || 0),
             orderQuantity: Number(item.orderQuantity),
@@ -208,10 +239,33 @@ export default function KitchenScreen() {
   const pendingCount = requests.filter((r) => r.status === "PENDING").length;
   const approvedCount = requests.filter((r) => r.status === "APPROVED" || r.status === "ISSUED").length;
 
+  // ✅ Request History is day-scoped by requiredDate, same as Store
+  // module's "All Requests" tab.
+  const historyRequests = requests.filter((r) => r.requiredDate === selectedDate);
+  const goToPrevDay = () => {
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() - 1);
+    setSelectedDate(d.toISOString().slice(0, 10));
+  };
+  const goToNextDay = () => {
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() + 1);
+    setSelectedDate(d.toISOString().slice(0, 10));
+  };
+  const isToday = selectedDate === new Date().toISOString().slice(0, 10);
+
   const formatDate = (d: string) =>
     new Date(d).toLocaleDateString("en-GB", {
       day: "numeric", month: "short", year: "numeric",
     });
+
+  const formatSelectedDate = (dateStr: string): string => {
+    try {
+      return new Date(dateStr).toLocaleDateString("en-GB", {
+        weekday: "short", day: "numeric", month: "short", year: "numeric",
+      });
+    } catch { return dateStr; }
+  };
 
   return (
     <ScrollView
@@ -284,11 +338,24 @@ export default function KitchenScreen() {
             <View style={[styles.addItemBox, { backgroundColor: theme.bg, borderColor: theme.border }]}>
               <Text style={[styles.addItemTitle, { color: theme.text }]}>Add Item</Text>
 
+              <Text style={[styles.miniLabel, { color: theme.textSecondary }]}>Category (optional — narrows item search)</Text>
+              <TouchableOpacity
+                style={[styles.selector, { backgroundColor: theme.surface, borderColor: theme.border, marginBottom: 10 }]}
+                onPress={() => setShowCategoryPicker(true)}
+              >
+                <Text style={[styles.selectorText, { color: theme.text }]}>
+                  {selectedCategoryId
+                    ? categories.find((c) => c.id === selectedCategoryId)?.name ?? "Unknown"
+                    : "All Categories"}
+                </Text>
+                <MaterialIcons name="arrow-drop-down" size={18} color={theme.textSecondary} />
+              </TouchableOpacity>
+
               <View style={[styles.inputWrapper, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-                <MaterialIcons name="restaurant" size={14} color={theme.textSecondary} />
+                <MaterialIcons name="search" size={14} color={theme.textSecondary} />
                 <TextInput
                   style={[styles.input, { color: theme.text }]}
-                  placeholder="Item Name — search or type new"
+                  placeholder={selectedCategoryId ? "Search this category's items..." : "Search Inventory items..."}
                   placeholderTextColor={theme.textSecondary}
                   value={itemName}
                   onChangeText={(text) => {
@@ -297,6 +364,7 @@ export default function KitchenScreen() {
                     // old link would silently mismatch the new name.
                     setItemName(text);
                     setInventoryId(undefined);
+                    setClosingStock(""); setMinimumLevel("");
                     setShowItemPicker(true);
                   }}
                   onFocus={() => setShowItemPicker(true)}
@@ -324,29 +392,61 @@ export default function KitchenScreen() {
                   ))}
                 </ScrollView>
               )}
+              {/* ✅ Free-text/new-item is now an explicit opt-in row —
+                  shown only once the Chef has typed something (2+
+                  chars) with no matching Inventory item found and no
+                  item currently linked. Default flow stays
+                  Category → Search → Select; typing alone no longer
+                  silently creates an unlinked free-text item. */}
+              {showItemPicker && !inventoryId && debouncedItemName.trim().length >= 2 && itemMatches.length === 0 && (
+                <TouchableOpacity
+                  style={[styles.newItemRow, { borderColor: theme.border }]}
+                  onPress={() => setShowItemPicker(false)}
+                >
+                  <MaterialIcons name="add-circle-outline" size={16} color={theme.textSecondary} />
+                  <Text style={[styles.newItemRowText, { color: theme.textSecondary }]}>
+                    No match — add "{itemName.trim()}" as a new item
+                  </Text>
+                </TouchableOpacity>
+              )}
 
               <View style={styles.row3}>
                 <View style={styles.thirdField}>
                   <Text style={[styles.miniLabel, { color: theme.textSecondary }]}>Closing Stock</Text>
-                  <TextInput
-                    style={[styles.miniInput, { backgroundColor: theme.surface, borderColor: theme.border, color: theme.text }]}
-                    placeholder="0"
-                    placeholderTextColor={theme.textSecondary}
-                    keyboardType="decimal-pad"
-                    value={closingStock}
-                    onChangeText={setClosingStock}
-                  />
+                  {inventoryId ? (
+                    // ✅ Read-only display — Inventory IS the source of
+                    // truth for this number, so once linked it's shown,
+                    // never re-typed.
+                    <View style={[styles.miniInput, styles.miniInputReadOnly, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                      <Text style={[styles.readOnlyValueText, { color: theme.text }]}>{closingStock}</Text>
+                    </View>
+                  ) : (
+                    <TextInput
+                      style={[styles.miniInput, { backgroundColor: theme.surface, borderColor: theme.border, color: theme.text }]}
+                      placeholder="0"
+                      placeholderTextColor={theme.textSecondary}
+                      keyboardType="decimal-pad"
+                      value={closingStock}
+                      onChangeText={setClosingStock}
+                    />
+                  )}
                 </View>
                 <View style={styles.thirdField}>
                   <Text style={[styles.miniLabel, { color: theme.textSecondary }]}>Min Level</Text>
-                  <TextInput
-                    style={[styles.miniInput, { backgroundColor: theme.surface, borderColor: theme.border, color: theme.text }]}
-                    placeholder="0"
-                    placeholderTextColor={theme.textSecondary}
-                    keyboardType="decimal-pad"
-                    value={minimumLevel}
-                    onChangeText={setMinimumLevel}
-                  />
+                  {inventoryId ? (
+                    <View style={[styles.miniInput, styles.miniInputReadOnly, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                      <Text style={[styles.readOnlyValueText, { color: theme.text }]}>{minimumLevel}</Text>
+                    </View>
+                  ) : (
+                    <TextInput
+                      style={[styles.miniInput, { backgroundColor: theme.surface, borderColor: theme.border, color: theme.text }]}
+                      placeholder="0"
+                      placeholderTextColor={theme.textSecondary}
+                      keyboardType="decimal-pad"
+                      value={minimumLevel}
+                      onChangeText={setMinimumLevel}
+                    />
+                  )}
                 </View>
                 <View style={styles.thirdField}>
                   <Text style={[styles.miniLabel, { color: theme.textSecondary }]}>Order Qty</Text>
@@ -361,14 +461,37 @@ export default function KitchenScreen() {
                 </View>
               </View>
 
-              {/* Unit selector */}
-              <TouchableOpacity
-                style={[styles.selector, { backgroundColor: theme.surface, borderColor: theme.border }]}
-                onPress={() => setShowUnitPicker(true)}
-              >
-                <Text style={[styles.selectorText, { color: theme.text }]}>Unit: {unit}</Text>
-                <MaterialIcons name="arrow-drop-down" size={18} color={theme.textSecondary} />
-              </TouchableOpacity>
+              {/* ✅ Below-minimum warning — right above Order Qty,
+                  since that's the field the Chef is about to fill in
+                  and this context helps them decide how much to
+                  request. Only shown for linked items, where both
+                  numbers are real Inventory data. */}
+              {inventoryId && Number(closingStock) < Number(minimumLevel) && (
+                <View style={styles.belowMinWarning}>
+                  <MaterialIcons name="warning" size={13} color="#dc2626" />
+                  <Text style={styles.belowMinWarningText}>Below Minimum Stock</Text>
+                </View>
+              )}
+
+              {/* Unit — read-only display once linked to Inventory
+                  (per review: a Chef shouldn't be able to turn a
+                  linked item's "kg" into "pcs"); the picker only
+                  exists at all for a free-text/unlinked item. */}
+              <Text style={[styles.miniLabel, { color: theme.textSecondary, marginTop: 4 }]}>Unit</Text>
+              {inventoryId ? (
+                <View style={[styles.selector, styles.selectorReadOnly, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                  <Text style={[styles.selectorText, { color: theme.text }]}>{unit}</Text>
+                  <Text style={[styles.readOnlyTag, { color: theme.textSecondary }]}>from Inventory</Text>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.selector, { backgroundColor: theme.surface, borderColor: theme.border }]}
+                  onPress={() => setShowUnitPicker(true)}
+                >
+                  <Text style={[styles.selectorText, { color: theme.text }]}>{unit}</Text>
+                  <MaterialIcons name="arrow-drop-down" size={18} color={theme.textSecondary} />
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity
                 style={[styles.addItemBtn, { backgroundColor: theme.primary }]}
@@ -379,7 +502,9 @@ export default function KitchenScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Items list */}
+            {/* Items list — grouped by category, same organization
+                as Inventory itself, so a long request is easy to
+                scan (e.g. all Dairy together, all Meat together). */}
             {requestItems.length > 0 && (
               <View style={[styles.itemsTable, { backgroundColor: theme.bg }]}>
                 <View style={[styles.itemsTableHeader, { borderBottomColor: theme.border }]}>
@@ -389,17 +514,36 @@ export default function KitchenScreen() {
                   <Text style={[styles.itemsHeaderText, { flex: 1, textAlign: "center" }]}>UNIT</Text>
                   <Text style={[styles.itemsHeaderText, { flex: 0.5, textAlign: "center" }]}>DEL</Text>
                 </View>
-                {requestItems.map((item, idx) => (
-                  <View key={idx} style={[styles.itemsRow, { borderBottomColor: theme.border }]}>
-                    <Text style={[styles.itemsCell, { flex: 2, color: theme.text }]}>{item.itemName}</Text>
-                    <Text style={[styles.itemsCell, { flex: 1, textAlign: "center", color: theme.textSecondary }]}>{item.closingStock || "-"}</Text>
-                    <Text style={[styles.itemsCell, { flex: 1, textAlign: "center", color: "#10b981", fontWeight: "700" }]}>{item.orderQuantity}</Text>
-                    <Text style={[styles.itemsCell, { flex: 1, textAlign: "center", color: theme.textSecondary }]}>{item.unit}</Text>
-                    <TouchableOpacity style={{ flex: 0.5, alignItems: "center" }} onPress={() => removeItem(idx)}>
-                      <MaterialIcons name="delete" size={14} color="#ef4444" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
+                {(() => {
+                  const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
+                  const grouped = new Map<string, { name: string; entries: { item: typeof requestItems[number]; idx: number }[] }>();
+                  requestItems.forEach((item, idx) => {
+                    const key  = item.categoryId ?? "uncategorized";
+                    const name = item.categoryId ? (categoryMap.get(item.categoryId) ?? "Unknown") : "Uncategorized";
+                    if (!grouped.has(key)) grouped.set(key, { name, entries: [] });
+                    grouped.get(key)!.entries.push({ item, idx });
+                  });
+                  return Array.from(grouped.values()).map((group) => (
+                    <View key={group.name}>
+                      <View style={[styles.categoryGroupHeader, { borderBottomColor: theme.border }]}>
+                        <Text style={[styles.categoryGroupHeaderText, { color: theme.textSecondary }]}>
+                          {group.name}
+                        </Text>
+                      </View>
+                      {group.entries.map(({ item, idx }) => (
+                        <View key={idx} style={[styles.itemsRow, { borderBottomColor: theme.border }]}>
+                          <Text style={[styles.itemsCell, { flex: 2, color: theme.text }]}>{item.itemName}</Text>
+                          <Text style={[styles.itemsCell, { flex: 1, textAlign: "center", color: theme.textSecondary }]}>{item.closingStock || "-"}</Text>
+                          <Text style={[styles.itemsCell, { flex: 1, textAlign: "center", color: "#10b981", fontWeight: "700" }]}>{item.orderQuantity}</Text>
+                          <Text style={[styles.itemsCell, { flex: 1, textAlign: "center", color: theme.textSecondary }]}>{item.unit}</Text>
+                          <TouchableOpacity style={{ flex: 0.5, alignItems: "center" }} onPress={() => removeItem(idx)}>
+                            <MaterialIcons name="delete" size={14} color="#ef4444" />
+                          </TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>
+                  ));
+                })()}
               </View>
             )}
 
@@ -435,15 +579,29 @@ export default function KitchenScreen() {
         {/* Request History */}
         <Text style={[styles.sectionTitle, { color: theme.text }]}>Request History</Text>
 
+        <View style={[styles.dateNav, { backgroundColor: theme.card }]}>
+          <TouchableOpacity onPress={goToPrevDay} style={styles.dateNavArrow}>
+            <MaterialIcons name="chevron-left" size={20} color={theme.text} />
+          </TouchableOpacity>
+          <Text style={[styles.dateNavLabel, { color: theme.text }]}>
+            {isToday ? "Today — " : ""}{formatSelectedDate(selectedDate)}
+          </Text>
+          <TouchableOpacity onPress={goToNextDay} style={styles.dateNavArrow}>
+            <MaterialIcons name="chevron-right" size={20} color={theme.text} />
+          </TouchableOpacity>
+        </View>
+
         {loading ? (
           <ActivityIndicator color={theme.primary} style={{ marginTop: 20 }} />
-        ) : requests.length === 0 ? (
+        ) : historyRequests.length === 0 ? (
           <View style={[styles.emptyBox, { backgroundColor: theme.card }]}>
             <MaterialIcons name="add-shopping-cart" size={40} color={theme.textSecondary} />
-            <Text style={[styles.emptyText, { color: theme.textSecondary }]}>No requests yet</Text>
+            <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
+              No requests for {formatSelectedDate(selectedDate)}
+            </Text>
           </View>
         ) : (
-          requests.map((req) => {
+          historyRequests.map((req) => {
             const statusColor = STATUS_COLORS[req.status] ?? "#94a3b8";
             const statusIcon = STATUS_ICONS[req.status] ?? "help";
             return (
@@ -505,6 +663,32 @@ export default function KitchenScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* Category Picker */}
+      <Modal visible={showCategoryPicker} transparent animationType="fade">
+        <TouchableOpacity style={styles.modalOverlay} onPress={() => setShowCategoryPicker(false)}>
+          <ScrollView style={[styles.pickerCard, { backgroundColor: theme.surface, maxHeight: 400 }]}>
+            <Text style={[styles.pickerTitle, { color: theme.text }]}>Select Category</Text>
+            <TouchableOpacity
+              style={[styles.pickerItem, { borderBottomColor: theme.border }, !selectedCategoryId && { backgroundColor: theme.sidebarActive }]}
+              onPress={() => { setSelectedCategoryId(undefined); setShowCategoryPicker(false); }}
+            >
+              <Text style={[styles.pickerItemText, { color: theme.text }]}>All Categories</Text>
+              {!selectedCategoryId && <MaterialIcons name="check" size={14} color={theme.primary} />}
+            </TouchableOpacity>
+            {categories.map((c) => (
+              <TouchableOpacity
+                key={c.id}
+                style={[styles.pickerItem, { borderBottomColor: theme.border }, selectedCategoryId === c.id && { backgroundColor: theme.sidebarActive }]}
+                onPress={() => { setSelectedCategoryId(c.id); setShowCategoryPicker(false); }}
+              >
+                <Text style={[styles.pickerItemText, { color: theme.text }]}>{c.name}</Text>
+                {selectedCategoryId === c.id && <MaterialIcons name="check" size={14} color={theme.primary} />}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </TouchableOpacity>
+      </Modal>
     </ScrollView>
   );
 }
@@ -517,6 +701,12 @@ const styles = StyleSheet.create({
     marginTop: 4, marginBottom: 4, alignSelf: "flex-start",
   },
   linkedBadgeText: { fontSize: 11, color: "#059669", fontWeight: "700" },
+  newItemRow: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    borderWidth: 1, borderStyle: "dashed", borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8,
+  },
+  newItemRowText: { fontSize: 12, fontStyle: "italic", flex: 1 },
   itemPickerList: {
     borderWidth: 1, borderRadius: 8,
     marginBottom: 8, maxHeight: 160, overflow: "hidden",
@@ -542,6 +732,12 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 20, fontWeight: "900" },
   statLabel: { fontSize: 10, fontWeight: "600" },
   sectionTitle: { fontSize: 15, fontWeight: "800", marginBottom: 10 },
+  dateNav: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 10, borderRadius: 10, paddingVertical: 8, marginBottom: 12,
+  },
+  dateNavArrow: { padding: 4 },
+  dateNavLabel: { fontSize: 13, fontWeight: "700" },
   form: { borderRadius: 16, padding: 16, marginBottom: 14 },
   formTitle: { fontSize: 15, fontWeight: "700", marginBottom: 14 },
   fieldLabel: { fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 6 },
@@ -561,11 +757,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 8,
     fontSize: 13,
   },
+  miniInputReadOnly: { justifyContent: "center" },
+  readOnlyValueText: { fontSize: 13, fontWeight: "700" },
+  belowMinWarning: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    marginBottom: 8,
+  },
+  belowMinWarningText: { fontSize: 11, fontWeight: "700", color: "#dc2626" },
   selector: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     borderWidth: 1.5, borderRadius: 8,
     paddingHorizontal: 12, paddingVertical: 8, marginBottom: 8,
   },
+  selectorReadOnly: {},
+  readOnlyTag: { fontSize: 10, fontStyle: "italic" },
   selectorText: { fontSize: 13, fontWeight: "600" },
   addItemBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center",
@@ -578,6 +783,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#00154f",
   },
   itemsHeaderText: { color: "#FFD700", fontSize: 9, fontWeight: "800" },
+  categoryGroupHeader: {
+    paddingHorizontal: 8, paddingVertical: 5, borderBottomWidth: 0.5,
+    backgroundColor: "rgba(0,0,0,0.04)",
+  },
+  categoryGroupHeaderText: {
+    fontSize: 9, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.5,
+  },
   itemsRow: { flexDirection: "row", alignItems: "center", padding: 8, borderBottomWidth: 0.5 },
   itemsCell: { fontSize: 12 },
   noteInput: {

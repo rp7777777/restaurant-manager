@@ -39,6 +39,7 @@ interface KitchenRequest {
   issuedQuantity?: number;
   issuedBy?: string;
   issuedAt?: unknown;
+  issueNote?: string | null;  // ✅ Store Keeper's own note at issue time (e.g. "only 18kg in stock, issuing partial") — separate from the Kitchen's original request note
   restaurantId: string;
   createdAt?: unknown;
 }
@@ -64,8 +65,15 @@ export default function StoreScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<"pending" | "all">("pending");
+  // ✅ Day-by-day view for "All Requests" — same idea as Attendance's
+  // selectedDate: defaults to today, filters requests by their
+  // requiredDate (the date Kitchen said they needed the item by),
+  // so each day's history is its own view instead of one endless
+  // mixed list.
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [selectedRequest, setSelectedRequest] = useState<KitchenRequest | null>(null);
   const [issueQty, setIssueQty] = useState("");
+  const [issueNote, setIssueNote] = useState("");
   const [showIssueModal, setShowIssueModal] = useState(false);
   const [processing, setProcessing] = useState(false);
 
@@ -116,24 +124,29 @@ export default function StoreScreen() {
 
   // ── Reject request ────────────────────────
   const handleReject = (req: KitchenRequest) => {
+    const doReject = async () => {
+      await updateDoc(
+        doc(db, "restaurants", restaurantId, "kitchenRequests", req.id),
+        {
+          status: "REJECTED",
+          rejectedBy: userProfile?.name ?? "Store",
+          rejectedAt: serverTimestamp(),
+        }
+      );
+    };
+
+    // ✅ Alert.alert() doesn't reliably render on react-native-web —
+    // same fix already proven for PO Approve/Cancel.
+    if (Platform.OS === "web") {
+      if (window.confirm(`Reject ${req.itemName} request?`)) doReject();
+      return;
+    }
     Alert.alert(
       "Reject Request",
       `Reject ${req.itemName} request?`,
       [
         { text: "Cancel", style: "cancel" },
-        {
-          text: "Reject", style: "destructive",
-          onPress: async () => {
-            await updateDoc(
-              doc(db, "restaurants", restaurantId, "kitchenRequests", req.id),
-              {
-                status: "REJECTED",
-                rejectedBy: userProfile?.name ?? "Store",
-                rejectedAt: serverTimestamp(),
-              }
-            );
-          },
-        },
+        { text: "Reject", style: "destructive", onPress: doReject },
       ]
     );
   };
@@ -142,6 +155,7 @@ export default function StoreScreen() {
   const openIssueModal = (req: KitchenRequest) => {
     setSelectedRequest(req);
     setIssueQty(req.orderQuantity.toString());
+    setIssueNote("");
     setLinkItemQuery("");
     setShowLinkPicker(false);
     // ✅ Suggest an exact-name match as a starting point when the
@@ -198,11 +212,15 @@ export default function StoreScreen() {
         referenceType: "KITCHEN_REQUEST",
         referenceId:   selectedRequest.id,
         createdByName: userProfile?.name ?? auth.currentUser?.email ?? "Store",
+        reason:        issueNote.trim() || undefined,
       });
 
       // Update request status — and save the resolved inventoryId
       // back onto it if it wasn't already linked, so this request
-      // never needs re-linking again.
+      // never needs re-linking again. issueNote (e.g. "only had
+      // 18kg in stock, issuing partial") is saved onto the request
+      // too, separate from the original Kitchen note, so the Store
+      // Keeper's own reason for this specific issue stays visible.
       await updateDoc(
         doc(db, "restaurants", restaurantId, "kitchenRequests", selectedRequest.id),
         {
@@ -210,6 +228,7 @@ export default function StoreScreen() {
           issuedQuantity: qty,
           issuedBy: userProfile?.name ?? auth.currentUser?.email ?? "Store",
           issuedAt: serverTimestamp(),
+          issueNote: issueNote.trim() || null,
           updatedAt: serverTimestamp(),
           ...(selectedRequest.inventoryId ? {} : { inventoryId: resolvedInventoryId }),
         }
@@ -231,9 +250,25 @@ export default function StoreScreen() {
 
   const pendingRequests = requests.filter((r) => r.status === "PENDING");
   const approvedRequests = requests.filter((r) => r.status === "APPROVED");
+  // ✅ "All Requests" is now day-scoped by requiredDate (matching
+  // selectedDate) — Pending & Approved stays unfiltered by date
+  // since those are active/actionable regardless of which day they
+  // were requested for.
   const displayRequests = activeTab === "pending"
     ? [...pendingRequests, ...approvedRequests]
-    : requests;
+    : requests.filter((r) => r.requiredDate === selectedDate);
+
+  const goToPrevDay = () => {
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() - 1);
+    setSelectedDate(d.toISOString().slice(0, 10));
+  };
+  const goToNextDay = () => {
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() + 1);
+    setSelectedDate(d.toISOString().slice(0, 10));
+  };
+  const isToday = selectedDate === new Date().toISOString().slice(0, 10);
 
   const formatDate = (ts: any): string => {
     if (!ts) return "";
@@ -241,6 +276,14 @@ export default function StoreScreen() {
       const d = ts.toDate ? ts.toDate() : new Date(ts);
       return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
     } catch { return ""; }
+  };
+
+  const formatSelectedDate = (dateStr: string): string => {
+    try {
+      return new Date(dateStr).toLocaleDateString("en-GB", {
+        weekday: "short", day: "numeric", month: "short", year: "numeric",
+      });
+    } catch { return dateStr; }
   };
 
   return (
@@ -296,11 +339,30 @@ export default function StoreScreen() {
               <Text style={[styles.tabText, {
                 color: activeTab === tab ? "#fff" : theme.textSecondary,
               }]}>
-                {tab === "pending" ? `Pending & Approved (${pendingRequests.length + requests.filter(r => r.status === "APPROVED").length})` : `All Requests (${requests.length})`}
+                {tab === "pending"
+                  ? `Pending & Approved (${pendingRequests.length + requests.filter(r => r.status === "APPROVED").length})`
+                  : `All Requests (${requests.filter((r) => r.requiredDate === selectedDate).length})`}
               </Text>
             </TouchableOpacity>
           ))}
         </View>
+
+        {/* ✅ Day navigator — only relevant for "All Requests", since
+            "Pending & Approved" is always the current actionable set
+            regardless of date. */}
+        {activeTab === "all" && (
+          <View style={[styles.dateNav, { backgroundColor: theme.card }]}>
+            <TouchableOpacity onPress={goToPrevDay} style={styles.dateNavArrow}>
+              <MaterialIcons name="chevron-left" size={20} color={theme.text} />
+            </TouchableOpacity>
+            <Text style={[styles.dateNavLabel, { color: theme.text }]}>
+              {isToday ? "Today — " : ""}{formatSelectedDate(selectedDate)}
+            </Text>
+            <TouchableOpacity onPress={goToNextDay} style={styles.dateNavArrow}>
+              <MaterialIcons name="chevron-right" size={20} color={theme.text} />
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Requests */}
         {loading ? (
@@ -309,7 +371,7 @@ export default function StoreScreen() {
           <View style={[styles.emptyBox, { backgroundColor: theme.card }]}>
             <MaterialIcons name="inventory" size={40} color={theme.textSecondary} />
             <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-              {activeTab === "pending" ? "No pending requests" : "No requests yet"}
+              {activeTab === "pending" ? "No pending requests" : `No requests for ${formatSelectedDate(selectedDate)}`}
             </Text>
           </View>
         ) : (
@@ -508,6 +570,18 @@ export default function StoreScreen() {
                     Inventory will auto-deduct {issueQty || "0"} {selectedRequest.unit} of {selectedRequest.itemName}
                   </Text>
                 </View>
+
+                <Text style={[styles.fieldLabel, { color: theme.textSecondary }]}>
+                  NOTE (OPTIONAL)
+                </Text>
+                <TextInput
+                  style={[styles.noteInput, { backgroundColor: theme.bg, borderColor: theme.border, color: theme.text }]}
+                  placeholder="e.g. only 18kg in stock, issuing partial"
+                  placeholderTextColor={theme.textSecondary}
+                  value={issueNote}
+                  onChangeText={setIssueNote}
+                  multiline
+                />
               </>
             )}
             <View style={styles.modalBtns}>
@@ -580,6 +654,12 @@ const styles = StyleSheet.create({
   tabs: { flexDirection: "row", borderRadius: 12, padding: 4, marginBottom: 14, gap: 4 },
   tab: { flex: 1, padding: 10, borderRadius: 8, alignItems: "center" },
   tabText: { fontSize: 11, fontWeight: "700" },
+  dateNav: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 10, borderRadius: 10, paddingVertical: 8, marginBottom: 12,
+  },
+  dateNavArrow: { padding: 4 },
+  dateNavLabel: { fontSize: 13, fontWeight: "700" },
   emptyBox: { borderRadius: 14, padding: 40, alignItems: "center", gap: 10 },
   emptyText: { fontSize: 13 },
   requestCard: {
@@ -625,6 +705,10 @@ const styles = StyleSheet.create({
   modalItemName: { fontSize: 15, fontWeight: "700", marginBottom: 2 },
   modalSubText: { fontSize: 12, marginBottom: 4 },
   fieldLabel: { fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 6 },
+  noteInput: {
+    borderWidth: 1.5, borderRadius: 10, padding: 10,
+    fontSize: 13, height: 60, textAlignVertical: "top", marginBottom: 10,
+  },
   inputWrapper: {
     flexDirection: "row", alignItems: "center", gap: 8,
     borderWidth: 1.5, borderRadius: 10,
