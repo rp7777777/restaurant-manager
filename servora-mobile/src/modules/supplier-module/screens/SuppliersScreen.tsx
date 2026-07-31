@@ -20,6 +20,7 @@ import {
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useApp } from "../../../context/AppContext";
+import { usePermission } from "../../../hooks/usePermission";
 import { useSuppliers } from "../hooks/useSuppliers";
 import { Supplier } from "../types/supplier";
 import SupplierCard from "../../../components/suppliers/SupplierCard";
@@ -31,8 +32,9 @@ type FormMode =
   | { mode: "edit"; supplier: Supplier };
 
 export default function SuppliersScreen() {
-  const { restaurantId, userProfile } = useApp();
-  const isManager = ["MANAGER", "OWNER"].includes(userProfile?.role ?? "");
+  const { restaurantId } = useApp();
+  // ✅ RBAC Phase 1 — Suppliers pairs with Purchase Orders
+  const canEditPurchaseOrders = usePermission("edit_purchase_orders");
 
   const { suppliers, loading, error } = useSuppliers(restaurantId);
   const [searchQuery, setSearchQuery] = useState("");
@@ -82,7 +84,7 @@ export default function SuppliersScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Suppliers</Text>
-        {isManager && (
+        {canEditPurchaseOrders && (
           <TouchableOpacity style={styles.addBtn} onPress={openCreate}>
             <MaterialIcons name="add" size={18} color="#fff" />
             <Text style={styles.addBtnText}>New Supplier</Text>

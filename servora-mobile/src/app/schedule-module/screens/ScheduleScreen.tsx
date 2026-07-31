@@ -27,6 +27,7 @@ import { writeBatch, doc } from "firebase/firestore";
 import { db } from "../../../firebase";
 import { LinearGradient } from "expo-linear-gradient";
 import { useApp } from "../../../context/AppContext";
+import { usePermission } from "../../../hooks/usePermission";
 import { useSchedules } from "../hooks/useSchedules";
 import { useEmployees } from "../hooks/useEmployees";
 import {
@@ -63,7 +64,7 @@ import {
 export default function ScheduleScreen() {
   const {
     theme, restaurant, restaurantId,
-    userProfile, settings,
+    settings,
   } = useApp();
 
   const today = new Date();
@@ -89,7 +90,8 @@ export default function ScheduleScreen() {
   const [cellEnd,    setCellEnd]    = useState("17:00");
 
   const weekDates = getWeekDates(selectedWeek);
-  const isManager = ["MANAGER", "OWNER"].includes(userProfile?.role ?? "");
+  // ✅ RBAC Phase 1
+  const isManager = usePermission("edit_schedule");
 
   const { schedules, loading, totalOT, totalAbsent, addedEmployeeNos } =
     useSchedules(restaurantId, selectedWeek);

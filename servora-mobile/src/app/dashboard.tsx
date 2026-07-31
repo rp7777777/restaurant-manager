@@ -34,6 +34,7 @@ import {
 import { router }     from "expo-router";
 import type { Href }  from "expo-router";
 import { useApp }     from "../context/AppContext";
+import { useAppRole } from "../hooks/usePermission";
 
 // ── Hooks ─────────────────────────────────────
 import { useDashboardStats }      from "../hooks/dashboard/useDashboardStats";
@@ -81,7 +82,7 @@ const isWeb = Platform.OS === "web";
 
 // ── Controller ────────────────────────────────
 export default function DashboardScreen() {
-  const { restaurant, restaurantId, fmt, t, userProfile } = useApp();
+  const { restaurant, restaurantId, fmt, t } = useApp();
 
   const [selectedYear,   setSelectedYear]   = useState(() => new Date().getFullYear());
   const [selectedMonth,  setSelectedMonth]  = useState(() => new Date().getMonth());
@@ -94,7 +95,10 @@ export default function DashboardScreen() {
   const [recalculating,      setRecalculating]      = useState(false);
   const [showRecalcConfirm,  setShowRecalcConfirm]  = useState(false);
 
-  const isOwner = userProfile?.role === "OWNER";
+  // ✅ RBAC Phase 1 — genuinely OWNER-only (not MANAGER-or-OWNER like
+  // most other checks), so uses useAppRole() directly rather than
+  // usePermission() (which checks a Permission, not a specific role)
+  const isOwner = useAppRole() === "OWNER";
 
   // ✅ Scroll-to-section refs
   const scrollRef             = useRef<ScrollView>(null);
@@ -405,7 +409,7 @@ export default function DashboardScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   body:      { padding: 14 },
- // ✅ Wraps StoreCard so it stretches equally with DashboardStats's
+  // ✅ Wraps StoreCard so it stretches equally with DashboardStats's
   // other cards (flex: 1, same as their own cardTouchable style) —
   // StoreCard itself has no flex/width set and simply fills
   // whatever container it's placed in, so this gives it the same

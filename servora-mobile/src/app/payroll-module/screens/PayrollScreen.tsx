@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useApp }                from "../../../context/AppContext";
+import { usePermission }         from "../../../hooks/usePermission";
 import { usePayroll }            from "../hooks/usePayroll";
 import { generateMonthlyPayroll } from "../payroll-generator";
 import { markPayrollPaid }       from "../firestore/payroll-repository";
@@ -31,7 +32,13 @@ function buildMonthStr(year: number, month: number): string {
 }
 
 export default function PayrollScreen() {
-  const { theme, userProfile, restaurantId } = useApp();
+  const { theme, restaurantId } = useApp();
+  // ✅ RBAC Phase 1 — variable name kept as `isManager` since it's
+  // passed as a prop with that name to PayrollHeader/
+  // PayrollDetailModal (their prop contracts stay unchanged); only
+  // the source of truth changes, from a locally-duplicated role
+  // check to the shared permission engine.
+  const isManager = usePermission("edit_payroll");
 
   const today = new Date();
   const [month, setMonth] = useState(today.getMonth());
@@ -44,7 +51,6 @@ export default function PayrollScreen() {
   const [selected,   setSelected]   = useState<PayrollDocument | null>(null);
 
   const monthStr  = buildMonthStr(year, month);
-  const isManager = ["MANAGER", "OWNER"].includes(userProfile?.role ?? "");
 
   const { payrolls, loading } = usePayroll(restaurantId, monthStr);
 

@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
+import { usePermission } from "../../hooks/usePermission";
 import PaymentSummary from "./components/PaymentSummary";
 import SalesPrintView from "./components/SalesPrintView";
 import { SalesDayDetail } from "./components/SalesDayDetail";
@@ -23,7 +24,7 @@ import { useSalesHistory } from "./hooks/useSalesHistory";
 import { MONTHS, MONTH_NAMES, formatShortDate } from "./utils/sales-date";
 
 export default function SalesListScreen() {
-  const { theme, fmt, t, restaurantId, userProfile } = useApp();
+  const { theme, fmt, t, restaurantId } = useApp();
 
   const [selectedYear] = useState(new Date().getFullYear());
   const [refreshing, setRefreshing] = useState(false);
@@ -58,8 +59,8 @@ export default function SalesListScreen() {
     confirmDelete,
   } = useSalesHistory(selectedYear);
 
-  const isManager =
-    userProfile?.role === "MANAGER" || userProfile?.role === "OWNER";
+  // ✅ RBAC Phase 1
+  const isManager = usePermission("edit_sales");
 
   // ── Scroll-to-detail: track the expanded day-detail section's Y
   //    position, then scroll there once selectedDay changes and the

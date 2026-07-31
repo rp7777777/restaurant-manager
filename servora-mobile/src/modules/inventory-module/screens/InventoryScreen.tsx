@@ -25,6 +25,7 @@ import {
 import { useLocalSearchParams } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useApp } from "../../../context/AppContext";
+import { usePermission } from "../../../hooks/usePermission";
 import { useInventory } from "../hooks/useInventory";
 import { useInventoryFilters, InventoryStockStatus, InventorySortOption } from "../hooks/useInventoryFilters";
 import { useCategoriesForPicker } from "../hooks/useCategoriesForPicker";
@@ -55,8 +56,11 @@ const SORT_OPTIONS: { value: InventorySortOption; label: string; icon: keyof typ
 ];
 
 export default function InventoryScreen() {
-  const { restaurant, restaurantId, fmt, userProfile } = useApp();
-  const isManager = ["MANAGER", "OWNER"].includes(userProfile?.role ?? "");
+  const { restaurant, restaurantId, fmt } = useApp();
+  // ✅ RBAC Phase 1 — replaces the old inline
+  // `["MANAGER","OWNER"].includes(role)` check (duplicated across
+  // ~14 screens) with the shared static permission engine.
+  const canEditInventory = usePermission("edit_inventory");
 
   const { items, loading: itemsLoading, error: itemsError } = useInventory(restaurantId);
   const {
@@ -175,7 +179,7 @@ export default function InventoryScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Inventory</Text>
-        {isManager && (
+        {canEditInventory && (
           <TouchableOpacity style={styles.addBtn} onPress={openCreate}>
             <MaterialIcons name="add" size={18} color="#fff" />
             <Text style={styles.addBtnText}>Add Item</Text>
@@ -184,7 +188,7 @@ export default function InventoryScreen() {
       </View>
 
       {/* ✅ Seed Defaults — only when no categories exist yet */}
-      {!categoriesLoading && categories.length === 0 && isManager && (
+      {!categoriesLoading && categories.length === 0 && canEditInventory && (
         <TouchableOpacity
           style={[styles.seedBanner, seeding && { opacity: 0.7 }]}
           onPress={handleSeedDefaults}
@@ -338,7 +342,7 @@ export default function InventoryScreen() {
             <TouchableOpacity onPress={closeForm}>
               <MaterialIcons name="close" size={24} color="#1e293b" />
             </TouchableOpacity>
-            {editingItem && isManager && (
+            {editingItem && canEditInventory && (
               <TouchableOpacity onPress={() => handleDelete(editingItem)}>
                 <MaterialIcons name="delete" size={22} color="#dc2626" />
               </TouchableOpacity>

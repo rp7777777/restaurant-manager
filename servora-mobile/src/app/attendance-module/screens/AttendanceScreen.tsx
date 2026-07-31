@@ -29,6 +29,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useApp } from "../../../context/AppContext";
+import { usePermission } from "../../../hooks/usePermission";
 import { useAttendance, filterAttendance } from "../hooks/useAttendance";
 import { useAttendanceStats } from "../hooks/useAttendanceStats";
 import { useEmployees } from "../../employees-module/hooks/useEmployees";
@@ -80,7 +81,7 @@ function nowTime(): string {
 }
 
 export default function AttendanceScreen() {
-  const { theme, restaurantId, userProfile, settings } = useApp();
+  const { theme, restaurantId, settings } = useApp();
 
   // ── Reactive "live today" — rolls over at midnight automatically.
   //    selectedDate only auto-follows it while the user is viewing
@@ -116,9 +117,12 @@ export default function AttendanceScreen() {
   const [editingRecord, setEditingRecord] = useState<AttendanceRecord | undefined>(undefined);
   const [formSaving, setFormSaving] = useState(false);
 
-  // ✅ role based only — no permissions field
-  const canManageAttendance =
-    ["MANAGER", "OWNER"].includes(userProfile?.role ?? "");
+  // ✅ RBAC Phase 1 — mapped to edit_schedule since Attendance and
+  // Schedule are the same practical concept (staff timing/presence
+  // management), and edit_schedule already exists with the right
+  // roles (OWNER/MANAGER) rather than adding a new dedicated
+  // permission for this one screen.
+  const canManageAttendance = usePermission("edit_schedule");
 
   // ── Data ──────────────────────────────────
   const { records, loading } = useAttendance(restaurantId, selectedDate);

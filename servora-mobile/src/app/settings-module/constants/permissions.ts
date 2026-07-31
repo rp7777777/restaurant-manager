@@ -19,6 +19,7 @@ export type Permission =
   | "edit_schedule"
   | "edit_inventory"
   | "edit_store"
+  | "edit_purchase_orders"  // ✅ Purchase Orders + Suppliers — added when PO/Supplier modules were built, after this file's original design
   | "view_payroll"
   | "edit_payroll"
   | "view_reports"
@@ -42,6 +43,7 @@ export interface RoleConfig {
 // ── Role Permission Lists ─────────────────────
 const OWNER_PERMISSIONS: Permission[] = [
   "edit_schedule",    "edit_inventory",  "edit_store",
+  "edit_purchase_orders",
   "view_payroll",     "edit_payroll",    "view_reports",
   "edit_employees",   "edit_settings",   "manage_permissions",
   "view_sales",       "edit_sales",      "view_kitchen",
@@ -50,6 +52,7 @@ const OWNER_PERMISSIONS: Permission[] = [
 
 const MANAGER_PERMISSIONS: Permission[] = [
   "edit_schedule",    "edit_inventory",  "edit_store",
+  "edit_purchase_orders",
   "view_payroll",     "view_reports",    "edit_employees",
   "edit_settings",    "view_sales",      "edit_sales",
   "view_kitchen",
@@ -61,7 +64,7 @@ const CHEF_PERMISSIONS: Permission[] = [
 ];
 
 const STORE_PERMISSIONS: Permission[] = [
-  "edit_store",       "edit_inventory",
+  "edit_store",       "edit_inventory",  "edit_purchase_orders",
 ];
 
 const SALESMAN_PERMISSIONS: Permission[] = [
@@ -157,4 +160,3 @@ export function hasAllPermissions(
   const set = ROLE_MAP[role].permissionSet;
   return permissions.every((p) => set.has(p));
 }
-

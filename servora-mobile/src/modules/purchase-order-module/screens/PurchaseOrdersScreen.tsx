@@ -16,6 +16,7 @@ import {
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useApp } from "../../../context/AppContext";
+import { usePermission } from "../../../hooks/usePermission";
 import { usePurchaseOrders } from "../hooks/usePurchaseOrders";
 import {
   usePurchaseOrderFilters,
@@ -44,8 +45,9 @@ const SORT_OPTIONS: { value: PurchaseOrderSortOption; label: string; icon: keyof
 ];
 
 export default function PurchaseOrdersScreen() {
-  const { restaurantId, fmt, userProfile } = useApp();
-  const isManager = ["MANAGER", "OWNER"].includes(userProfile?.role ?? "");
+  const { restaurantId, fmt } = useApp();
+  // ✅ RBAC Phase 1
+  const canEditPurchaseOrders = usePermission("edit_purchase_orders");
 
   const { orders, loading: ordersLoading, error: ordersError } = usePurchaseOrders(restaurantId);
   const {
@@ -129,7 +131,7 @@ export default function PurchaseOrdersScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Purchase Orders</Text>
-        {isManager && (
+        {canEditPurchaseOrders && (
           <TouchableOpacity style={styles.addBtn} onPress={openCreateForm}>
             <MaterialIcons name="add" size={18} color="#fff" />
             <Text style={styles.addBtnText}>New PO</Text>

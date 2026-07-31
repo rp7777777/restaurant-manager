@@ -16,6 +16,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
 import { TouchableOpacity } from "react-native";
 import { useApp } from "../../../context/AppContext";
+import { usePermission } from "../../../hooks/usePermission";
 import { EmployeeDB } from "../types/employee-types";
 import { useAllEmployees } from "../hooks/useEmployees";
 import { useEmployeeStats } from "../hooks/useEmployeeStats";
@@ -26,14 +27,16 @@ import { EmployeeCard } from "../components/EmployeeCard";
 import { EmployeeForm } from "../components/EmployeeForm";
 
 // ── Permission helper ─────────────────────────
-// ✅ v2 — role-based permission
+// ✅ RBAC Phase 1 — now backed by the shared static permissions.ts
+// engine instead of its own duplicated inline role check. Keeps
+// the same three named booleans, since callers (this file and any
+// future consumer) refer to them by these semantic names.
 function useEmployeePermissions() {
-  const { userProfile } = useApp();
-  const role = userProfile?.role ?? "";
+  const canEditEmployees = usePermission("edit_employees");
   return {
-    canManageEmployees: ["MANAGER", "OWNER"].includes(role),
-    canViewSalary:      ["MANAGER", "OWNER"].includes(role),
-    canArchive:         ["MANAGER", "OWNER"].includes(role),
+    canManageEmployees: canEditEmployees,
+    canViewSalary:      canEditEmployees,
+    canArchive:          canEditEmployees,
   };
 }
 
