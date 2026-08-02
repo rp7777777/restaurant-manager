@@ -15,3 +15,22 @@ export function todayStr(): string {
   d.setDate(d.getDate() + 1);
   return d.toISOString().split("T")[0];
 }
+
+// ✅ Short date for a request card (e.g. "30 Jul 2026") — moved
+// verbatim from the old index.tsx.
+export function formatDate(d: string): string {
+  return new Date(d).toLocaleDateString("en-GB", {
+    day: "numeric", month: "short", year: "numeric",
+  });
+}
+
+// ✅ Longer date with weekday for the day-navigator label
+// (e.g. "Thu, 30 Jul 2026") — moved verbatim from the old
+// index.tsx, including its try/catch fallback to the raw string.
+export function formatSelectedDate(dateStr: string): string {
+  try {
+    return new Date(dateStr).toLocaleDateString("en-GB", {
+      weekday: "short", day: "numeric", month: "short", year: "numeric",
+    });
+  } catch { return dateStr; }
+}

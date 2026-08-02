@@ -9,23 +9,33 @@
 //    PurchaseOrderCard) use — this is a refactor of existing
 //    behavior, not a visual redesign, so the original's theming
 //    stays intact.
+// ✅ Status badge now delegated to RequestStatusBadge — completes
+//    the extraction already planned in an earlier review (this card
+//    used to compute statusColor/statusIcon inline).
 // ============================================
 
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
-import { MaterialIcons } from "@expo/vector-icons";
 import { IngredientRequest } from "../types/kitchen-types";
-import { STATUS_COLORS, STATUS_ICONS } from "../constants/kitchen-constants";
+import RequestStatusBadge from "./RequestStatusBadge";
+
+// ✅ Local Theme interface with only the fields this component
+// uses — matches the established real pattern already used by
+// other presentation components (e.g. AttendanceCard.tsx), rather
+// than importing the full canonical Theme from constants/theme.ts
+// (which would pull in many unused fields) or typing loosely as any.
+interface Theme {
+  card:          string;
+  text:          string;
+  textSecondary: string;
+}
 
 interface RequestCardProps {
   request: IngredientRequest;
-  theme:   any;  // ✅ matches the app-wide theme object shape from useApp() — not re-typed here to avoid duplicating AppContext's own Theme type
+  theme:   Theme;
 }
 
 export default function RequestCard({ request, theme }: RequestCardProps) {
-  const statusColor = STATUS_COLORS[request.status] ?? "#94a3b8";
-  const statusIcon = STATUS_ICONS[request.status] ?? "help";
-
   return (
     <View style={[styles.requestCard, { backgroundColor: theme.card }]}>
       <View style={styles.requestCardHeader}>
@@ -35,10 +45,7 @@ export default function RequestCard({ request, theme }: RequestCardProps) {
             Required: {request.requiredDate} · By: {request.requestedBy}
           </Text>
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: statusColor + "20" }]}>
-          <MaterialIcons name={statusIcon as any} size={12} color={statusColor} />
-          <Text style={[styles.statusText, { color: statusColor }]}>{request.status}</Text>
-        </View>
+        <RequestStatusBadge status={request.status} />
       </View>
 
       <View style={styles.requestDetails}>
@@ -71,11 +78,6 @@ const styles = StyleSheet.create({
   requestCardLeft: { flex: 1 },
   requestItemName: { fontSize: 14, fontWeight: "700" },
   requestDate: { fontSize: 11, marginTop: 2 },
-  statusBadge: {
-    flexDirection: "row", alignItems: "center", gap: 4,
-    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
-  },
-  statusText: { fontSize: 10, fontWeight: "800" },
   requestDetails: { flexDirection: "row", gap: 8 },
   requestDetailItem: { flex: 1, alignItems: "center" },
   requestDetailLabel: { fontSize: 9, fontWeight: "600", marginBottom: 2 },
