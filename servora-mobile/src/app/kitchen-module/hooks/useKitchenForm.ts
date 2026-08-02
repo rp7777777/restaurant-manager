@@ -1,12 +1,5 @@
 // ============================================
 // SERVORA ERP — useKitchenForm Hook
-// ✅ Owns the "New Request" form's remaining state — requiredDate,
-//    note, closingStock/minimumLevel/unit/orderQuantity for the
-//    item currently being added, and the requestItems list built up
-//    before sending. Composes useItemSearch() for the item-search/
-//    pick side rather than duplicating that logic.
-// ✅ Calls kitchen-request-service.ts's sendKitchenRequest() —
-//    never talks to Firestore directly.
 // ============================================
 
 import { useState } from "react";
@@ -36,6 +29,8 @@ export interface UseKitchenFormResult {
   setOrderQuantity:   (v: string) => void;
   unit:               string;
   setUnit:            (v: string) => void;
+  showUnitPicker:      boolean;
+  setShowUnitPicker:   (v: boolean) => void;
   requiredDate:        string;
   setRequiredDate:     (v: string) => void;
   note:                string;
@@ -44,7 +39,7 @@ export interface UseKitchenFormResult {
   addItemToList:       () => void;
   removeItem:          (idx: number) => void;
   saving:              boolean;
-  handleSendRequest:   () => Promise<boolean>;  // true on success
+  handleSendRequest:   () => Promise<boolean>;
 }
 
 export function useKitchenForm(
@@ -57,6 +52,7 @@ export function useKitchenForm(
   const [minimumLevel, setMinimumLevel] = useState("");
   const [orderQuantity, setOrderQuantity] = useState("");
   const [unit, setUnit] = useState("kg");
+  const [showUnitPicker, setShowUnitPicker] = useState(false);
   const [requiredDate, setRequiredDate] = useState(todayStr());
   const [note, setNote] = useState("");
   const [requestItems, setRequestItems] = useState<DraftKitchenRequestItem[]>([]);
@@ -98,11 +94,6 @@ export function useKitchenForm(
     if (!restaurantId) {
       throw new Error("Restaurant not configured");
     }
-    // ✅ Validated explicitly rather than falling back to `?? ""` —
-    // an empty userId would still satisfy the service's `userId:
-    // string` type and get written to Firestore silently, which is
-    // a data-quality gap worth catching here at the form boundary
-    // instead.
     const userId = auth.currentUser?.uid;
     if (!userId) {
       throw new Error("User not authenticated");
@@ -148,6 +139,7 @@ export function useKitchenForm(
     minimumLevel, setMinimumLevel,
     orderQuantity, setOrderQuantity,
     unit, setUnit,
+    showUnitPicker, setShowUnitPicker,
     requiredDate, setRequiredDate,
     note, setNote,
     requestItems,
