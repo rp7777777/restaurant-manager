@@ -8,15 +8,6 @@
 //    (useKitchenForm.ts), since those are FORM fields, not search
 //    state. Keeps this hook reusable anywhere Inventory search is
 //    needed, not tied to the shape of one particular form.
-// ✅ Moved from the old kitchen-module/index.tsx's inline
-//    debouncedItemName/itemMatches/selectedCategoryId logic —
-//    mechanics unchanged, just relocated.
-// ✅ No exact precedent to mirror here — Purchase Order's own item
-//    picker (usePurchaseOrderForm.ts) has no live search at all
-//    (itemId is just an optional field on each row), so this split
-//    (search hook vs form hook) was reasoned through directly for
-//    Kitchen's more complex search-as-you-type UX rather than
-//    copied from an existing pattern.
 // ============================================
 
 import { useState, useEffect, useMemo } from "react";
@@ -37,7 +28,9 @@ export interface UseItemSearchResult {
   showCategoryPicker:    boolean;
   setShowCategoryPicker: (show: boolean) => void;
   debouncedItemName:     string;
-  reset:                 () => void;
+  pickedItem:           InventoryItem | undefined;
+  selectItem:           (item: InventoryItem) => void;
+  reset:                () => void;
 }
 
 export function useItemSearch(
@@ -46,11 +39,17 @@ export function useItemSearch(
   const { items: inventoryItems } = useInventory(restaurantId);
   const { categories } = useCategoriesForPicker(restaurantId);
 
-  const [itemName, setItemName] = useState("");
+  const [itemName, setItemNameRaw] = useState("");
   const [debouncedItemName, setDebouncedItemName] = useState("");
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string | undefined>(undefined);
+  const [selectedCategoryId, setSelectedCategoryIdRaw] = useState<string | undefined>(undefined);
   const [showItemPicker, setShowItemPicker] = useState(false);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [pickedItem, setPickedItem] = useState<InventoryItem | undefined>(undefined);
+
+  const setItemName = (name: string) => {
+    setItemNameRaw(name);
+    setPickedItem(undefined);
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedItemName(itemName), 300);
@@ -67,20 +66,21 @@ export function useItemSearch(
   }, [debouncedItemName, inventoryItems, selectedCategoryId]);
 
   const reset = () => {
-    setItemName("");
+    setItemNameRaw("");
     setShowItemPicker(false);
+    setPickedItem(undefined);
   };
 
-  // ✅ Selecting a category also opens the item picker automatically
-  // — pairs with the itemMatches fix above (category selected +
-  // empty search now returns that category's items) so the Chef
-  // actually SEES those items immediately, rather than picking a
-  // category and then still needing to tap/type in the search box
-  // before anything appears. !!id also means CLEARING the category
-  // closes the picker symmetrically, not just opening it on select.
   const handleSetSelectedCategoryId = (id: string | undefined) => {
-    setSelectedCategoryId(id);
+    setSelectedCategoryIdRaw(id);
     setShowItemPicker(!!id);
+  };
+
+  const selectItem = (item: InventoryItem) => {
+    setItemNameRaw(item.itemName);
+    setPickedItem(item);
+    setShowItemPicker(false);
+    if (!selectedCategoryId) setSelectedCategoryIdRaw(item.categoryId);
   };
 
   return {
@@ -90,6 +90,7 @@ export function useItemSearch(
     showItemPicker, setShowItemPicker,
     showCategoryPicker, setShowCategoryPicker,
     debouncedItemName,
+    pickedItem, selectItem,
     reset,
   };
 }

@@ -1,17 +1,5 @@
 // ============================================
 // SERVORA ERP — RequestCard Component
-// ✅ Pure presentation — displays one kitchen IngredientRequest in
-//    the Request History list.
-// ✅ Moved verbatim from the old kitchen-module/index.tsx's
-//    Request History section JSX — same layout, same fields shown.
-// ✅ Keeps `theme` as a prop (dynamic theming) rather than switching
-//    to the hardcoded-color style some other cards (e.g.
-//    PurchaseOrderCard) use — this is a refactor of existing
-//    behavior, not a visual redesign, so the original's theming
-//    stays intact.
-// ✅ Status badge now delegated to RequestStatusBadge — completes
-//    the extraction already planned in an earlier review (this card
-//    used to compute statusColor/statusIcon inline).
 // ============================================
 
 import React from "react";
@@ -19,11 +7,6 @@ import { View, Text, StyleSheet } from "react-native";
 import { IngredientRequest } from "../types/kitchen-types";
 import RequestStatusBadge from "./RequestStatusBadge";
 
-// ✅ Local Theme interface with only the fields this component
-// uses — matches the established real pattern already used by
-// other presentation components (e.g. AttendanceCard.tsx), rather
-// than importing the full canonical Theme from constants/theme.ts
-// (which would pull in many unused fields) or typing loosely as any.
 interface Theme {
   card:          string;
   text:          string;
