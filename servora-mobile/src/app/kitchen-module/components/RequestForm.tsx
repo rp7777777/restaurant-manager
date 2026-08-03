@@ -10,6 +10,13 @@
 //    shows a Below-Minimum-Stock warning when relevant; free-text
 //    entry is an explicit opt-in row, not the default; items list
 //    groups by category; Send is disabled while empty/saving.
+// ✅ Changing Category clears the currently typed/linked item (see
+//    useItemSearch.ts's handleSetSelectedCategoryId) — the old item
+//    almost certainly doesn't belong to the newly-picked category.
+// ✅ Closing Stock/Min Level/Unit read-only displays show the
+//    REAL picked Inventory item's values (itemSearch.pickedItem.*)
+//    directly, not a form-level state that only gets synced after
+//    "Add to List" is pressed.
 // ============================================
 
 import React from "react";
@@ -157,7 +164,7 @@ export default function RequestForm({ form, theme, onSent }: RequestFormProps) {
             <Text style={[styles.miniLabel, { color: theme.textSecondary }]}>Closing Stock</Text>
             {linked ? (
               <View style={[styles.miniInput, styles.miniInputReadOnly, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-                <Text style={[styles.readOnlyValueText, { color: theme.text }]}>{form.closingStock}</Text>
+                <Text style={[styles.readOnlyValueText, { color: theme.text }]}>{itemSearch.pickedItem?.currentStock}</Text>
               </View>
             ) : (
               <TextInput
@@ -174,7 +181,7 @@ export default function RequestForm({ form, theme, onSent }: RequestFormProps) {
             <Text style={[styles.miniLabel, { color: theme.textSecondary }]}>Min Level</Text>
             {linked ? (
               <View style={[styles.miniInput, styles.miniInputReadOnly, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-                <Text style={[styles.readOnlyValueText, { color: theme.text }]}>{form.minimumLevel}</Text>
+                <Text style={[styles.readOnlyValueText, { color: theme.text }]}>{itemSearch.pickedItem?.minStock}</Text>
               </View>
             ) : (
               <TextInput
@@ -200,7 +207,7 @@ export default function RequestForm({ form, theme, onSent }: RequestFormProps) {
           </View>
         </View>
 
-        {linked && Number(form.closingStock) < Number(form.minimumLevel) && (
+        {linked && itemSearch.pickedItem && itemSearch.pickedItem.currentStock < itemSearch.pickedItem.minStock && (
           <View style={styles.belowMinWarning}>
             <MaterialIcons name="warning" size={13} color="#dc2626" />
             <Text style={styles.belowMinWarningText}>Below Minimum Stock</Text>
@@ -210,7 +217,7 @@ export default function RequestForm({ form, theme, onSent }: RequestFormProps) {
         <Text style={[styles.miniLabel, { color: theme.textSecondary, marginTop: 4 }]}>Unit</Text>
         {linked ? (
           <View style={[styles.selector, styles.selectorReadOnly, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-            <Text style={[styles.selectorText, { color: theme.text }]}>{form.unit}</Text>
+            <Text style={[styles.selectorText, { color: theme.text }]}>{itemSearch.pickedItem?.unit}</Text>
             <Text style={[styles.readOnlyTag, { color: theme.textSecondary }]}>from Inventory</Text>
           </View>
         ) : (

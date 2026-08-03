@@ -1,13 +1,5 @@
 // ============================================
 // SERVORA ERP — useItemSearch Hook
-// ✅ Owns ONLY the search/category-narrowing mechanics — debounced
-//    Inventory item search, optional category filter. Deliberately
-//    does NOT own what happens when an item is picked (filling
-//    itemName/inventoryId/unit/closingStock/minimumLevel on the
-//    request form) — that's the calling hook's job
-//    (useKitchenForm.ts), since those are FORM fields, not search
-//    state. Keeps this hook reusable anywhere Inventory search is
-//    needed, not tied to the shape of one particular form.
 // ============================================
 
 import { useState, useEffect, useMemo } from "react";
@@ -74,6 +66,14 @@ export function useItemSearch(
   const handleSetSelectedCategoryId = (id: string | undefined) => {
     setSelectedCategoryIdRaw(id);
     setShowItemPicker(!!id);
+    // ✅ Clears the currently typed/picked item when the category
+    // changes — the old item almost certainly doesn't belong to
+    // the newly-selected category, so leaving it showing (with a
+    // stale "Linked to Inventory" badge) is confusing. This does
+    // NOT run when selectItem() auto-sets the category (that path
+    // calls setSelectedCategoryIdRaw directly, not this function).
+    setItemNameRaw("");
+    setPickedItem(undefined);
   };
 
   const selectItem = (item: InventoryItem) => {
