@@ -18,6 +18,19 @@
 //    Category Setting → Restaurant Default → DEFAULT_EXPIRY_ALERT_DAYS.
 // ✅ classifyExpiry() — Date-object comparison, NaN guard.
 // ✅ calculateInventoryTotalValue() — shared rounding helper.
+// ✅ PHASE 1 (Enterprise restructuring) — ADDED sku, barcode, notes,
+//    isActive. All optional, backward compatible with existing
+//    Firestore documents (undefined = not set, no migration needed).
+//    imageUrl intentionally DEFERRED — will be added together with
+//    the future Image Upload module (Storage + upload component +
+//    thumbnail + PDF/Print integration) so the architecture for
+//    that feature lands in one clean piece instead of a dangling
+//    unused field today.
+// ✅ isActive — soft-deactivate flag. Complements the existing
+//    delete guard: items with currentStock > 0 or movement history
+//    cannot be hard-deleted, so isActive gives the owner a way to
+//    retire an item from active use (hidden from pickers/forms)
+//    without losing its audit trail. undefined/true = active.
 // FROZEN
 // ============================================
 
@@ -39,6 +52,10 @@ export interface InventoryItem {
   batchNo?:                 string;
   storageLocation?:         string;
   supplierId?:              string;
+  sku?:                     string;
+  barcode?:                 string;
+  notes?:                   string;
+  isActive?:                boolean;  // undefined/true = active
   restaurantId:             string;
   userId?:                  string;
   createdAt?:               unknown;
@@ -57,6 +74,10 @@ export interface CreateInventoryItemInput {
   batchNo?:                 string;
   storageLocation?:         string;
   supplierId?:              string;
+  sku?:                     string;
+  barcode?:                 string;
+  notes?:                   string;
+  isActive?:                boolean;
 }
 
 export type UpdateInventoryItemInput = Partial<CreateInventoryItemInput>;

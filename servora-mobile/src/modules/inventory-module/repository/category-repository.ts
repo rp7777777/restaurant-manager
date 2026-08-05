@@ -7,16 +7,31 @@
 // ✅ expiryAlertDays — validated: must be >= 0 (0 = disabled for
 //    this category, falls through to Restaurant Default otherwise).
 //    Negative values rejected outright.
-// ✅ FUTURE (Phase 8+, not built here): deleteCategory() should
-//    check whether any Inventory item still references this
-//    categoryId.
+// ✅ PHASE 2 (Enterprise restructuring) — deleteCategory() delete
+//    guard implemented (was previously deferred as a "FUTURE
+//    Phase 8+" note — reclassified as a referential-integrity
+//    requirement, not a cosmetic feature, since this restructuring
+//    IS the current Phase 8 work):
+//    1. isSystem categories can never be deleted (enforced here,
+//       not just hidden in the UI — repository is the last line of
+//       defense even if a future caller bypasses the UI).
+//    2. A category still referenced by any InventoryItem
+//       (categoryId match) cannot be deleted — prevents orphaned
+//       categoryId references that would break the category picker,
+//       filters, and PDF/report category resolution.
+// ✅ This query stays a direct Firestore query against the
+//    inventory collection (same collection path the inventory
+//    repository uses) rather than importing/calling into
+//    inventory-repository.ts — repositories remain independent and
+//    never call each other; only inventory-service.ts orchestrates
+//    across repositories.
 // FROZEN
 // ============================================
 
 import {
   collection, addDoc, updateDoc, deleteDoc,
-  doc, getDocs, onSnapshot, query,
-  orderBy, serverTimestamp,
+  doc, getDoc, getDocs, onSnapshot, query,
+  where, limit, orderBy, serverTimestamp,
 } from "firebase/firestore";
 import { db, auth } from "../../../firebase";
 import { COL, RCOL } from "../../../constants/firestore-collections";
@@ -32,6 +47,13 @@ function categoriesCollection(restaurantId: string) {
 
 function categoryDoc(restaurantId: string, categoryId: string) {
   return doc(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY_CATEGORIES, categoryId);
+}
+
+// ── Same collection path inventory-repository.ts writes to.
+//    Kept local (not imported) so this repository stays independent —
+//    see the FROZEN header note above. ──
+function inventoryCollectionForGuard(restaurantId: string) {
+  return collection(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY);
 }
 
 async function assertNameNotTaken(
@@ -114,12 +136,49 @@ export async function updateCategory(
 }
 
 // ── Delete ──────────────────────────────────────
+// ✅ Delete guard — referential integrity:
+//    1. isSystem categories are never deletable.
+//    2. Categories still referenced by at least one InventoryItem
+//       (categoryId match) are blocked from deletion.
 export async function deleteCategory(
   restaurantId: string,
   categoryId: string
 ): Promise<void> {
   if (!restaurantId) throw new Error("Restaurant not configured");
   if (!auth.currentUser) throw new Error("User not authenticated");
+
+  const snap = await getDoc(categoryDoc(restaurantId, categoryId));
+  if (!snap.exists()) {
+    throw new Error("Category not found");
+  }
+  const category = { id: snap.id, ...(snap.data() as Omit<Category, "id">) };
+
+  if (category.isSystem) {
+    throw new Error(
+      `Cannot delete "${category.name}" — this is a default system category and cannot be removed.`
+    );
+  }
+
+  const referencingItems = await getDocs(
+    query(
+      inventoryCollectionForGuard(restaurantId),
+      where("categoryId", "==", categoryId),
+      limit(1)
+    )
+  );
+
+  if (!referencingItems.empty) {
+    // Count is only needed for the error message — a second,
+    // uncapped query is acceptable here since it only runs in the
+    // (already-blocked) delete-attempt path, not on every render.
+    const allReferencing = await getDocs(
+      query(inventoryCollectionForGuard(restaurantId), where("categoryId", "==", categoryId))
+    );
+    throw new Error(
+      `Cannot delete "${category.name}" — it is still used by ${allReferencing.size} inventory item(s). Move those items to another category first.`
+    );
+  }
+
   await deleteDoc(categoryDoc(restaurantId, categoryId));
 }
 

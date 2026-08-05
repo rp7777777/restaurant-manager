@@ -1,33 +1,36 @@
 // ============================================
 // SERVORA ERP — InventoryScreen
-// ✅ Composition only — hooks provide data, components render.
-// ✅ Search + Category filter (horizontal chips) + Stock status
-//    filter + Sort selector — all via useInventoryFilters.
-// ✅ Add/Edit via a modal wrapping InventoryForm.
+// ✅ COMPOSITION ONLY — this screen now owns state and data-fetching
+//    (hooks) and wiring; ALL rendering is delegated to
+//    InventoryToolbar, InventoryStats, InventoryFilters,
+//    InventoryList, and InventoryModal. This is the final step of
+//    the Phase 4-6 restructuring — the screen shrank from ~430
+//    lines (mixed logic + JSX + styles) to composition + the actual
+//    business logic (submit/delete/seed handlers), with zero
+//    business logic duplicated into any child component.
 // ✅ Delete uses the Platform-safe confirm pattern.
 // ✅ Category lookup built once (useMemo).
-// ✅ "Seed Defaults" button — shown ONLY when no categories exist
-//    yet (fresh/existing restaurant that predates the seeding
-//    system), manager-only. Runs the idempotent
-//    seedDefaultStoreTaxonomy() once.
 // ✅ Deep-link support — Dashboard's "Low Stock" row can open this
 //    screen pre-filtered via ?stockStatus=lowStock, applied once on
 //    mount so it doesn't fight the user if they change the filter
 //    chips afterward.
+// ✅ InventoryStats inserted between the toolbar and the filters —
+//    the on-demand useMemo() aggregation confirmed earlier in this
+//    restructuring (no Dashboard-style hybrid summary).
+// ✅ itemsError banner stays inline here (not extracted into a
+//    child component) — it's screen-level connection/subscription
+//    error state from useInventory(), not something InventoryList
+//    or any other child owns.
 // FROZEN
 // ============================================
 
 import React, { useState, useMemo, useCallback, useEffect } from "react";
-import {
-  View, Text, TextInput, FlatList, Modal, ScrollView,
-  TouchableOpacity, StyleSheet, Platform, ActivityIndicator, Alert,
-} from "react-native";
+import { View, Text, StyleSheet, Platform, Alert } from "react-native";
 import { useLocalSearchParams } from "expo-router";
-import { MaterialIcons } from "@expo/vector-icons";
 import { useApp } from "../../../context/AppContext";
 import { usePermission } from "../../../hooks/usePermission";
 import { useInventory } from "../hooks/useInventory";
-import { useInventoryFilters, InventoryStockStatus, InventorySortOption } from "../hooks/useInventoryFilters";
+import { useInventoryFilters } from "../hooks/useInventoryFilters";
 import { useCategoriesForPicker } from "../hooks/useCategoriesForPicker";
 import { useSuppliers } from "../../supplier-module/hooks/useSuppliers";
 import {
@@ -37,23 +40,14 @@ import {
   InventoryItem, CreateInventoryItemInput, UpdateInventoryItemInput,
 } from "../types/inventory";
 import { seedDefaultStoreTaxonomy } from "../../store-module/services/seed-store-defaults-service";
-import InventoryCard from "../../../components/inventory/InventoryCard";
-import { InventoryForm } from "../../../components/inventory/InventoryForm";
 import { todayISO } from "../../../utils/date-utils";
+import { InventoryToolbar } from "../components/InventoryToolbar";
+import { InventoryStats } from "../components/InventoryStats";
+import { InventoryFilters } from "../components/InventoryFilters";
+import { InventoryList } from "../components/InventoryList";
+import { InventoryModal } from "../components/InventoryModal";
 
 const isWeb = Platform.OS === "web";
-
-const STOCK_FILTER_OPTIONS: { value: InventoryStockStatus; label: string }[] = [
-  { value: "all",         label: "All" },
-  { value: "lowStock",    label: "Low Stock" },
-  { value: "outOfStock",  label: "Out of Stock" },
-];
-
-const SORT_OPTIONS: { value: InventorySortOption; label: string; icon: keyof typeof MaterialIcons.glyphMap }[] = [
-  { value: "name-asc",   label: "Name",  icon: "sort-by-alpha" },
-  { value: "stock-asc",  label: "Stock", icon: "trending-up" },
-  { value: "value-desc", label: "Value", icon: "attach-money" },
-];
 
 export default function InventoryScreen() {
   const { restaurant, restaurantId, fmt } = useApp();
@@ -79,14 +73,15 @@ export default function InventoryScreen() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
   const { groups: categoryGroups, categories, loading: categoriesLoading } =
     useCategoriesForPicker(restaurantId);
   const { suppliers } = useSuppliers(restaurantId);
 
-  const [showForm,   setShowForm]   = useState(false);
+  const [showForm,    setShowForm]    = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | undefined>(undefined);
   const [saving,      setSaving]      = useState(false);
-  const [seeding,      setSeeding]      = useState(false);
+  const [seeding,     setSeeding]     = useState(false);
 
   const categoryMap = useMemo(() => {
     return new Map(categories.map((c) => [c.id, c]));
@@ -174,132 +169,36 @@ export default function InventoryScreen() {
   }, [restaurantId, seeding]);
 
   const loading = itemsLoading || categoriesLoading;
+  const shouldShowSeedBanner = !categoriesLoading && categories.length === 0 && canEditInventory;
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Inventory</Text>
-        {canEditInventory && (
-          <TouchableOpacity style={styles.addBtn} onPress={openCreate}>
-            <MaterialIcons name="add" size={18} color="#fff" />
-            <Text style={styles.addBtnText}>Add Item</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+      <InventoryToolbar
+        canEditInventory={canEditInventory}
+        onAddItem={openCreate}
+        shouldShowSeedBanner={shouldShowSeedBanner}
+        seeding={seeding}
+        onSeedStoreDefaults={handleSeedDefaults}
+      />
 
-      {/* ✅ Seed Defaults — only when no categories exist yet */}
-      {!categoriesLoading && categories.length === 0 && canEditInventory && (
-        <TouchableOpacity
-          style={[styles.seedBanner, seeding && { opacity: 0.7 }]}
-          onPress={handleSeedDefaults}
-          disabled={seeding}
-        >
-          {seeding
-            ? <ActivityIndicator size="small" color="#fff" />
-            : <MaterialIcons name="auto-awesome" size={16} color="#fff" />
-          }
-          <Text style={styles.seedBannerText}>
-            {seeding ? "Setting up..." : "No categories yet — Tap to set up default categories"}
-          </Text>
-        </TouchableOpacity>
-      )}
-
-      <View style={styles.searchRow}>
-        <MaterialIcons name="search" size={18} color="#94a3b8" />
-        <TextInput
-          style={styles.searchInput}
-          value={filters.searchQuery}
-          onChangeText={setSearchQuery}
-          placeholder="Search items..."
+      {!loading && (
+        <InventoryStats
+          items={items}
+          categoryMap={categoryMap}
+          todayISO={today}
+          restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
+          fmt={fmt}
         />
-      </View>
-
-      <View style={styles.filterRow}>
-        {STOCK_FILTER_OPTIONS.map((opt) => (
-          <TouchableOpacity
-            key={opt.value}
-            style={[
-              styles.filterChip,
-              filters.stockStatus === opt.value && styles.filterChipActive,
-            ]}
-            onPress={() => setStockStatus(opt.value)}
-          >
-            <Text style={[
-              styles.filterChipText,
-              filters.stockStatus === opt.value && styles.filterChipTextActive,
-            ]}>
-              {opt.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {categories.length > 0 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.categoryScroll}
-          contentContainerStyle={styles.categoryScrollContent}
-        >
-          <TouchableOpacity
-            style={[
-              styles.categoryChip,
-              filters.categoryId === null && styles.categoryChipActive,
-            ]}
-            onPress={() => setCategoryId(null)}
-          >
-            <Text style={[
-              styles.categoryChipText,
-              filters.categoryId === null && styles.categoryChipTextActive,
-            ]}>
-              All Categories
-            </Text>
-          </TouchableOpacity>
-          {categories.map((cat) => (
-            <TouchableOpacity
-              key={cat.id}
-              style={[
-                styles.categoryChip,
-                filters.categoryId === cat.id && styles.categoryChipActive,
-              ]}
-              onPress={() => setCategoryId(cat.id)}
-            >
-              <Text style={[
-                styles.categoryChipText,
-                filters.categoryId === cat.id && styles.categoryChipTextActive,
-              ]}>
-                {cat.icon} {cat.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
       )}
 
-      <View style={styles.sortRow}>
-        <Text style={styles.sortLabel}>Sort:</Text>
-        {SORT_OPTIONS.map((opt) => (
-          <TouchableOpacity
-            key={opt.value}
-            style={[
-              styles.sortChip,
-              filters.sort === opt.value && styles.sortChipActive,
-            ]}
-            onPress={() => setSort(opt.value)}
-          >
-            <MaterialIcons
-              name={opt.icon}
-              size={13}
-              color={filters.sort === opt.value ? "#fff" : "#64748b"}
-            />
-            <Text style={[
-              styles.sortChipText,
-              filters.sort === opt.value && styles.sortChipTextActive,
-            ]}>
-              {opt.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <InventoryFilters
+        filters={filters}
+        categories={categories}
+        setSearchQuery={setSearchQuery}
+        setCategoryId={setCategoryId}
+        setStockStatus={setStockStatus}
+        setSort={setSort}
+      />
 
       {itemsError && (
         <View style={styles.errorBanner}>
@@ -307,127 +206,35 @@ export default function InventoryScreen() {
         </View>
       )}
 
-      {loading ? (
-        <ActivityIndicator size="large" color="#0369a1" style={{ marginTop: 40 }} />
-      ) : filteredItems.length === 0 ? (
-        <View style={styles.emptyState}>
-          <MaterialIcons name="inventory-2" size={40} color="#cbd5e1" />
-          <Text style={styles.emptyStateText}>
-            {items.length === 0 ? "No inventory items yet" : "No items match your filters"}
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={filteredItems}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.list}
-          initialNumToRender={12}
-          windowSize={7}
-          renderItem={({ item }) => (
-            <InventoryCard
-              item={item}
-              category={categoryMap.get(item.categoryId)}
-              todayISO={today}
-              restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
-              fmt={fmt}
-              onPress={() => openEdit(item)}
-            />
-          )}
-        />
-      )}
+      <InventoryList
+        items={items}
+        filteredItems={filteredItems}
+        loading={loading}
+        categoryMap={categoryMap}
+        todayISO={today}
+        restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
+        fmt={fmt}
+        onItemPress={openEdit}
+      />
 
-      <Modal visible={showForm} animationType="slide" onRequestClose={closeForm}>
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={closeForm}>
-              <MaterialIcons name="close" size={24} color="#1e293b" />
-            </TouchableOpacity>
-            {editingItem && canEditInventory && (
-              <TouchableOpacity onPress={() => handleDelete(editingItem)}>
-                <MaterialIcons name="delete" size={22} color="#dc2626" />
-              </TouchableOpacity>
-            )}
-          </View>
-          <InventoryForm
-            mode={editingItem ? "edit" : "create"}
-            initial={editingItem}
-            categoryGroups={categoryGroups}
-            suppliers={suppliers}
-            saving={saving}
-            onSubmit={handleSubmit}
-            onCancel={closeForm}
-          />
-        </View>
-      </Modal>
+      <InventoryModal
+        visible={showForm}
+        editingItem={editingItem}
+        canEditInventory={canEditInventory}
+        categoryGroups={categoryGroups}
+        suppliers={suppliers}
+        onSubmit={handleSubmit}
+        onCancel={closeForm}
+        onDelete={handleDelete}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f8fafc" },
-  header: {
-    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    padding: 16, paddingTop: Platform.OS === "web" ? 20 : 48,
-  },
-  title: { fontSize: 20, fontWeight: "800", color: "#1e293b" },
-  addBtn: {
-    flexDirection: "row", alignItems: "center", gap: 6,
-    backgroundColor: "#0369a1", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
-  },
-  addBtnText: { color: "#fff", fontWeight: "700", fontSize: 13 },
-  seedBanner: {
-    flexDirection: "row", alignItems: "center", gap: 8, justifyContent: "center",
-    backgroundColor: "#7c3aed", marginHorizontal: 16, marginBottom: 8,
-    paddingVertical: 10, borderRadius: 10,
-  },
-  seedBannerText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-  searchRow: {
-    flexDirection: "row", alignItems: "center", gap: 8,
-    backgroundColor: "#fff", marginHorizontal: 16, paddingHorizontal: 12, paddingVertical: 8,
-    borderRadius: 10, borderWidth: 1, borderColor: "#e2e8f0",
-  },
-  searchInput: { flex: 1, fontSize: 14, color: "#1e293b" },
-  filterRow: { flexDirection: "row", gap: 8, paddingHorizontal: 16, marginTop: 10 },
-  filterChip: {
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
-    backgroundColor: "#e2e8f0",
-  },
-  filterChipActive: { backgroundColor: "#0369a1" },
-  filterChipText: { fontSize: 12, fontWeight: "700", color: "#475569" },
-  filterChipTextActive: { color: "#fff" },
-  categoryScroll: { marginTop: 10 },
-  categoryScrollContent: { paddingHorizontal: 16, gap: 8 },
-  categoryChip: {
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
-    backgroundColor: "#f1f5f9", marginRight: 8,
-    borderWidth: 1, borderColor: "#e2e8f0",
-  },
-  categoryChipActive: { backgroundColor: "#1e293b", borderColor: "#1e293b" },
-  categoryChipText: { fontSize: 12, fontWeight: "600", color: "#475569" },
-  categoryChipTextActive: { color: "#fff" },
-  sortRow: {
-    flexDirection: "row", alignItems: "center", gap: 6,
-    paddingHorizontal: 16, marginTop: 10,
-  },
-  sortLabel: { fontSize: 12, fontWeight: "700", color: "#94a3b8", marginRight: 2 },
-  sortChip: {
-    flexDirection: "row", alignItems: "center", gap: 4,
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16,
-    backgroundColor: "#f1f5f9",
-  },
-  sortChipActive: { backgroundColor: "#0369a1" },
-  sortChipText: { fontSize: 11, fontWeight: "700", color: "#64748b" },
-  sortChipTextActive: { color: "#fff" },
   errorBanner: {
     backgroundColor: "#fef2f2", margin: 16, padding: 10, borderRadius: 8,
   },
   errorBannerText: { color: "#dc2626", fontSize: 12, fontWeight: "600" },
-  emptyState: { alignItems: "center", marginTop: 60, gap: 8 },
-  emptyStateText: { color: "#94a3b8", fontSize: 14, fontWeight: "600" },
-  list: { padding: 16 },
-  modalContainer: { flex: 1, backgroundColor: "#fff" },
-  modalHeader: {
-    flexDirection: "row", justifyContent: "space-between",
-    paddingHorizontal: 16, paddingTop: Platform.OS === "web" ? 16 : 48, paddingBottom: 8,
-  },
 });

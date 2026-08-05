@@ -8,17 +8,29 @@
 //    updateDepartment(), since UpdateDepartmentInput excludes it).
 //    Default departments are created with isSystem: true, anything
 //    the owner adds later defaults to isSystem: false.
-// ✅ FUTURE (Phase 8+, not built here): deleteDepartment() should
-//    check whether any Category still references this
-//    departmentId and either reject the delete or offer to
-//    reassign those categories to another department first.
+// ✅ PHASE 2 (Enterprise restructuring) — deleteDepartment() delete
+//    guard implemented (was previously deferred as a "FUTURE
+//    Phase 8+" note — reclassified as a referential-integrity
+//    requirement, mirroring the identical fix applied to
+//    category-repository.ts's deleteCategory()):
+//    1. isSystem departments can never be deleted (enforced here,
+//       not just hidden in the UI).
+//    2. A department still referenced by any Category
+//       (departmentId match) cannot be deleted — prevents orphaned
+//       departmentId references that would break the Category
+//       screen, department filters, and report/PDF resolution.
+// ✅ Direct Firestore query against the categories collection
+//    (same collection path category-repository.ts uses) rather
+//    than importing/calling into category-repository.ts —
+//    repositories remain independent; only inventory-service.ts
+//    orchestrates across repositories.
 // FROZEN
 // ============================================
 
 import {
   collection, addDoc, updateDoc, deleteDoc,
-  doc, getDocs, onSnapshot, query,
-  orderBy, serverTimestamp,
+  doc, getDoc, getDocs, onSnapshot, query,
+  where, limit, orderBy, serverTimestamp,
 } from "firebase/firestore";
 import { db, auth } from "../../../firebase";
 import { COL, RCOL } from "../../../constants/firestore-collections";
@@ -34,6 +46,13 @@ function departmentsCollection(restaurantId: string) {
 
 function departmentDoc(restaurantId: string, departmentId: string) {
   return doc(db, COL.RESTAURANTS, restaurantId, RCOL.DEPARTMENTS, departmentId);
+}
+
+// ── Same collection path category-repository.ts writes to.
+//    Kept local (not imported) so this repository stays independent —
+//    see the FROZEN header note above. ──
+function categoriesCollectionForGuard(restaurantId: string) {
+  return collection(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY_CATEGORIES);
 }
 
 async function assertNameNotTaken(
@@ -104,14 +123,49 @@ export async function updateDepartment(
   await updateDoc(departmentDoc(restaurantId, departmentId), updates);
 }
 
-// ── Delete — see FUTURE note in file header re: checking Category
-//    references before deleting (not implemented yet). ──
+// ── Delete guard — referential integrity:
+//    1. isSystem departments are never deletable.
+//    2. Departments still referenced by at least one Category
+//       (departmentId match) are blocked from deletion.
 export async function deleteDepartment(
   restaurantId: string,
   departmentId: string
 ): Promise<void> {
   if (!restaurantId) throw new Error("Restaurant not configured");
   if (!auth.currentUser) throw new Error("User not authenticated");
+
+  const snap = await getDoc(departmentDoc(restaurantId, departmentId));
+  if (!snap.exists()) {
+    throw new Error("Department not found");
+  }
+  const department = { id: snap.id, ...(snap.data() as Omit<Department, "id">) };
+
+  if (department.isSystem) {
+    throw new Error(
+      `Cannot delete "${department.name}" — this is a default system department and cannot be removed.`
+    );
+  }
+
+  const referencingCategories = await getDocs(
+    query(
+      categoriesCollectionForGuard(restaurantId),
+      where("departmentId", "==", departmentId),
+      limit(1)
+    )
+  );
+
+  if (!referencingCategories.empty) {
+    // Count is only needed for the error message — a second,
+    // uncapped query is acceptable here since it only runs in the
+    // (already-blocked) delete-attempt path, not on every render.
+    const allReferencing = await getDocs(
+      query(categoriesCollectionForGuard(restaurantId), where("departmentId", "==", departmentId))
+    );
+    throw new Error(
+      `Cannot delete "${department.name}" — it is still used by ${allReferencing.size} categor${allReferencing.size === 1 ? "y" : "ies"}. Move those categories to another department first.`
+    );
+  }
+
   await deleteDoc(departmentDoc(restaurantId, departmentId));
 }
 

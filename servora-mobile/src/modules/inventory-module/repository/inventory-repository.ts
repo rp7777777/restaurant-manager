@@ -17,6 +17,19 @@
 //      stock-movement-service.ts's recordStockMovement() instead.
 // ✅ Defensive try/catch around the summary sync call here too.
 // ✅ Reuses InventorySummarySnapshot for the before/after shape.
+// ✅ PHASE 2 (Enterprise restructuring) — sku, barcode, notes now
+//    saved/updated. isActive explicitly defaults to true on create
+//    (undefined would still mean "active" per the type's contract,
+//    but writing it explicitly keeps future "active items only"
+//    Firestore queries simple and indexable).
+// ✅ Barcode/SKU uniqueness validation intentionally NOT enforced
+//    yet — deferred to the future Barcode Scanner / POS module,
+//    where duplicate-check queries, scan lookup, and bulk-import
+//    conflict handling belong together in one phase instead of
+//    being bolted on piecemeal now.
+// ✅ categoryId/supplierId now trimmed consistently with itemName,
+//    storageLocation, sku, barcode, notes — protects against
+//    accidental trailing whitespace from future bulk import.
 // FROZEN
 // ============================================
 
@@ -91,7 +104,7 @@ export async function createInventoryItem(
 
   const ref = await addDoc(inventoryCollection(restaurantId), {
     itemName:         input.itemName.trim(),
-    categoryId:       input.categoryId,
+    categoryId:       input.categoryId.trim(),
     currentStock,
     unit:             input.unit,
     unitCost,
@@ -101,7 +114,11 @@ export async function createInventoryItem(
     expiryDate:       input.expiryDate ?? null,
     batchNo:          input.batchNo?.trim() || null,
     storageLocation:  input.storageLocation?.trim() || null,
-    supplierId:       input.supplierId ?? null,
+    supplierId:       input.supplierId?.trim() || null,
+    sku:              input.sku?.trim() || null,
+    barcode:          input.barcode?.trim() || null,
+    notes:            input.notes?.trim() || null,
+    isActive:         input.isActive ?? true,
     restaurantId,
     userId:           auth.currentUser.uid,
     createdAt:        serverTimestamp(),
@@ -136,7 +153,7 @@ export async function updateInventoryItem(
 
   const updates: Record<string, unknown> = {
     ...(input.itemName        !== undefined && { itemName: input.itemName.trim() }),
-    ...(input.categoryId      !== undefined && { categoryId: input.categoryId }),
+    ...(input.categoryId      !== undefined && { categoryId: input.categoryId.trim() }),
     ...(input.currentStock    !== undefined && { currentStock: input.currentStock }),
     ...(input.unit             !== undefined && { unit: input.unit }),
     ...(input.unitCost        !== undefined && { unitCost: input.unitCost }),
@@ -144,7 +161,11 @@ export async function updateInventoryItem(
     ...(input.expiryDate      !== undefined && { expiryDate: input.expiryDate || null }),
     ...(input.batchNo         !== undefined && { batchNo: input.batchNo?.trim() || null }),
     ...(input.storageLocation !== undefined && { storageLocation: input.storageLocation?.trim() || null }),
-    ...(input.supplierId      !== undefined && { supplierId: input.supplierId || null }),
+    ...(input.supplierId      !== undefined && { supplierId: input.supplierId?.trim() || null }),
+    ...(input.sku             !== undefined && { sku: input.sku?.trim() || null }),
+    ...(input.barcode         !== undefined && { barcode: input.barcode?.trim() || null }),
+    ...(input.notes           !== undefined && { notes: input.notes?.trim() || null }),
+    ...(input.isActive        !== undefined && { isActive: input.isActive }),
     totalValue: newTotalValue,
     isLowStock: newIsLowStock,
     updatedAt:  serverTimestamp(),
