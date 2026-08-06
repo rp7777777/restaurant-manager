@@ -3,11 +3,7 @@
 // ✅ COMPOSITION ONLY — this screen now owns state and data-fetching
 //    (hooks) and wiring; ALL rendering is delegated to
 //    InventoryToolbar, InventoryStats, InventoryFilters,
-//    InventoryList, and InventoryModal. This is the final step of
-//    the Phase 4-6 restructuring — the screen shrank from ~430
-//    lines (mixed logic + JSX + styles) to composition + the actual
-//    business logic (submit/delete/seed handlers), with zero
-//    business logic duplicated into any child component.
+//    InventoryList, InventoryModal, and StockAdjustmentModal.
 // ✅ Delete uses the Platform-safe confirm pattern.
 // ✅ Category lookup built once (useMemo).
 // ✅ Deep-link support — Dashboard's "Low Stock" row can open this
@@ -21,6 +17,15 @@
 //    child component) — it's screen-level connection/subscription
 //    error state from useInventory(), not something InventoryList
 //    or any other child owns.
+// ✅ NEW — Stock Adjustment wiring: `adjustingItem` state tracks
+//    which item the StockAdjustmentModal is open for. Opened via
+//    InventoryList → InventoryCard's own "Adjust Stock" icon
+//    button, completely separate from the Edit modal (`showForm` /
+//    `editingItem`) — a user can adjust stock without going through
+//    Edit at all. The modal itself performs the write via
+//    useStockAdjustment() → inventory-service.ts's adjustStock() →
+//    recordStockMovement(); this screen only owns the "which item,
+//    is it open" state.
 // FROZEN
 // ============================================
 
@@ -46,6 +51,7 @@ import { InventoryStats } from "../components/InventoryStats";
 import { InventoryFilters } from "../components/InventoryFilters";
 import { InventoryList } from "../components/InventoryList";
 import { InventoryModal } from "../components/InventoryModal";
+import { StockAdjustmentModal } from "../components/StockAdjustmentModal";
 
 const isWeb = Platform.OS === "web";
 
@@ -78,10 +84,11 @@ export default function InventoryScreen() {
     useCategoriesForPicker(restaurantId);
   const { suppliers } = useSuppliers(restaurantId);
 
-  const [showForm,    setShowForm]    = useState(false);
-  const [editingItem, setEditingItem] = useState<InventoryItem | undefined>(undefined);
-  const [saving,      setSaving]      = useState(false);
-  const [seeding,     setSeeding]     = useState(false);
+  const [showForm,      setShowForm]      = useState(false);
+  const [editingItem,   setEditingItem]   = useState<InventoryItem | undefined>(undefined);
+  const [saving,        setSaving]        = useState(false);
+  const [seeding,       setSeeding]       = useState(false);
+  const [adjustingItem, setAdjustingItem] = useState<InventoryItem | undefined>(undefined);
 
   const categoryMap = useMemo(() => {
     return new Map(categories.map((c) => [c.id, c]));
@@ -102,6 +109,14 @@ export default function InventoryScreen() {
   const closeForm = useCallback(() => {
     setShowForm(false);
     setEditingItem(undefined);
+  }, []);
+
+  const openAdjustStock = useCallback((item: InventoryItem) => {
+    setAdjustingItem(item);
+  }, []);
+
+  const closeAdjustStock = useCallback(() => {
+    setAdjustingItem(undefined);
   }, []);
 
   const handleSubmit = useCallback(async (
@@ -215,6 +230,7 @@ export default function InventoryScreen() {
         restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
         fmt={fmt}
         onItemPress={openEdit}
+        onAdjustStock={openAdjustStock}
       />
 
       <InventoryModal
@@ -226,6 +242,13 @@ export default function InventoryScreen() {
         onSubmit={handleSubmit}
         onCancel={closeForm}
         onDelete={handleDelete}
+      />
+
+      <StockAdjustmentModal
+        visible={!!adjustingItem}
+        item={adjustingItem}
+        restaurantId={restaurantId ?? ""}
+        onClose={closeAdjustStock}
       />
     </View>
   );

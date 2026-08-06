@@ -14,6 +14,9 @@
 //    telling someone with zero inventory to "adjust filters").
 // ✅ FlatList perf props (initialNumToRender/windowSize) kept
 //    exactly as configured in the original.
+// ✅ NEW — onAdjustStock pass-through prop, wired to each
+//    InventoryCard's own onAdjustStock button (separate from
+//    onItemPress, which opens Edit).
 // FROZEN
 // ============================================
 
@@ -33,11 +36,12 @@ interface InventoryListProps {
   restaurantDefaultExpiryAlertDays?: number;
   fmt:                               (value: number) => string;
   onItemPress:                       (item: InventoryItem) => void;
+  onAdjustStock:                     (item: InventoryItem) => void;
 }
 
 export function InventoryList({
   items, filteredItems, loading, categoryMap, todayISO,
-  restaurantDefaultExpiryAlertDays, fmt, onItemPress,
+  restaurantDefaultExpiryAlertDays, fmt, onItemPress, onAdjustStock,
 }: InventoryListProps) {
   if (loading) {
     return <ActivityIndicator size="large" color="#0369a1" style={styles.loadingIndicator} />;
@@ -69,6 +73,7 @@ export function InventoryList({
           restaurantDefaultExpiryAlertDays={restaurantDefaultExpiryAlertDays}
           fmt={fmt}
           onPress={() => onItemPress(item)}
+          onAdjustStock={() => onAdjustStock(item)}
         />
       )}
     />

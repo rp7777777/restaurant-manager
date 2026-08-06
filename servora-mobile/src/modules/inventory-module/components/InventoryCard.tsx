@@ -8,6 +8,13 @@
 //    modules/inventory-module/components/ (moved from
 //    src/components/inventory/), matching Kitchen module's pattern.
 //    Import paths below are relative to THIS location.
+// ✅ NEW — "Adjust Stock" icon button, separate from the row's main
+//    onPress (which opens Edit). Uses its own TouchableOpacity so
+//    tapping it doesn't also trigger the row's edit-open action —
+//    React Native TouchableOpacity does not bubble press events the
+//    way DOM click events do, so no explicit stopPropagation is
+//    needed; nesting them is sufficient for the inner one to
+//    capture the tap first.
 // FROZEN
 // ============================================
 
@@ -24,10 +31,11 @@ interface InventoryCardProps {
   restaurantDefaultExpiryAlertDays?: number;
   fmt:                     (n: number) => string;
   onPress:                 () => void;
+  onAdjustStock:           () => void;
 }
 
 function InventoryCard({
-  item, category, todayISO, restaurantDefaultExpiryAlertDays, fmt, onPress,
+  item, category, todayISO, restaurantDefaultExpiryAlertDays, fmt, onPress, onAdjustStock,
 }: InventoryCardProps) {
   const resolvedDays = resolveExpiryAlertDays(
     item.expiryAlertDaysOverride,
@@ -50,7 +58,16 @@ function InventoryCard({
             </View>
           )}
         </View>
-        <MaterialIcons name="chevron-right" size={20} color="#94a3b8" />
+        <View style={styles.topRowActions}>
+          <TouchableOpacity
+            style={styles.adjustBtn}
+            onPress={onAdjustStock}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <MaterialIcons name="tune" size={16} color="#0369a1" />
+          </TouchableOpacity>
+          <MaterialIcons name="chevron-right" size={20} color="#94a3b8" />
+        </View>
       </View>
 
       <View style={styles.middleRow}>
@@ -124,6 +141,12 @@ const styles = StyleSheet.create({
   },
   categoryIcon: { fontSize: 11 },
   categoryText: { fontSize: 11, color: "#64748b", fontWeight: "600" },
+  topRowActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  adjustBtn: {
+    width: 28, height: 28, borderRadius: 14,
+    backgroundColor: "#e0f2fe",
+    alignItems: "center", justifyContent: "center",
+  },
   middleRow: {
     flexDirection:  "row",
     justifyContent: "space-between",
