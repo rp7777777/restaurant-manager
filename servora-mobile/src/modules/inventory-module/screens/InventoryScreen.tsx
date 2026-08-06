@@ -10,10 +10,7 @@
 // ✅ Deep-link support — Dashboard's "Low Stock" row can open this
 //    screen pre-filtered via ?stockStatus=lowStock, applied once on
 //    mount so it doesn't fight the user if they change the filter
-//    chips afterward. Now also accepts "expiringSoon", matching the
-//    stock status option added alongside the tap-to-filter stats
-//    cards — a future Dashboard "Expiring Soon" widget can deep-link
-//    here the same way Low Stock/Out of Stock already do.
+//    afterward. Accepts "lowStock" / "outOfStock" / "expiringSoon".
 // ✅ Row tap opens ItemDetailsDrawer (`drawerItem` state) — Edit/
 //    Adjust Stock are actions inside the drawer, not the row's
 //    direct action. The "Adjust Stock" icon shortcut on
@@ -26,13 +23,17 @@
 //      so the "expiringSoon" filter option can classify items using
 //      the exact same 3-tier priority logic used everywhere else.
 //    - InventoryStats' onStatusPress={handleStatusPress} — tapping
-//      any stat card drives the SAME filter state the filter chips
-//      control, so both entry points always agree.
+//      any stat card drives the setStockStatus state.
 //    - listRef + scrollToOffset — after a stat card changes the
-//      filter, the list scrolls to the top so the newly filtered
-//      results are immediately visible. Guarded with optional
-//      chaining since the ref is null during the loading/empty-state
-//      branches (see InventoryList.tsx).
+//      filter, the list scrolls to the top.
+// ✅ REMOVED — InventoryFilters no longer renders a separate
+//    stock-status chip row (All/Low Stock/Out of Stock/Expiring
+//    Soon) — InventoryStats' tap-to-filter cards already cover the
+//    exact same functionality, so the standalone chip row was
+//    redundant UI. setStockStatus is still passed to InventoryStats
+//    (via handleStatusPress) — only the direct
+//    InventoryFilters↔setStockStatus wiring was removed, since that
+//    component no longer accepts the prop.
 // FROZEN
 // ============================================
 
@@ -244,7 +245,6 @@ export default function InventoryScreen() {
         categories={categories}
         setSearchQuery={setSearchQuery}
         setCategoryId={setCategoryId}
-        setStockStatus={setStockStatus}
         setSort={setSort}
       />
 
