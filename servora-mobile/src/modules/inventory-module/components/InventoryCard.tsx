@@ -3,26 +3,38 @@
 // ✅ Pure presentation — displays one InventoryItem in the list.
 // ✅ Shows category name (resolved via a lookup map passed in from
 //    the screen, since InventoryItem only stores categoryId).
-// ✅ Low stock / out of stock / expiring visual indicators.
 // ✅ PHASE (component relocation) — this file now lives in
 //    modules/inventory-module/components/ (moved from
 //    src/components/inventory/), matching Kitchen module's pattern.
-//    Import paths below are relative to THIS location.
 // ✅ NEW — "Adjust Stock" icon button, separate from the row's main
-//    onPress (which opens Edit). Uses its own TouchableOpacity so
-//    tapping it doesn't also trigger the row's edit-open action —
-//    React Native TouchableOpacity does not bubble press events the
-//    way DOM click events do, so no explicit stopPropagation is
-//    needed; nesting them is sufficient for the inner one to
-//    capture the tap first.
+//    onPress (which now opens ItemDetailsDrawer, not Edit directly —
+//    see the WIRING CHANGE note below).
+// ✅ WIRING CHANGE — onPress now opens ItemDetailsDrawer instead of
+//    opening Edit directly. Matches the confirmed ERP-standard flow
+//    (Row tap → Details Drawer → Edit/Adjust Stock/Duplicate/Archive
+//    as actions inside the drawer). The onAdjustStock icon button
+//    remains a shortcut that bypasses the drawer entirely for the
+//    single most common action.
+// ✅ Badge row now delegates to InventoryStatusBadge (extracted) —
+//    this component no longer computes or renders status badges
+//    itself; it only computes expiryStatus (needed for the
+//    low-stock/expiry text coloring above the badges) and passes it
+//    down.
+// ✅ Uses Pressable for the secondary action button. This keeps the
+//    interaction isolated in practice and aligns with React
+//    Native's modern press API, though parent/child press behavior
+//    ultimately depends on the underlying responder system —
+//    switching to Pressable is not itself a guarantee against event
+//    bubbling to the card's own onPress.
 // FROZEN
 // ============================================
 
 import React, { memo } from "react";
-import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, Pressable } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { InventoryItem, classifyExpiry, resolveExpiryAlertDays } from "../types/inventory";
 import { Category } from "../types/category";
+import { InventoryStatusBadge } from "./InventoryStatusBadge";
 
 interface InventoryCardProps {
   item:                    InventoryItem;
@@ -59,13 +71,13 @@ function InventoryCard({
           )}
         </View>
         <View style={styles.topRowActions}>
-          <TouchableOpacity
+          <Pressable
             style={styles.adjustBtn}
             onPress={onAdjustStock}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <MaterialIcons name="tune" size={16} color="#0369a1" />
-          </TouchableOpacity>
+          </Pressable>
           <MaterialIcons name="chevron-right" size={20} color="#94a3b8" />
         </View>
       </View>
@@ -81,34 +93,7 @@ function InventoryCard({
         <Text style={styles.valueText}>{fmt(item.totalValue)}</Text>
       </View>
 
-      {(item.isLowStock || expiryStatus === "expired" || expiryStatus === "expiringSoon") && (
-        <View style={styles.badgeRow}>
-          {isOutOfStock && (
-            <View style={[styles.statusBadge, styles.outOfStockBadge]}>
-              <MaterialIcons name="remove-shopping-cart" size={11} color="#fff" />
-              <Text style={styles.statusBadgeText}>Out of Stock</Text>
-            </View>
-          )}
-          {item.isLowStock && !isOutOfStock && (
-            <View style={[styles.statusBadge, styles.lowStockBadge]}>
-              <MaterialIcons name="warning" size={11} color="#fff" />
-              <Text style={styles.statusBadgeText}>Low Stock</Text>
-            </View>
-          )}
-          {expiryStatus === "expired" && (
-            <View style={[styles.statusBadge, styles.expiredBadge]}>
-              <MaterialIcons name="dangerous" size={11} color="#fff" />
-              <Text style={styles.statusBadgeText}>Expired</Text>
-            </View>
-          )}
-          {expiryStatus === "expiringSoon" && (
-            <View style={[styles.statusBadge, styles.expiringBadge]}>
-              <MaterialIcons name="schedule" size={11} color="#fff" />
-              <Text style={styles.statusBadgeText}>Expiring Soon</Text>
-            </View>
-          )}
-        </View>
-      )}
+      <InventoryStatusBadge item={item} expiryStatus={expiryStatus} />
     </TouchableOpacity>
   );
 }
@@ -157,20 +142,6 @@ const styles = StyleSheet.create({
   lowStockText:      { color: "#d97706" },
   outOfStockText:    { color: "#dc2626" },
   valueText:         { fontSize: 14, fontWeight: "700", color: "#059669" },
-  badgeRow: { flexDirection: "row", gap: 6, marginTop: 8, flexWrap: "wrap" },
-  statusBadge: {
-    flexDirection:     "row",
-    alignItems:        "center",
-    gap:               4,
-    paddingHorizontal: 8,
-    paddingVertical:   3,
-    borderRadius:      6,
-  },
-  lowStockBadge:   { backgroundColor: "#d97706" },
-  outOfStockBadge: { backgroundColor: "#dc2626" },
-  expiredBadge:    { backgroundColor: "#991b1b" },
-  expiringBadge:   { backgroundColor: "#ea580c" },
-  statusBadgeText: { color: "#fff", fontSize: 10, fontWeight: "700" },
 });
 
 export default memo(InventoryCard);

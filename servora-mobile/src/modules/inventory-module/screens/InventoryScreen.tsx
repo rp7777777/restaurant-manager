@@ -1,9 +1,10 @@
 // ============================================
 // SERVORA ERP — InventoryScreen
-// ✅ COMPOSITION ONLY — this screen now owns state and data-fetching
+// ✅ COMPOSITION ONLY — this screen owns state and data-fetching
 //    (hooks) and wiring; ALL rendering is delegated to
 //    InventoryToolbar, InventoryStats, InventoryFilters,
-//    InventoryList, InventoryModal, and StockAdjustmentModal.
+//    InventoryList, InventoryModal, StockAdjustmentModal, and
+//    ItemDetailsDrawer.
 // ✅ Delete uses the Platform-safe confirm pattern.
 // ✅ Category lookup built once (useMemo).
 // ✅ Deep-link support — Dashboard's "Low Stock" row can open this
@@ -13,19 +14,31 @@
 // ✅ InventoryStats inserted between the toolbar and the filters —
 //    the on-demand useMemo() aggregation confirmed earlier in this
 //    restructuring (no Dashboard-style hybrid summary).
-// ✅ itemsError banner stays inline here (not extracted into a
-//    child component) — it's screen-level connection/subscription
-//    error state from useInventory(), not something InventoryList
-//    or any other child owns.
-// ✅ NEW — Stock Adjustment wiring: `adjustingItem` state tracks
-//    which item the StockAdjustmentModal is open for. Opened via
-//    InventoryList → InventoryCard's own "Adjust Stock" icon
-//    button, completely separate from the Edit modal (`showForm` /
-//    `editingItem`) — a user can adjust stock without going through
-//    Edit at all. The modal itself performs the write via
-//    useStockAdjustment() → inventory-service.ts's adjustStock() →
-//    recordStockMovement(); this screen only owns the "which item,
-//    is it open" state.
+// ✅ itemsError banner stays inline here — screen-level connection/
+//    subscription error state from useInventory(), not something
+//    any child owns.
+// ✅ WIRING CHANGE — Row tap now opens ItemDetailsDrawer
+//    (`drawerItem` state) instead of directly opening Edit
+//    (`showForm`/`editingItem`). The two states are fully
+//    independent: the drawer's own Edit/Adjust Stock buttons close
+//    the drawer first, then call openEdit()/openAdjustStock() —
+//    exactly the handlers already used by the "Adjust Stock" icon
+//    shortcut on InventoryCard, so there is exactly ONE way to open
+//    each modal regardless of which entry point triggered it. The
+//    close-then-open sequencing lives inside ItemDetailsDrawer
+//    itself (see that component's FROZEN header) — this screen only
+//    supplies the two handlers, it doesn't sequence them.
+// ✅ safeRestaurantId — `restaurantId ?? ""` computed once and
+//    reused across both StockAdjustmentModal and ItemDetailsDrawer,
+//    rather than repeating the fallback expression at each prop.
+// ✅ duplicateNameSuffix is passed as a plain string here ("(Copy)")
+//    — the module doesn't yet have a translation key for this
+//    (i18n integration is a separate future pass across the whole
+//    app, not scoped to this restructuring), but keeping it as an
+//    explicit prop (rather than hardcoded inside
+//    ItemDetailsDrawer/inventory-service) means swapping in
+//    `t("inventory.copySuffix")` later is a one-line change at this
+//    single call site.
 // FROZEN
 // ============================================
 
@@ -52,6 +65,7 @@ import { InventoryFilters } from "../components/InventoryFilters";
 import { InventoryList } from "../components/InventoryList";
 import { InventoryModal } from "../components/InventoryModal";
 import { StockAdjustmentModal } from "../components/StockAdjustmentModal";
+import { ItemDetailsDrawer } from "../components/ItemDetailsDrawer";
 
 const isWeb = Platform.OS === "web";
 
@@ -89,12 +103,14 @@ export default function InventoryScreen() {
   const [saving,        setSaving]        = useState(false);
   const [seeding,       setSeeding]       = useState(false);
   const [adjustingItem, setAdjustingItem] = useState<InventoryItem | undefined>(undefined);
+  const [drawerItem,    setDrawerItem]    = useState<InventoryItem | undefined>(undefined);
 
   const categoryMap = useMemo(() => {
     return new Map(categories.map((c) => [c.id, c]));
   }, [categories]);
 
   const today = useMemo(() => todayISO(), []);
+  const safeRestaurantId = restaurantId ?? "";
 
   const openCreate = useCallback(() => {
     setEditingItem(undefined);
@@ -117,6 +133,14 @@ export default function InventoryScreen() {
 
   const closeAdjustStock = useCallback(() => {
     setAdjustingItem(undefined);
+  }, []);
+
+  const openDrawer = useCallback((item: InventoryItem) => {
+    setDrawerItem(item);
+  }, []);
+
+  const closeDrawer = useCallback(() => {
+    setDrawerItem(undefined);
   }, []);
 
   const handleSubmit = useCallback(async (
@@ -229,8 +253,23 @@ export default function InventoryScreen() {
         todayISO={today}
         restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
         fmt={fmt}
-        onItemPress={openEdit}
+        onItemPress={openDrawer}
         onAdjustStock={openAdjustStock}
+      />
+
+      <ItemDetailsDrawer
+        visible={!!drawerItem}
+        item={drawerItem}
+        category={drawerItem ? categoryMap.get(drawerItem.categoryId) : undefined}
+        restaurantId={safeRestaurantId}
+        todayISO={today}
+        restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
+        fmt={fmt}
+        canEditInventory={canEditInventory}
+        onClose={closeDrawer}
+        onEdit={openEdit}
+        onAdjustStock={openAdjustStock}
+        duplicateNameSuffix="(Copy)"
       />
 
       <InventoryModal
@@ -247,7 +286,7 @@ export default function InventoryScreen() {
       <StockAdjustmentModal
         visible={!!adjustingItem}
         item={adjustingItem}
-        restaurantId={restaurantId ?? ""}
+        restaurantId={safeRestaurantId}
         onClose={closeAdjustStock}
       />
     </View>

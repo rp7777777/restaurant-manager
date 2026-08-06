@@ -9,14 +9,18 @@
 //    parent screen.
 // ✅ Empty-state message distinguishes "no items at all" vs "no
 //    items match the current filters" — unchanged from the
-//    original (compares total items count, not just the filtered
-//    list, so clearing filters is suggested implicitly rather than
-//    telling someone with zero inventory to "adjust filters").
+//    original.
 // ✅ FlatList perf props (initialNumToRender/windowSize) kept
 //    exactly as configured in the original.
-// ✅ NEW — onAdjustStock pass-through prop, wired to each
-//    InventoryCard's own onAdjustStock button (separate from
-//    onItemPress, which opens Edit).
+// ✅ WIRING CHANGE — onItemPress is now wired to open
+//    ItemDetailsDrawer (not Edit directly) — the prop name stays
+//    onItemPress since its role (respond to a row tap) is
+//    unchanged; only what the SCREEN does with that tap changed.
+//    This component itself has zero knowledge of drawers, modals,
+//    or edit forms — it only forwards the row tap upward.
+// ✅ onAdjustStock pass-through prop, wired to each InventoryCard's
+//    own onAdjustStock button (the icon shortcut, separate from
+//    onItemPress).
 // FROZEN
 // ============================================
 
