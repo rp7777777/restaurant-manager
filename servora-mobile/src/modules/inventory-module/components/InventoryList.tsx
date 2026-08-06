@@ -1,30 +1,24 @@
 // ============================================
 // SERVORA ERP — InventoryList Component
-// ✅ EVOLUTIONARY EXTRACTION — this is the exact loading state,
-//    empty state, and FlatList JSX that previously lived inline
-//    inside InventoryScreen.tsx's render body. Behavior/styling
-//    unchanged; only the layer moved.
-// ✅ Pure presentation — no state, no Firestore calls. Receives
-//    already-loaded/filtered items and the loading flag from the
-//    parent screen.
-// ✅ Empty-state message distinguishes "no items at all" vs "no
-//    items match the current filters" — unchanged from the
-//    original.
-// ✅ FlatList perf props (initialNumToRender/windowSize) kept
-//    exactly as configured in the original.
-// ✅ WIRING CHANGE — onItemPress is now wired to open
-//    ItemDetailsDrawer (not Edit directly) — the prop name stays
-//    onItemPress since its role (respond to a row tap) is
-//    unchanged; only what the SCREEN does with that tap changed.
-//    This component itself has zero knowledge of drawers, modals,
-//    or edit forms — it only forwards the row tap upward.
-// ✅ onAdjustStock pass-through prop, wired to each InventoryCard's
-//    own onAdjustStock button (the icon shortcut, separate from
-//    onItemPress).
+// ✅ EVOLUTIONARY EXTRACTION — loading state, empty state, and
+//    FlatList JSX, unchanged from the original.
+// ✅ Pure presentation — no state, no Firestore calls.
+// ✅ onItemPress opens ItemDetailsDrawer (wired at the screen
+//    level); onAdjustStock opens StockAdjustmentModal directly.
+// ✅ forwardRef exposes the underlying FlatList's scrollTo methods
+//    to the parent screen, so tapping an InventoryStats card can
+//    scroll the list into view after changing the filter. The ref
+//    is only meaningful when NOT in the loading/empty-state branch
+//    — those branches render a View/ActivityIndicator instead of a
+//    FlatList; the parent guards its scrollTo call with optional
+//    chaining accordingly.
+// ✅ displayName set explicitly — forwardRef-wrapped components
+//    otherwise show up as "ForwardRef" (unhelpful) in React
+//    DevTools instead of "InventoryList".
 // FROZEN
 // ============================================
 
-import React from "react";
+import React, { forwardRef } from "react";
 import { View, Text, FlatList, ActivityIndicator, StyleSheet } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { InventoryItem } from "../types/inventory";
@@ -43,10 +37,10 @@ interface InventoryListProps {
   onAdjustStock:                     (item: InventoryItem) => void;
 }
 
-export function InventoryList({
+export const InventoryList = forwardRef<FlatList, InventoryListProps>(function InventoryList({
   items, filteredItems, loading, categoryMap, todayISO,
   restaurantDefaultExpiryAlertDays, fmt, onItemPress, onAdjustStock,
-}: InventoryListProps) {
+}, ref) {
   if (loading) {
     return <ActivityIndicator size="large" color="#0369a1" style={styles.loadingIndicator} />;
   }
@@ -64,6 +58,7 @@ export function InventoryList({
 
   return (
     <FlatList
+      ref={ref}
       data={filteredItems}
       keyExtractor={(item) => item.id}
       contentContainerStyle={styles.list}
@@ -82,7 +77,9 @@ export function InventoryList({
       )}
     />
   );
-}
+});
+
+InventoryList.displayName = "InventoryList";
 
 const styles = StyleSheet.create({
   loadingIndicator: { marginTop: 40 },

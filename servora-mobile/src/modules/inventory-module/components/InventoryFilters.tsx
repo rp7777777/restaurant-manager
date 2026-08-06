@@ -1,23 +1,31 @@
 // ============================================
 // SERVORA ERP — InventoryFilters Component
-// ✅ EVOLUTIONARY EXTRACTION — this is the exact search box, stock
-//    status filter chips, category filter chips, and sort chips JSX
-//    that previously lived inline inside InventoryScreen.tsx's
-//    render body. Behavior/styling unchanged; only the layer moved.
+// ✅ EVOLUTIONARY EXTRACTION — search box, stock status filter
+//    chips, category filter chips, and sort chips.
 // ✅ Pure presentation — all filter STATE lives in
-//    useInventoryFilters.ts (unchanged, still owned by
-//    InventoryScreen.tsx). This component only renders the current
-//    `filters` values and calls the setters passed in as props.
+//    useInventoryFilters.ts, owned by InventoryScreen.tsx. This
+//    component only renders the current `filters` values and calls
+//    the setters passed in as props.
 // ✅ STOCK_FILTER_OPTIONS / SORT_OPTIONS constants moved here from
 //    InventoryScreen.tsx since they're this component's own
 //    rendering data, not screen-level state.
 // ✅ Category chip list stays conditionally rendered
-//    (`categories.length > 0`) — unchanged from the original.
+//    (`categories.length > 0`).
 // ✅ The hook's filter-state interface is named InventoryFilters —
 //    same name as this component. Imported aliased as
-//    InventoryFilterState to avoid a naming collision inside this
-//    file (the hook's FROZEN name is left untouched; only the local
-//    alias here is renamed).
+//    InventoryFilterState to avoid a naming collision.
+// ✅ "Expiring Soon" added to STOCK_FILTER_OPTIONS, matching the
+//    "expiringSoon" InventoryStockStatus value in
+//    useInventoryFilters.ts. Lets a user select this filter
+//    directly from the chip row too, not only via tapping
+//    InventoryStats' "Expiring Soon" card — both paths land on the
+//    exact same filter state.
+// ✅ FIX — filterScrollContent no longer sets flexDirection: "row"
+//    (a horizontal ScrollView's content is already laid out as a
+//    row; the explicit value was redundant). Spacing between chips
+//    now comes from `gap` alone — the per-chip `marginRight: 8` was
+//    removed to avoid double-spacing when both were present
+//    together.
 // FROZEN
 // ============================================
 
@@ -32,9 +40,10 @@ import {
 import { Category } from "../types/category";
 
 const STOCK_FILTER_OPTIONS: { value: InventoryStockStatus; label: string }[] = [
-  { value: "all",         label: "All" },
-  { value: "lowStock",    label: "Low Stock" },
-  { value: "outOfStock",  label: "Out of Stock" },
+  { value: "all",          label: "All" },
+  { value: "lowStock",     label: "Low Stock" },
+  { value: "outOfStock",   label: "Out of Stock" },
+  { value: "expiringSoon", label: "Expiring Soon" },
 ];
 
 const SORT_OPTIONS: { value: InventorySortOption; label: string; icon: keyof typeof MaterialIcons.glyphMap }[] = [
@@ -67,7 +76,12 @@ export function InventoryFilters({
         />
       </View>
 
-      <View style={styles.filterRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.filterScroll}
+        contentContainerStyle={styles.filterScrollContent}
+      >
         {STOCK_FILTER_OPTIONS.map((opt) => (
           <TouchableOpacity
             key={opt.value}
@@ -85,7 +99,7 @@ export function InventoryFilters({
             </Text>
           </TouchableOpacity>
         ))}
-      </View>
+      </ScrollView>
 
       {categories.length > 0 && (
         <ScrollView
@@ -164,7 +178,8 @@ const styles = StyleSheet.create({
     borderRadius: 10, borderWidth: 1, borderColor: "#e2e8f0",
   },
   searchInput: { flex: 1, fontSize: 14, color: "#1e293b" },
-  filterRow: { flexDirection: "row", gap: 8, paddingHorizontal: 16, marginTop: 10 },
+  filterScroll: { marginTop: 10 },
+  filterScrollContent: { paddingHorizontal: 16, gap: 8 },
   filterChip: {
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
     backgroundColor: "#e2e8f0",
@@ -176,7 +191,7 @@ const styles = StyleSheet.create({
   categoryScrollContent: { paddingHorizontal: 16, gap: 8 },
   categoryChip: {
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
-    backgroundColor: "#f1f5f9", marginRight: 8,
+    backgroundColor: "#f1f5f9",
     borderWidth: 1, borderColor: "#e2e8f0",
   },
   categoryChipActive: { backgroundColor: "#1e293b", borderColor: "#1e293b" },

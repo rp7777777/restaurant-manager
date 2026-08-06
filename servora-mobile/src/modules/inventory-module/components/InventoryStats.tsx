@@ -3,41 +3,35 @@
 // ✅ Simple on-demand aggregation — NOT the Dashboard hybrid
 //    incremental-summary pattern. Computes Total Items, Total
 //    Value, Low Stock, Out of Stock, and Expiring Soon directly
-//    from the already-loaded `items` array via useMemo(). This
-//    matches the confirmed decision to defer the Dashboard-style
-//    hybrid summary until Inventory reaches a scale (20+ branches,
-//    50k+ items) where the added complexity is justified.
-// ✅ "Today's Adjustments" is intentionally NOT included — it would
-//    require a new cross-item stock-movement query (today's
-//    movements across ALL items), which doesn't exist yet and would
-//    mean touching the FROZEN stock-movement-service.ts. Deferred to
-//    a future phase rather than bolted on here.
+//    from the already-loaded `items` array via useMemo().
+// ✅ "Today's Adjustments" is intentionally NOT included — deferred,
+//    would require touching the FROZEN stock-movement-service.ts.
 // ✅ Expiring Soon reuses classifyExpiry()/resolveExpiryAlertDays()
-//    from types/inventory.ts — the same 3-tier priority logic
-//    (Item Override → Category Setting → Restaurant Default →
-//    7-day fallback) already used everywhere else in this module,
-//    so the stat card never disagrees with what InventoryCard shows
-//    for an individual item.
+//    from types/inventory.ts.
 // ✅ Low Stock and Out of Stock are INDEPENDENT metrics (not
 //    mutually exclusive) — matches standard ERP reporting
-//    conventions (SAP/Oracle/Dynamics): an out-of-stock item is
-//    also counted in Low Stock, since 0 is definitionally at-or-
-//    below the minimum threshold. Previously these were mutually
-//    exclusive (else-if), which under-reported Low Stock.
-// ✅ `item.totalValue ?? 0` guards against any pre-migration/
-//    inconsistent document missing the field.
-// ✅ Card width uses Platform-aware responsive sizing — 48% (two
-//    per row) on mobile, 18% (five in a row) on web/tablet, since a
-//    fixed 18% wrapped inconsistently on narrower Android/iOS
-//    screens.
-// ✅ Pure presentation + one useMemo — no state, no side effects,
-//    no Firestore calls of its own. Receives `items` from the
-//    parent screen (already subscribed via useInventory()).
+//    conventions.
+// ✅ `item.totalValue ?? 0` guards against inconsistent documents.
+// ✅ Card width uses Platform-aware responsive sizing.
+// ✅ Every card is tappable and drives the parent screen's
+//    stock-status filter (Total Items/Total Value → "all", Low
+//    Stock → "lowStock", Out of Stock → "outOfStock", Expiring
+//    Soon → "expiringSoon"). onStatusPress reports which card was
+//    tapped; the parent screen owns calling setStockStatus() and
+//    scrolling the list into view.
+// ✅ FIX — "Expiring Soon" count now matches ONLY classifyExpiry's
+//    "expiringSoon" status, excluding "expired" — previously this
+//    counted both, which meant the card's number (e.g. "3") could
+//    disagree with how many items the tap-to-filter actually
+//    surfaced (useInventoryFilters.ts's "expiringSoon" filter is
+//    expiringSoon-only, per the confirmed ERP convention of keeping
+//    Expiring Soon and Expired as distinct concepts). Count and
+//    filter must always agree — this keeps them in sync.
 // FROZEN
 // ============================================
 
 import React, { useMemo } from "react";
-import { View, Text, StyleSheet, Platform } from "react-native";
+import { View, Text, StyleSheet, Platform, TouchableOpacity } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import {
   InventoryItem,
@@ -45,25 +39,28 @@ import {
   resolveExpiryAlertDays,
 } from "../types/inventory";
 import { Category } from "../types/category";
+import { InventoryStockStatus } from "../hooks/useInventoryFilters";
 
 interface InventoryStatsProps {
   items:                            InventoryItem[];
   categoryMap:                      Map<string, Category>;
   todayISO:                         string;
   restaurantDefaultExpiryAlertDays?: number;
-  fmt:                              (value: number) => string; // currency/number formatter from AppContext
+  fmt:                              (value: number) => string;
+  onStatusPress:                    (status: InventoryStockStatus) => void;
 }
 
 interface StatItem {
-  key:   string;
-  icon:  keyof typeof MaterialIcons.glyphMap;
-  label: string;
-  value: string;
-  color: string;
+  key:    string;
+  icon:   keyof typeof MaterialIcons.glyphMap;
+  label:  string;
+  value:  string;
+  color:  string;
+  status: InventoryStockStatus;
 }
 
 export function InventoryStats({
-  items, categoryMap, todayISO, restaurantDefaultExpiryAlertDays, fmt,
+  items, categoryMap, todayISO, restaurantDefaultExpiryAlertDays, fmt, onStatusPress,
 }: InventoryStatsProps) {
   const stats = useMemo(() => {
     let totalValue   = 0;
@@ -74,9 +71,6 @@ export function InventoryStats({
     for (const item of items) {
       totalValue += item.totalValue ?? 0;
 
-      // ✅ Independent metrics — an out-of-stock item is ALSO low
-      // stock (0 is always <= minStock), so both counters can
-      // include it. Matches standard ERP reporting conventions.
       if (item.currentStock <= 0) {
         outOfStock += 1;
       }
@@ -91,7 +85,7 @@ export function InventoryStats({
         restaurantDefaultExpiryAlertDays
       );
       const status = classifyExpiry(item.expiryDate, todayISO, resolvedDays);
-      if (status === "expiringSoon" || status === "expired") {
+      if (status === "expiringSoon") {
         expiringSoon += 1;
       }
     }
@@ -106,21 +100,26 @@ export function InventoryStats({
   }, [items, categoryMap, todayISO, restaurantDefaultExpiryAlertDays]);
 
   const statList: StatItem[] = [
-    { key: "total",    icon: "inventory-2",   label: "Total Items",  value: String(stats.totalItems),      color: "#1e293b" },
-    { key: "value",    icon: "attach-money",  label: "Total Value",  value: fmt(stats.totalValue),         color: "#0369a1" },
-    { key: "low",      icon: "trending-down", label: "Low Stock",    value: String(stats.lowStock),        color: "#d97706" },
-    { key: "out",      icon: "remove-shopping-cart", label: "Out of Stock", value: String(stats.outOfStock), color: "#dc2626" },
-    { key: "expiring", icon: "schedule",      label: "Expiring Soon", value: String(stats.expiringSoon),   color: "#7c3aed" },
+    { key: "total",    icon: "inventory-2",   label: "Total Items",  value: String(stats.totalItems),      color: "#1e293b", status: "all" },
+    { key: "value",    icon: "attach-money",  label: "Total Value",  value: fmt(stats.totalValue),         color: "#0369a1", status: "all" },
+    { key: "low",      icon: "trending-down", label: "Low Stock",    value: String(stats.lowStock),        color: "#d97706", status: "lowStock" },
+    { key: "out",      icon: "remove-shopping-cart", label: "Out of Stock", value: String(stats.outOfStock), color: "#dc2626", status: "outOfStock" },
+    { key: "expiring", icon: "schedule",      label: "Expiring Soon", value: String(stats.expiringSoon),   color: "#7c3aed", status: "expiringSoon" },
   ];
 
   return (
     <View style={styles.row}>
       {statList.map((stat) => (
-        <View key={stat.key} style={styles.card}>
+        <TouchableOpacity
+          key={stat.key}
+          style={styles.card}
+          onPress={() => onStatusPress(stat.status)}
+          activeOpacity={0.7}
+        >
           <MaterialIcons name={stat.icon} size={16} color={stat.color} />
           <Text style={[styles.value, { color: stat.color }]}>{stat.value}</Text>
           <Text style={styles.label}>{stat.label}</Text>
-        </View>
+        </TouchableOpacity>
       ))}
     </View>
   );
@@ -135,9 +134,6 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   card: {
-    // ✅ Responsive: 2-per-row on mobile (Android/iOS), 5-in-a-row
-    // on web/tablet — a fixed 18% wrapped inconsistently on
-    // narrower phone screens.
     flexGrow: 1,
     flexBasis: Platform.OS === "web" ? "18%" : "48%",
     minWidth: 90,

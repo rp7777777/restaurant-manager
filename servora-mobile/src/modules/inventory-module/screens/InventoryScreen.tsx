@@ -10,40 +10,34 @@
 // ✅ Deep-link support — Dashboard's "Low Stock" row can open this
 //    screen pre-filtered via ?stockStatus=lowStock, applied once on
 //    mount so it doesn't fight the user if they change the filter
-//    chips afterward.
-// ✅ InventoryStats inserted between the toolbar and the filters —
-//    the on-demand useMemo() aggregation confirmed earlier in this
-//    restructuring (no Dashboard-style hybrid summary).
-// ✅ itemsError banner stays inline here — screen-level connection/
-//    subscription error state from useInventory(), not something
-//    any child owns.
-// ✅ WIRING CHANGE — Row tap now opens ItemDetailsDrawer
-//    (`drawerItem` state) instead of directly opening Edit
-//    (`showForm`/`editingItem`). The two states are fully
-//    independent: the drawer's own Edit/Adjust Stock buttons close
-//    the drawer first, then call openEdit()/openAdjustStock() —
-//    exactly the handlers already used by the "Adjust Stock" icon
-//    shortcut on InventoryCard, so there is exactly ONE way to open
-//    each modal regardless of which entry point triggered it. The
-//    close-then-open sequencing lives inside ItemDetailsDrawer
-//    itself (see that component's FROZEN header) — this screen only
-//    supplies the two handlers, it doesn't sequence them.
-// ✅ safeRestaurantId — `restaurantId ?? ""` computed once and
-//    reused across both StockAdjustmentModal and ItemDetailsDrawer,
-//    rather than repeating the fallback expression at each prop.
-// ✅ duplicateNameSuffix is passed as a plain string here ("(Copy)")
-//    — the module doesn't yet have a translation key for this
-//    (i18n integration is a separate future pass across the whole
-//    app, not scoped to this restructuring), but keeping it as an
-//    explicit prop (rather than hardcoded inside
-//    ItemDetailsDrawer/inventory-service) means swapping in
-//    `t("inventory.copySuffix")` later is a one-line change at this
-//    single call site.
+//    chips afterward. Now also accepts "expiringSoon", matching the
+//    stock status option added alongside the tap-to-filter stats
+//    cards — a future Dashboard "Expiring Soon" widget can deep-link
+//    here the same way Low Stock/Out of Stock already do.
+// ✅ Row tap opens ItemDetailsDrawer (`drawerItem` state) — Edit/
+//    Adjust Stock are actions inside the drawer, not the row's
+//    direct action. The "Adjust Stock" icon shortcut on
+//    InventoryCard bypasses the drawer entirely for that one action.
+// ✅ safeRestaurantId computed once, reused across
+//    StockAdjustmentModal and ItemDetailsDrawer.
+// ✅ Stats-card tap-to-filter wiring:
+//    - useInventoryFilters(items, expiryContext) — expiryContext
+//      supplies today/categoryMap/restaurantDefaultExpiryAlertDays
+//      so the "expiringSoon" filter option can classify items using
+//      the exact same 3-tier priority logic used everywhere else.
+//    - InventoryStats' onStatusPress={handleStatusPress} — tapping
+//      any stat card drives the SAME filter state the filter chips
+//      control, so both entry points always agree.
+//    - listRef + scrollToOffset — after a stat card changes the
+//      filter, the list scrolls to the top so the newly filtered
+//      results are immediately visible. Guarded with optional
+//      chaining since the ref is null during the loading/empty-state
+//      branches (see InventoryList.tsx).
 // FROZEN
 // ============================================
 
-import React, { useState, useMemo, useCallback, useEffect } from "react";
-import { View, Text, StyleSheet, Platform, Alert } from "react-native";
+import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { View, Text, StyleSheet, Platform, Alert, FlatList } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useApp } from "../../../context/AppContext";
 import { usePermission } from "../../../hooks/usePermission";
@@ -77,26 +71,45 @@ export default function InventoryScreen() {
   const canEditInventory = usePermission("edit_inventory");
 
   const { items, loading: itemsLoading, error: itemsError } = useInventory(restaurantId);
-  const {
-    filters, filteredItems,
-    setSearchQuery, setCategoryId, setStockStatus, setSort,
-  } = useInventoryFilters(items);
-
-  // ✅ Deep-link support — Dashboard's "Low Stock" row navigates to
-  // /inventory-module?stockStatus=lowStock. Applied once on mount
-  // (empty dep array) so it sets the initial filter without fighting
-  // the user if they change it afterward via the filter chips.
-  const params = useLocalSearchParams<{ stockStatus?: string }>();
-  useEffect(() => {
-    if (params.stockStatus === "lowStock" || params.stockStatus === "outOfStock") {
-      setStockStatus(params.stockStatus);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const { groups: categoryGroups, categories, loading: categoriesLoading } =
     useCategoriesForPicker(restaurantId);
   const { suppliers } = useSuppliers(restaurantId);
+
+  const categoryMap = useMemo(() => {
+    return new Map(categories.map((c) => [c.id, c]));
+  }, [categories]);
+
+  const today = useMemo(() => todayISO(), []);
+
+  const {
+    filters, filteredItems,
+    setSearchQuery, setCategoryId, setStockStatus, setSort,
+  } = useInventoryFilters(items, {
+    todayISO: today,
+    categoryMap,
+    restaurantDefaultExpiryAlertDays: restaurant?.defaultExpiryAlertDays,
+  });
+
+  const listRef = useRef<FlatList>(null);
+
+  const handleStatusPress = useCallback((status: Parameters<typeof setStockStatus>[0]) => {
+    setStockStatus(status);
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+  }, [setStockStatus]);
+
+  // ✅ Deep-link support — see FROZEN header above.
+  const params = useLocalSearchParams<{ stockStatus?: string }>();
+  useEffect(() => {
+    if (
+      params.stockStatus === "lowStock" ||
+      params.stockStatus === "outOfStock" ||
+      params.stockStatus === "expiringSoon"
+    ) {
+      setStockStatus(params.stockStatus);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [showForm,      setShowForm]      = useState(false);
   const [editingItem,   setEditingItem]   = useState<InventoryItem | undefined>(undefined);
@@ -105,11 +118,6 @@ export default function InventoryScreen() {
   const [adjustingItem, setAdjustingItem] = useState<InventoryItem | undefined>(undefined);
   const [drawerItem,    setDrawerItem]    = useState<InventoryItem | undefined>(undefined);
 
-  const categoryMap = useMemo(() => {
-    return new Map(categories.map((c) => [c.id, c]));
-  }, [categories]);
-
-  const today = useMemo(() => todayISO(), []);
   const safeRestaurantId = restaurantId ?? "";
 
   const openCreate = useCallback(() => {
@@ -227,6 +235,7 @@ export default function InventoryScreen() {
           todayISO={today}
           restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
           fmt={fmt}
+          onStatusPress={handleStatusPress}
         />
       )}
 
@@ -246,6 +255,7 @@ export default function InventoryScreen() {
       )}
 
       <InventoryList
+        ref={listRef}
         items={items}
         filteredItems={filteredItems}
         loading={loading}

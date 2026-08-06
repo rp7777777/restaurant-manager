@@ -3,22 +3,20 @@
 // ✅ EVOLUTIONARY EXTRACTION — this is the exact header + "Add
 //    Item" button + "Seed Defaults" banner JSX that previously
 //    lived inline inside InventoryScreen.tsx's render body.
-//    Behavior/styling unchanged; only the layer moved (matches the
-//    Screen → Component pattern used throughout this restructuring).
 // ✅ Pure presentation — no state, no Firestore calls. All data
 //    (permission flag, seeding state, category count) and handlers
-//    are passed in as props from InventoryScreen.tsx, which keeps
-//    the existing hooks (usePermission, useCategoriesForPicker,
-//    seedDefaultStoreTaxonomy) in the screen where they already
-//    live.
-// ✅ Seed banner visibility logic (`!categoriesLoading &&
-//    categories.length === 0 && canEditInventory`) stays exactly as
-//    it was — shown only when no categories exist yet, manager-only.
-// ✅ Prop names are specific rather than generic — shouldShowSeedBanner
-//    (not showSeedBanner) and onSeedStoreDefaults (not
-//    onSeedDefaults), anticipating that Servora will likely grow
-//    other "seed X defaults" flows (tax, employees, kitchen presets)
-//    that would otherwise collide with a too-generic name.
+//    are passed in as props from InventoryScreen.tsx.
+// ✅ Seed banner visibility logic (`shouldShowSeedBanner`) computed
+//    by the parent screen.
+// ✅ Prop names are specific rather than generic —
+//    shouldShowSeedBanner / onSeedStoreDefaults, anticipating other
+//    future "seed X defaults" flows.
+// ✅ FIX — header's paddingBottom reduced from the implicit 16
+//    (via padding: 16 shorthand) to 4. Combined with InventoryStats'
+//    own marginTop, the original spacing stacked to ~26px of empty
+//    vertical gap between "Inventory" and the stats row — this
+//    tightens it to a normal ~14px section gap without touching any
+//    other side's padding.
 // FROZEN
 // ============================================
 
@@ -72,7 +70,9 @@ export function InventoryToolbar({
 const styles = StyleSheet.create({
   header: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    padding: 16, paddingTop: Platform.OS === "web" ? 20 : 48,
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === "web" ? 20 : 48,
+    paddingBottom: 4,
   },
   title: { fontSize: 20, fontWeight: "800", color: "#1e293b" },
   addBtn: {
