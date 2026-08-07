@@ -3,59 +3,78 @@
 // ✅ ARCHITECTURE — this file holds BUSINESS OPERATIONS only, not
 //    CRUD wrappers. Plain create/read/update/delete for inventory
 //    items, categories, and departments stay in their respective
-//    repositories and are called directly from hooks — wrapping
-//    every repository function here would be a pure pass-through
-//    layer (over-engineering) with zero added value.
-// ✅ This file exists for operations that involve business rules,
-//    orchestration across repositories, or delegation to another
-//    module's service (e.g. stock-movement-service.ts).
+//    repositories and are called directly from hooks.
 // ✅ adjustStock() — thin wrapper around stock-movement-service.ts's
-//    recordStockMovement(). Does NOT duplicate any movement logic;
-//    recordStockMovement() remains the single source of truth for
-//    all currentStock changes (transaction-safe, writes the audit
-//    record, syncs store summary). This function exists only so
-//    UI/hooks call inventory-service (business layer) rather than
-//    reaching into a different module's service directly.
+//    recordStockMovement(), for NON-BATCH items only.
 // ✅ archiveInventoryItem() / restoreInventoryItem() — toggle the
-//    isActive flag (added in Phase 1/2). This is a business
-//    operation, not a plain field update: archiving is meant for
-//    items an owner wants to retire from active use WITHOUT losing
-//    stock/movement history (the delete guard in
-//    inventory-repository.ts already blocks hard-deleting items
-//    with stock or movement history — archiving is the intended
-//    alternative for that exact case).
-// ✅ duplicateInventoryItem() — real, common ERP row-action ("Save
-//    as new item"). Copies static fields, resets movement-derived
-//    fields (currentStock starts at 0, so the new item enters
-//    stock the same way every other new item does — via
-//    recordStockMovement(), never a raw copy of quantity).
-//    - duplicatedName is passed IN by the caller (hook), not built
-//      here — this service layer stays language-agnostic; the
-//      "(Copy)" / translated suffix belongs in the UI layer where
-//      t() is available, not hardcoded English in a service file.
-//    - expiryAlertDaysOverride IS copied — it's a standing
-//      item-level configuration, not batch data.
-//    - sku/barcode are deliberately NOT copied (left blank on the
-//      duplicate) — both are typically meant to be unique per item;
-//      copying them would hand the new item a colliding identifier
-//      before the owner has assigned it a real one.
-//    - expiryDate/batchNo remain NOT copied — batch-specific data,
-//      not part of the item definition being cloned.
+//    isActive flag.
+// ✅ duplicateInventoryItem() — real, common ERP row-action.
+// ✅ NEW — receiveBatch() (batch tracking system, Phase 3a):
+//    orchestrates FOUR steps for one receiving event:
+//    1. inventory-batch-repository.ts's createInventoryBatch() —
+//       creates the new batch row (always new, never merged).
+//    2. stock-movement-service.ts's recordStockMovement() with
+//       movementType "PURCHASE" and the batch's quantity as a
+//       DELTA — records the business event (audit trail) with
+//       correct semantics: "PURCHASE +8kg (20→28)" reads correctly
+//       to an auditor, unlike "ADJUSTMENT 28" which loses the
+//       business-event meaning.
+//    3. getBatchesForItem() + calculateTotalFromBatches() —
+//       recompute the TRUE current stock from all active batches.
+//    4. inventory-repository.ts's updateInventoryItem() — writes
+//       the recomputed total as currentStock, OVERWRITING whatever
+//       recordStockMovement() wrote internally in step 2.
+//
+//    ⚠️ KNOWN ARCHITECTURAL SEAM (documented, not silently
+//    tolerated): recordStockMovement() was designed BEFORE the
+//    batch system existed — it internally reads currentStock,
+//    computes its own afterQuantity via simple delta arithmetic,
+//    and writes that to InventoryItem.currentStock inside its own
+//    transaction (step 2 above). Step 4 immediately overwrites that
+//    value with the batch-derived recompute. In the normal case
+//    these two values AGREE (delta-add and batch-sum produce the
+//    same number). They can DISAGREE if currentStock had already
+//    drifted from the batch total for some other reason (e.g. a
+//    manual batch status change, a future batch merge/split, a data
+//    repair) — in that rare case, the StockMovement audit record's
+//    afterQuantity field will show the delta-based number, which
+//    may not exactly match the final currentStock after step 4's
+//    overwrite. This is an accepted, documented tradeoff: keeping
+//    InventoryItem.currentStock ALWAYS correct (derived from
+//    batches, the core invariant of this system) is prioritized
+//    over the audit record's afterQuantity being perfectly
+//    self-consistent with it in this edge case.
+//    THE PROPER FIX — deferred, not built here: evolve
+//    recordStockMovement() to accept optional
+//    beforeQuantity/afterQuantity overrides (and a skipInventoryUpdate
+//    flag) so batch-aware callers can supply the batch-derived
+//    truth directly, and the function's own internal read/delta
+//    logic is bypassed entirely rather than computed-then-
+//    overwritten. Doing this properly requires editing
+//    stock-movement-service.ts, which is currently FROZEN and used
+//    by every other movementType (WASTE, KITCHEN_ISSUE, TRANSFER_*,
+//    the plain ADJUSTMENT path) — that evolution is Phase 3c, done
+//    deliberately and reviewed on its own, not bundled into this
+//    file's changes.
 // ✅ DEFERRED (future phases, not built here):
-//    bulkImportInventory() / bulkExportInventory() — belongs with
-//      the Print/PDF/Excel phase (Phase 7), not this phase.
-//    mergeInventoryItems() / convertUnit() — no current UI need;
-//      would be premature abstraction today.
-//    receivePurchaseOrder() / issueStockToKitchen() — these already
-//      live in purchase-order-module and kitchen-module
-//      respectively. They are NOT duplicated here — both already
-//      call recordStockMovement() directly, which is the correct
-//      single entry point regardless of which module initiates it.
+//    deductStockFEFO() — the transaction-wrapped, multi-batch FEFO
+//      deduction engine (Phase 3b).
+//    recordStockMovement() batch-awareness (Phase 3c, see above).
+//    bulkImportInventory() / bulkExportInventory() — Phase 7.
+//    mergeInventoryItems() / convertUnit() — no current UI need.
+//    receivePurchaseOrder() / issueStockToKitchen() — already live
+//      in purchase-order-module and kitchen-module; NOT duplicated
+//      here.
 // FROZEN
 // ============================================
 
-import { createInventoryItem as repoCreateInventoryItem } from "../repository/inventory-repository";
+import { createInventoryItem as repoCreateInventoryItem, updateInventoryItem } from "../repository/inventory-repository";
 import { InventoryItem, CreateInventoryItemInput } from "../types/inventory";
+import {
+  createInventoryBatch,
+  getBatchesForItem,
+} from "../repository/inventory-batch-repository";
+import { CreateInventoryBatchInput, calculateTotalFromBatches } from "../types/inventory-batch";
 import { recordStockMovement } from "../../stock-movement-module/services/stock-movement-service";
 import { RecordStockMovementInput } from "../../stock-movement-module/types/stock-movement";
 import { db, auth } from "../../../firebase";
@@ -66,9 +85,7 @@ function inventoryDoc(restaurantId: string, itemId: string) {
   return doc(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY, itemId);
 }
 
-// ── Stock Adjustment ─────────────────────────────
-// Thin delegation to stock-movement-service.ts. See FROZEN header —
-// this function must never grow its own quantity-mutation logic.
+// ── Stock Adjustment (non-batch path) ────────────
 export async function adjustStock(
   restaurantId: string,
   input: RecordStockMovementInput
@@ -77,11 +94,6 @@ export async function adjustStock(
 }
 
 // ── Archive ──────────────────────────────────────
-// Sets isActive: false. Does NOT touch currentStock, totalValue, or
-// movement history — this is purely a visibility/lifecycle flag.
-// Intended as the alternative to delete for items the inventory
-// repository's delete guard already blocks (stock > 0 or movement
-// history exists).
 export async function archiveInventoryItem(
   restaurantId: string,
   itemId: string
@@ -96,7 +108,6 @@ export async function archiveInventoryItem(
 }
 
 // ── Restore ──────────────────────────────────────
-// Sets isActive: true — reverses archiveInventoryItem().
 export async function restoreInventoryItem(
   restaurantId: string,
   itemId: string
@@ -111,15 +122,6 @@ export async function restoreInventoryItem(
 }
 
 // ── Duplicate ────────────────────────────────────
-// Copies an existing item's static fields into a brand-new item.
-// currentStock always starts at 0 — the new item must enter stock
-// the same way every other item does: through recordStockMovement()
-// (e.g. a PURCHASE or ADJUSTMENT), never by copying the source
-// item's quantity. This mirrors the same double-count-prevention
-// rule already enforced when Purchase Orders create new items.
-//
-// duplicatedName is supplied by the caller (hook) — this service
-// stays language-agnostic and never hardcodes UI text like "(Copy)".
 export async function duplicateInventoryItem(
   restaurantId: string,
   source: InventoryItem,
@@ -140,10 +142,55 @@ export async function duplicateInventoryItem(
     expiryAlertDaysOverride:   source.expiryAlertDaysOverride,
     notes:                     source.notes,
     isActive:                  true,
-    // sku/barcode intentionally left undefined — see FROZEN header.
-    // expiryDate/batchNo intentionally NOT copied — batch-specific
-    // data, not part of the item definition being cloned.
   };
 
   return repoCreateInventoryItem(restaurantId, input);
+}
+
+// ── Receive Batch (batch tracking system, Phase 3a) ──────────────
+export interface ReceiveBatchResult {
+  batchId:         string;
+  newCurrentStock: number;
+  movementId:      string;
+}
+
+export async function receiveBatch(
+  restaurantId: string,
+  existingItem: InventoryItem,
+  batchInput: CreateInventoryBatchInput
+): Promise<ReceiveBatchResult> {
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
+
+  // 1. Create the new batch row.
+  const batchId = await createInventoryBatch(restaurantId, batchInput);
+
+  // 2. Record the business event (audit trail) — correct semantics:
+  //    PURCHASE with a delta, not ADJUSTMENT with an absolute value.
+  //    See FROZEN header for the known seam this creates.
+  const movementResult = await recordStockMovement(restaurantId, {
+    inventoryId:    existingItem.id,
+    movementType:   "PURCHASE",
+    quantity:       batchInput.quantity,
+    referenceType:  "MANUAL",
+    reason:         `Received batch ${batchInput.batchNo}`,
+  });
+
+  // 3. Recompute the TRUE current stock from all active batches.
+  const allBatches = await getBatchesForItem(restaurantId, existingItem.id);
+  const newCurrentStock = calculateTotalFromBatches(allBatches);
+
+  // 4. Overwrite currentStock with the batch-derived truth — this is
+  //    the authoritative value; step 2's internally-computed value
+  //    was necessary for the movement record but is not trusted as
+  //    the final inventory state.
+  await updateInventoryItem(restaurantId, existingItem.id, existingItem, {
+    currentStock: newCurrentStock,
+  });
+
+  return {
+    batchId,
+    newCurrentStock,
+    movementId: movementResult.movementId,
+  };
 }

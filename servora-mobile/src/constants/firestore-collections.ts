@@ -4,6 +4,13 @@
 // ✅ No magic strings anywhere
 // ✅ INVENTORY_CATEGORIES added for the Store Module rebuild
 //    (separate from EXPENSE_CATEGORIES, which is unrelated)
+// ✅ INVENTORY_BATCHES added for the batch-level stock tracking
+//    system (FEFO). Separate collection from INVENTORY — batches
+//    are children of inventory items but modeled as a flat
+//    restaurant-level subcollection (queried by inventoryId field,
+//    not nested under each item) for simpler cross-item queries
+//    (e.g. future "all batches expiring this week across all
+//    items" reports).
 // FROZEN
 // ============================================
 
@@ -24,6 +31,7 @@ export const RCOL = {
   EMPLOYEES:            "employees",
   SCHEDULES:            "schedules",
   INVENTORY:            "inventory",
+  INVENTORY_BATCHES:    "inventoryBatches",
   DEPARTMENTS:          "departments",
   INVENTORY_CATEGORIES: "categories",
   KITCHEN:              "kitchen",
