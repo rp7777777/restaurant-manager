@@ -6,40 +6,34 @@
 //      update quantity/status, query). It NEVER touches
 //      InventoryItem.currentStock itself.
 //    - Keeping InventoryItem.currentStock in sync with the sum of
-//      its batches is inventory-service.ts's job (orchestration
-//      across this repository AND inventory-repository.ts) — the
-//      same "repositories never call each other" rule already
-//      established for category/department repositories applies
-//      here too.
+//      its batches is inventory-service.ts's job.
 // ✅ Validation — quantity/unitCost cannot be negative, batchNo/
 //    itemName required, purchaseDate/receivedDate must be valid
-//    YYYY-MM-DD strings (same lightweight shape check used
-//    elsewhere in this module — not a full calendar-validity check,
-//    which stays a UI-layer concern per the existing
-//    isValidExpiryDate() precedent in useInventoryForm.ts).
+//    YYYY-MM-DD strings.
 // ✅ status defaults to "ACTIVE" on create if not explicitly passed.
-// ✅ Duplicate batchNo guard — a batchNo must be unique WITHIN its
-//    parent inventory item (the same batch number could legitimately
-//    exist for two DIFFERENT items, e.g. two different products
-//    both labeled "A100" by different suppliers, so uniqueness is
-//    scoped to inventoryId, not global).
-// ✅ updatedBy captured on updateBatchQuantity()/updateBatchStatus()
-//    — every mutation after creation is attributable to a specific
-//    user, matching the audit-trail principle already used
-//    throughout this module (createdBy on creation, updatedBy on
-//    every subsequent change).
+// ✅ Duplicate batchNo guard — scoped to inventoryId, not global.
+// ✅ updatedBy captured on updateBatchQuantity()/updateBatchStatus().
 // ✅ getBatchesForItem() returns batches ordered by receivedDate
-//    ASCENDING (chronological/audit order) — this is NOT FEFO order.
-//    FEFO ordering (nearest-expiry-first, with the receivedDate
-//    tie-breaker) is intentionally computed at the SERVICE layer via
-//    sortBatchesByFEFO() from types/inventory-batch.ts, not baked
-//    into this repository's query — different callers need
-//    different orderings from the same underlying data (an audit
-//    view wants chronological order, the FEFO engine wants expiry
-//    order), and a repository query can only sort one way.
+//    ASCENDING — this is NOT FEFO order. FEFO ordering is computed
+//    at the service layer via sortBatchesByFEFO().
 // ✅ No delete function — batches are never deleted, only depleted
-//    (quantity → 0) or status-changed (CLOSED/EXPIRED/QUARANTINED/
-//    RECALLED). This preserves the audit trail permanently.
+//    or status-changed.
+// ✅ ADDITIVE — subscribeAllBatches() (for the future
+//    InventoryBatchReport modal): restaurant-wide live subscription
+//    across ALL batches, not scoped to a single item. Used ONLY by
+//    the batch report (Category → Item → Batch rows → Total QTY),
+//    which groups batches by item/category client-side.
+//    Deliberately a SEPARATE function rather than a modification to
+//    subscribeBatchesForItem() (which stays exactly as it was,
+//    still scoped to one inventoryId) — the two serve genuinely
+//    different callers, and merging them would force an unnecessary
+//    optional parameter into the single-item path.
+//    Scale note (documented, not solved here): a full-collection
+//    realtime subscription is fine at the current scale (hundreds
+//    of batches). If this grows to thousands, this should evolve to
+//    a paginated or active-only query — a future optimization, not
+//    built here, per the confirmed decision to not over-engineer
+//    ahead of actual scale.
 // FROZEN
 // ============================================
 
@@ -63,11 +57,7 @@ function batchDoc(restaurantId: string, batchId: string) {
   return doc(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY_BATCHES, batchId);
 }
 
-// ── Lightweight YYYY-MM-DD shape check — same precedent as
-//    isValidExpiryDate() in useInventoryForm.ts. Real calendar-
-//    validity checking (e.g. rejecting 2026-02-31) stays a UI-layer
-//    concern; this is a repository-level guard against obviously
-//    malformed input reaching Firestore. ──
+// ── Lightweight YYYY-MM-DD shape check ──
 function isValidDateString(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
 }
@@ -97,7 +87,7 @@ function validateInput(input: CreateInventoryBatchInput) {
 }
 
 // ── Duplicate check — batchNo must be unique WITHIN one inventory
-//    item (not globally). ──
+//    item. ──
 async function assertBatchNoNotTaken(
   restaurantId: string,
   inventoryId: string,
@@ -116,9 +106,7 @@ async function assertBatchNoNotTaken(
   }
 }
 
-// ── Create — always creates a NEW batch document. Never merges
-//    into an existing batch, per the confirmed design: every
-//    purchase/stock-in is its own row. ──
+// ── Create — always creates a NEW batch document. ──
 export async function createInventoryBatch(
   restaurantId: string,
   input: CreateInventoryBatchInput
@@ -152,11 +140,7 @@ export async function createInventoryBatch(
   return ref.id;
 }
 
-// ── The ONLY way a batch's quantity changes after creation. Used
-//    by the FEFO deduction engine to draw down batches, and by
-//    manual corrections. Rejects negative results — the caller
-//    (FEFO engine) is responsible for not requesting more than a
-//    batch has. ──
+// ── The ONLY way a batch's quantity changes after creation. ──
 export async function updateBatchQuantity(
   restaurantId: string,
   batchId: string,
@@ -175,9 +159,7 @@ export async function updateBatchQuantity(
   });
 }
 
-// ── Change a batch's status (e.g. mark EXPIRED, QUARANTINED,
-//    RECALLED, or CLOSED). Does not touch quantity — status and
-//    quantity are orthogonal per the type's design. ──
+// ── Change a batch's status. ──
 export async function updateBatchStatus(
   restaurantId: string,
   batchId: string,
@@ -202,9 +184,8 @@ export async function getBatchById(
   return { id: snap.id, ...(snap.data() as Omit<InventoryBatch, "id">) };
 }
 
-// ── All batches for one item (including depleted/non-ACTIVE ones),
-//    ordered by receivedDate ASCENDING (chronological/audit order —
-//    NOT FEFO order, see FROZEN header). ──
+// ── All batches for one item, ordered by receivedDate ASCENDING —
+//    NOT FEFO order. ──
 export async function getBatchesForItem(
   restaurantId: string,
   inventoryId: string
@@ -237,6 +218,29 @@ export function subscribeBatchesForItem(
       where("inventoryId", "==", inventoryId),
       orderBy("receivedDate", "asc")
     ),
+    (snap) => {
+      callback(snap.docs.map((d) => ({
+        id: d.id, ...(d.data() as Omit<InventoryBatch, "id">),
+      })));
+    },
+    (err) => onError?.(err)
+  );
+}
+
+// ── ADDITIVE — restaurant-wide live subscription across ALL
+//    batches, for InventoryBatchReport. See FROZEN header. ──
+export function subscribeAllBatches(
+  restaurantId: string,
+  callback: (batches: InventoryBatch[]) => void,
+  onError?: (err: Error) => void
+): () => void {
+  if (!restaurantId) {
+    callback([]);
+    return () => {};
+  }
+
+  return onSnapshot(
+    query(batchesCollection(restaurantId), orderBy("receivedDate", "asc")),
     (snap) => {
       callback(snap.docs.map((d) => ({
         id: d.id, ...(d.data() as Omit<InventoryBatch, "id">),
