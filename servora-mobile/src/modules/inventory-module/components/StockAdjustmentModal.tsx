@@ -2,37 +2,49 @@
 // SERVORA ERP — StockAdjustmentModal Component
 // ✅ UI-facing "Adjustment Type" maps directly onto the existing
 //    StockMovementType/reasonCategory contract from
-//    stock-movement-module/types — NO new movement types or backend
-//    logic were added. See useStockAdjustment.ts for the write path.
-// ✅ Field semantics per type (confirmed design decision — simple,
-//    less error-prone UX over hidden delta arithmetic):
+//    stock-movement-module/types.
+// ✅ Field semantics per type (confirmed design decision):
 //    - Increase / Decrease / Correction → user enters the NEW
-//      ABSOLUTE stock value (movementType: "ADJUSTMENT"). Avoids
-//      stale-read bugs: if another user changed stock between page
-//      load and submit, a "+5" delta would silently apply to the
-//      wrong base. An absolute new-count entry (like a physical
-//      audit recount) can't drift this way — this is the standard
-//      SAP/Dynamics/Oracle pattern for manual stock corrections.
-//    - Damage → movementType "WASTE", reasonCategory "BROKEN",
-//      quantity is a DELTA (amount damaged).
-//    - Waste → movementType "WASTE", reasonCategory "SPOILED",
-//      quantity is a DELTA (amount wasted).
+//      ABSOLUTE stock value (movementType: "ADJUSTMENT").
+//    - Damage → movementType "WASTE", reasonCategory defaults to
+//      "BROKEN" but is USER-EDITABLE via the reason picker.
+//    - Waste → movementType "WASTE", reasonCategory defaults to
+//      "SPOILED" but is USER-EDITABLE via the reason picker.
 //    - Transfer In/Out → movementType "TRANSFER_IN"/"TRANSFER_OUT",
 //      quantity is a DELTA.
-// ✅ The reason-category picker is shown for Damage/Waste only in
-//    THIS release — those are the two types where a structured
-//    reason is expected every time. Increase/Decrease/Correction/
-//    Transfer don't surface it here; a free-text Notes field is
-//    always available for context on any type. Widening the picker
-//    to those types (with an "advanced reason" toggle) is a
-//    possible future enhancement, not implemented in this file.
-// ✅ Current stock is always shown read-only for context — never
-//    editable directly here (that's InventoryForm's "manual
-//    correction only" field, a different, lower-frequency path).
+// ✅ FIX — Reason picker selection bug: mapToMovementInput() no
+//    longer hardcodes reasonCategory for damage/waste. Previously,
+//    mapped.reasonCategory ?? reasonCategory meant the hardcoded
+//    default ("BROKEN"/"SPOILED") ALWAYS won over whatever the user
+//    actually selected in the picker, since mapped.reasonCategory
+//    was never undefined for those two types. The default is now
+//    set ONLY once, in handleTypeChange() (when the user picks
+//    Damage/Waste), as the picker's initial value — from that point
+//    on, the picker's own state (reasonCategory) is the single
+//    source of truth, and mapToMovementInput() no longer overrides
+//    it.
+// ✅ FIX — Zero-quantity guard for batch-aware types: Increase/
+//    Decrease/Correction legitimately allow 0 (a physical recount
+//    can genuinely find zero stock). Damage/Waste/Transfer Out do
+//    not — a "deduct 0" batch operation is meaningless and is now
+//    blocked at the UI validation level (quantityIsValid requires
+//    > 0 for non-absolute types, >= 0 only for absolute types).
+// ✅ BATCH-AWARE ROUTING (confirmed design):
+//    - Increase / Decrease / Correction / Transfer In → routed
+//      through the ORIGINAL non-batch path (useStockAdjustment() →
+//      adjustStock()). Physical-count corrections and stock-IN
+//      events don't involve deciding which batch to draw from.
+//    - Damage / Waste / Transfer Out → routed through
+//      deductStockBatch() (Phase 3c) — real consumption/loss events
+//      where FEFO batch selection matters. Decrease ≠ Waste: a
+//      "Decrease" is a system correction, a "Waste" is a real loss
+//      event — they stay on separate paths for audit accuracy.
+//    Both paths share the same submitting/error/success UI state,
+//    managed locally, so the two write paths are indistinguishable
+//    to the user.
+// ✅ Current stock is always shown read-only for context.
 // ✅ Success state shows a brief confirmation (before → after) then
-//    the parent is responsible for closing the modal — this
-//    component doesn't auto-close itself, so the user can see the
-//    result of what they just did before it disappears.
+//    the parent is responsible for closing the modal.
 // FROZEN
 // ============================================
 
@@ -44,6 +56,7 @@ import {
 import { MaterialIcons } from "@expo/vector-icons";
 import { InventoryItem } from "../types/inventory";
 import { useStockAdjustment } from "../hooks/useStockAdjustment";
+import { deductStockBatch } from "../services/inventory-service";
 import {
   StockMovementType,
   StockMovementReasonCategory,
@@ -62,9 +75,11 @@ const ADJUSTMENT_TYPE_OPTIONS: { value: AdjustmentTypeOption; label: string; ico
   { value: "transferOut", label: "Transfer Out", icon: "call-made" },
 ];
 
-// Types where the quantity field means "new absolute total" —
-// everything else means "delta to add/subtract".
 const ABSOLUTE_VALUE_TYPES: AdjustmentTypeOption[] = ["increase", "decrease", "correction"];
+
+// ── Types routed through deductStockFEFO (batch-aware). Everything
+//    else uses the original item-level adjustStock() path. ──
+const BATCH_AWARE_TYPES: AdjustmentTypeOption[] = ["damage", "waste", "transferOut"];
 
 const REASON_CATEGORY_OPTIONS: { value: StockMovementReasonCategory; label: string }[] = [
   { value: "EXPIRED",           label: "Expired" },
@@ -76,20 +91,22 @@ const REASON_CATEGORY_OPTIONS: { value: StockMovementReasonCategory; label: stri
   { value: "OTHER",             label: "Other" },
 ];
 
+// ── FIX — no longer hardcodes reasonCategory for damage/waste. The
+//    default lives ONLY in handleTypeChange() (the picker's initial
+//    value); from there, whatever the user selects in the picker
+//    (reasonCategory local state) is the single source of truth. ──
 function mapToMovementInput(
   type: AdjustmentTypeOption,
   quantityInput: number
-): { movementType: StockMovementType; quantity: number; reasonCategory?: StockMovementReasonCategory } {
+): { movementType: StockMovementType; quantity: number } {
   switch (type) {
     case "increase":
     case "decrease":
     case "correction":
-      // Absolute new value — entered directly by the user.
       return { movementType: "ADJUSTMENT", quantity: quantityInput };
     case "damage":
-      return { movementType: "WASTE", quantity: quantityInput, reasonCategory: "BROKEN" };
     case "waste":
-      return { movementType: "WASTE", quantity: quantityInput, reasonCategory: "SPOILED" };
+      return { movementType: "WASTE", quantity: quantityInput };
     case "transferIn":
       return { movementType: "TRANSFER_IN", quantity: quantityInput };
     case "transferOut":
@@ -104,8 +121,13 @@ interface StockAdjustmentModalProps {
   onClose:       () => void;
 }
 
+interface AdjustmentSuccess {
+  beforeQuantity: number;
+  afterQuantity:  number;
+}
+
 export function StockAdjustmentModal({ visible, item, restaurantId, onClose }: StockAdjustmentModalProps) {
-  const { submitting, error, success, submit, reset } = useStockAdjustment();
+  const { submit: submitNonBatch, reset: resetNonBatch } = useStockAdjustment();
 
   const [adjustmentType, setAdjustmentType] = useState<AdjustmentTypeOption>("correction");
   const [quantity,       setQuantity]       = useState("");
@@ -113,12 +135,14 @@ export function StockAdjustmentModal({ visible, item, restaurantId, onClose }: S
   const [reasonText,     setReasonText]     = useState("");
   const [showReasonPicker, setShowReasonPicker] = useState(false);
 
+  const [submitting, setSubmitting] = useState(false);
+  const [error,       setError]     = useState<string | null>(null);
+  const [success,     setSuccess]   = useState<AdjustmentSuccess | null>(null);
+
   const isAbsoluteType = ABSOLUTE_VALUE_TYPES.includes(adjustmentType);
+  const isBatchAwareType = BATCH_AWARE_TYPES.includes(adjustmentType);
   const showReasonCategoryPicker = adjustmentType === "damage" || adjustmentType === "waste";
 
-  // ✅ Reset all local form state when the modal is (re)opened for a
-  // (possibly different) item — prevents stale values from a
-  // previous adjustment leaking into the next one.
   useEffect(() => {
     if (visible) {
       setAdjustmentType("correction");
@@ -126,7 +150,10 @@ export function StockAdjustmentModal({ visible, item, restaurantId, onClose }: S
       setReasonCategory(undefined);
       setReasonText("");
       setShowReasonPicker(false);
-      reset();
+      setSubmitting(false);
+      setError(null);
+      setSuccess(null);
+      resetNonBatch();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, item?.id]);
@@ -135,32 +162,70 @@ export function StockAdjustmentModal({ visible, item, restaurantId, onClose }: S
 
   const handleTypeChange = (type: AdjustmentTypeOption) => {
     setAdjustmentType(type);
-    // Pre-fill with current stock for absolute-value types (correction
-    // starting point); clear for delta types (damage/waste/transfer
-    // start from zero, not from current stock).
     setQuantity(ABSOLUTE_VALUE_TYPES.includes(type) ? String(item.currentStock) : "");
+    // ── Sets the picker's INITIAL default only — from here on, the
+    // user's own picker selection (if changed) is what's actually
+    // submitted. See mapToMovementInput()'s FROZEN note. ──
     setReasonCategory(type === "damage" ? "BROKEN" : type === "waste" ? "SPOILED" : undefined);
   };
 
   const handleSubmit = async () => {
+    if (submitting) return;
     const quantityNum = Number(quantity);
     if (Number.isNaN(quantityNum) || quantityNum < 0) return;
+    // ── FIX — batch-aware types (Damage/Waste/Transfer Out) must
+    // deduct a positive amount; 0 is a no-op that shouldn't reach
+    // the backend. Absolute types (Increase/Decrease/Correction)
+    // legitimately allow 0 (a real recount can find zero stock). ──
+    if (isBatchAwareType && quantityNum <= 0) return;
 
     const mapped = mapToMovementInput(adjustmentType, quantityNum);
 
-    await submit(
-      restaurantId,
-      item.id,
-      mapped.movementType,
-      mapped.quantity,
-      {
-        reasonCategory: mapped.reasonCategory ?? reasonCategory,
-        reason: reasonText.trim() || undefined,
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      if (isBatchAwareType) {
+        const result = await deductStockBatch(restaurantId, item, {
+          inventoryId:    item.id,
+          quantity:       mapped.quantity,
+          movementType:   mapped.movementType as "WASTE" | "TRANSFER_OUT",
+          reasonCategory: reasonCategory,
+          reason:         reasonText.trim() || undefined,
+        });
+        setSuccess({
+          beforeQuantity: result.allocation.beforeQuantity,
+          afterQuantity:  result.allocation.afterQuantity,
+        });
+      } else {
+        const result = await submitNonBatch(
+          restaurantId,
+          item.id,
+          mapped.movementType,
+          mapped.quantity,
+          {
+            reasonCategory: reasonCategory,
+            reason: reasonText.trim() || undefined,
+          }
+        );
+        if (result) {
+          setSuccess({
+            beforeQuantity: result.beforeQuantity,
+            afterQuantity:  result.afterQuantity,
+          });
+        }
       }
-    );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to adjust stock");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const quantityIsValid = quantity.trim() !== "" && !Number.isNaN(Number(quantity)) && Number(quantity) >= 0;
+  const quantityValue = Number(quantity);
+  const quantityIsValid = isAbsoluteType
+    ? quantity.trim() !== "" && !Number.isNaN(quantityValue) && quantityValue >= 0
+    : quantity.trim() !== "" && !Number.isNaN(quantityValue) && quantityValue > 0;
   const reasonRequired = reasonCategory === "OTHER" && !reasonText.trim();
   const canSubmit = quantityIsValid && !reasonRequired && !submitting;
 
