@@ -1,39 +1,15 @@
 // ============================================
 // SERVORA ERP — InventoryScreen
-// ✅ COMPOSITION ONLY — this screen owns state and data-fetching
-//    (hooks) and wiring; ALL rendering is delegated to
-//    InventoryToolbar, InventoryStats, InventoryFilters,
-//    InventoryList, InventoryModal, StockAdjustmentModal, and
-//    ItemDetailsDrawer.
-// ✅ Delete uses the Platform-safe confirm pattern.
-// ✅ Category lookup built once (useMemo).
-// ✅ Deep-link support — Dashboard's "Low Stock" row can open this
-//    screen pre-filtered via ?stockStatus=lowStock, applied once on
-//    mount so it doesn't fight the user if they change the filter
-//    afterward. Accepts "lowStock" / "outOfStock" / "expiringSoon".
-// ✅ Row tap opens ItemDetailsDrawer (`drawerItem` state) — Edit/
-//    Adjust Stock are actions inside the drawer, not the row's
-//    direct action. The "Adjust Stock" icon shortcut on
-//    InventoryCard bypasses the drawer entirely for that one action.
-// ✅ safeRestaurantId computed once, reused across
-//    StockAdjustmentModal and ItemDetailsDrawer.
-// ✅ Stats-card tap-to-filter wiring:
-//    - useInventoryFilters(items, expiryContext) — expiryContext
-//      supplies today/categoryMap/restaurantDefaultExpiryAlertDays
-//      so the "expiringSoon" filter option can classify items using
-//      the exact same 3-tier priority logic used everywhere else.
-//    - InventoryStats' onStatusPress={handleStatusPress} — tapping
-//      any stat card drives the setStockStatus state.
-//    - listRef + scrollToOffset — after a stat card changes the
-//      filter, the list scrolls to the top.
-// ✅ REMOVED — InventoryFilters no longer renders a separate
-//    stock-status chip row (All/Low Stock/Out of Stock/Expiring
-//    Soon) — InventoryStats' tap-to-filter cards already cover the
-//    exact same functionality, so the standalone chip row was
-//    redundant UI. setStockStatus is still passed to InventoryStats
-//    (via handleStatusPress) — only the direct
-//    InventoryFilters↔setStockStatus wiring was removed, since that
-//    component no longer accepts the prop.
+// [... all previous FROZEN header content unchanged — composition
+//    only, deep-link support, stats tap-to-filter wiring, Batch
+//    Report wiring ...]
+// ✅ NEW — Receive Batch wiring: `receiveBatchItem` state, owned
+//    here (consistent with every other modal in this screen).
+//    ItemDetailsDrawer's onReceiveBatch → openReceiveBatch(item),
+//    which closes the drawer first (setDrawerItem(undefined)) then
+//    sets receiveBatchItem — matching the confirmed pattern where
+//    the drawer never opens the next modal itself, it only reports
+//    intent upward. ReceiveBatchModal's onClose → closeReceiveBatch.
 // FROZEN
 // ============================================
 
@@ -61,14 +37,13 @@ import { InventoryList } from "../components/InventoryList";
 import { InventoryModal } from "../components/InventoryModal";
 import { StockAdjustmentModal } from "../components/StockAdjustmentModal";
 import { ItemDetailsDrawer } from "../components/ItemDetailsDrawer";
+import { InventoryBatchReport } from "../components/InventoryBatchReport";
+import { ReceiveBatchModal } from "../components/ReceiveBatchModal";
 
 const isWeb = Platform.OS === "web";
 
 export default function InventoryScreen() {
   const { restaurant, restaurantId, fmt } = useApp();
-  // ✅ RBAC Phase 1 — replaces the old inline
-  // `["MANAGER","OWNER"].includes(role)` check (duplicated across
-  // ~14 screens) with the shared static permission engine.
   const canEditInventory = usePermission("edit_inventory");
 
   const { items, loading: itemsLoading, error: itemsError } = useInventory(restaurantId);
@@ -99,7 +74,6 @@ export default function InventoryScreen() {
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
   }, [setStockStatus]);
 
-  // ✅ Deep-link support — see FROZEN header above.
   const params = useLocalSearchParams<{ stockStatus?: string }>();
   useEffect(() => {
     if (
@@ -112,12 +86,14 @@ export default function InventoryScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [showForm,      setShowForm]      = useState(false);
-  const [editingItem,   setEditingItem]   = useState<InventoryItem | undefined>(undefined);
-  const [saving,        setSaving]        = useState(false);
-  const [seeding,       setSeeding]       = useState(false);
-  const [adjustingItem, setAdjustingItem] = useState<InventoryItem | undefined>(undefined);
-  const [drawerItem,    setDrawerItem]    = useState<InventoryItem | undefined>(undefined);
+  const [showForm,          setShowForm]          = useState(false);
+  const [editingItem,       setEditingItem]       = useState<InventoryItem | undefined>(undefined);
+  const [saving,            setSaving]            = useState(false);
+  const [seeding,           setSeeding]           = useState(false);
+  const [adjustingItem,     setAdjustingItem]     = useState<InventoryItem | undefined>(undefined);
+  const [drawerItem,        setDrawerItem]        = useState<InventoryItem | undefined>(undefined);
+  const [showBatchReport,   setShowBatchReport]   = useState(false);
+  const [receiveBatchItem,  setReceiveBatchItem]  = useState<InventoryItem | undefined>(undefined);
 
   const safeRestaurantId = restaurantId ?? "";
 
@@ -150,6 +126,23 @@ export default function InventoryScreen() {
 
   const closeDrawer = useCallback(() => {
     setDrawerItem(undefined);
+  }, []);
+
+  const openBatchReport = useCallback(() => {
+    setShowBatchReport(true);
+  }, []);
+
+  const closeBatchReport = useCallback(() => {
+    setShowBatchReport(false);
+  }, []);
+
+  const openReceiveBatch = useCallback((item: InventoryItem) => {
+    setDrawerItem(undefined);
+    setReceiveBatchItem(item);
+  }, []);
+
+  const closeReceiveBatch = useCallback(() => {
+    setReceiveBatchItem(undefined);
   }, []);
 
   const handleSubmit = useCallback(async (
@@ -197,8 +190,6 @@ export default function InventoryScreen() {
     }
   }, [restaurantId, closeForm]);
 
-  // ✅ Seed default Department + Category taxonomy — shown only
-  // when no categories exist yet.
   const handleSeedDefaults = useCallback(async () => {
     if (!restaurantId || seeding) return;
     setSeeding(true);
@@ -224,6 +215,7 @@ export default function InventoryScreen() {
       <InventoryToolbar
         canEditInventory={canEditInventory}
         onAddItem={openCreate}
+        onOpenBatchReport={openBatchReport}
         shouldShowSeedBanner={shouldShowSeedBanner}
         seeding={seeding}
         onSeedStoreDefaults={handleSeedDefaults}
@@ -279,6 +271,7 @@ export default function InventoryScreen() {
         onClose={closeDrawer}
         onEdit={openEdit}
         onAdjustStock={openAdjustStock}
+        onReceiveBatch={openReceiveBatch}
         duplicateNameSuffix="(Copy)"
       />
 
@@ -298,6 +291,20 @@ export default function InventoryScreen() {
         item={adjustingItem}
         restaurantId={safeRestaurantId}
         onClose={closeAdjustStock}
+      />
+
+      <InventoryBatchReport
+        visible={showBatchReport}
+        restaurantId={safeRestaurantId}
+        onClose={closeBatchReport}
+      />
+
+      <ReceiveBatchModal
+        visible={!!receiveBatchItem}
+        item={receiveBatchItem}
+        restaurantId={safeRestaurantId}
+        suppliers={suppliers}
+        onClose={closeReceiveBatch}
       />
     </View>
   );

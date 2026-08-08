@@ -1,48 +1,15 @@
 // ============================================
 // SERVORA ERP — ItemDetailsDrawer Component
-// ✅ New entry point for viewing an inventory item — Row tap now
-//    opens THIS drawer instead of directly opening Edit. Matches
-//    standard ERP UX (SAP/Oracle/Dynamics/Odoo/NetSuite): viewing
-//    an item shouldn't require entering edit mode. Edit itself is
-//    now one action among several, reached via the "Edit" button
-//    below.
-// ✅ Actions: Edit (opens InventoryModal), Adjust Stock (opens
-//    StockAdjustmentModal), Duplicate, Archive/Restore. All state
-//    for "which modal is open" stays owned by InventoryScreen.tsx —
-//    this drawer only renders the item's details and calls the
-//    handlers passed in as props, exactly like every other
-//    component in this module.
-// ✅ Duplicate/Archive/Restore call inventory-service.ts directly
-//    (not through a dedicated hook) — these are simple one-shot
-//    calls with no complex validation or multi-field form state,
-//    unlike Stock Adjustment which has several input fields and
-//    warranted its own hook (useStockAdjustment.ts).
-// ✅ Archive requires confirmation (Platform-safe pattern, matching
-//    the existing delete confirmation in InventoryScreen.tsx) since
-//    it changes the item's visibility everywhere immediately.
-// ✅ Duplicate does NOT require confirmation — it's non-destructive.
-// ✅ Delete is intentionally NOT included here — it already has its
-//    own guard and confirmation flow inside InventoryModal's header.
-// ✅ busy guards EVERY action button (Edit/Adjust Stock included,
-//    not just Duplicate/Archive) — prevents opening a second modal
-//    while a duplicate/archive call is still in flight.
-// ✅ Edit/Adjust Stock close this drawer FIRST, then call the
-//    handler — opening the next modal while this sheet is still
-//    animating open underneath it looked awkward; closing first
-//    gives a clean single-sheet transition.
-// ✅ Duplicate name collision: `${itemName} ${suffix}` (e.g.
-//    "Chicken (Copy)") can collide if duplicated more than once —
-//    inventory-repository.ts does NOT enforce itemName uniqueness
-//    (only categoryId/departmentId names are checked for
-//    duplicates, not item names), so this is not currently blocked,
-//    just a cosmetic naming collision. Not fixed here — a real fix
-//    (auto-incrementing "Copy 2", "Copy 3"...) belongs in
-//    duplicateInventoryItem() itself, not duplicated into every
-//    caller. Flagged for a future pass on inventory-service.ts.
-// ✅ restaurantId guarded before every write, matching every other
-//    write path in this module (repository functions all guard
-//    this too — belt-and-suspenders, since a component-level guard
-//    gives a cleaner no-op than waiting for the repository to throw).
+// [... all previous FROZEN header content unchanged ...]
+// ✅ NEW — "Receive Batch" action added to the action grid,
+//    alongside Edit/Adjust Stock/Duplicate/Archive. Follows the
+//    exact same pattern as onEdit/onAdjustStock: this drawer does
+//    NOT own the ReceiveBatchModal's visibility state — it only
+//    closes itself, then reports the intent upward via
+//    onReceiveBatch(item). InventoryScreen.tsx owns
+//    receiveBatchItem state and renders ReceiveBatchModal, exactly
+//    matching how showForm/adjustingItem/drawerItem are all owned
+//    there.
 // FROZEN
 // ============================================
 
@@ -56,6 +23,8 @@ import { Category } from "../types/category";
 import {
   duplicateInventoryItem, archiveInventoryItem, restoreInventoryItem,
 } from "../services/inventory-service";
+import { useBatchesForItem } from "../hooks/useBatchesForItem";
+import { InventoryBatchTable } from "./InventoryBatchTable";
 
 const isWeb = Platform.OS === "web";
 
@@ -71,14 +40,17 @@ interface ItemDetailsDrawerProps {
   onClose:                           () => void;
   onEdit:                            (item: InventoryItem) => void;
   onAdjustStock:                     (item: InventoryItem) => void;
-  duplicateNameSuffix:               string; // e.g. "(Copy)" — supplied by caller so this component stays language-agnostic
+  onReceiveBatch:                    (item: InventoryItem) => void;
+  duplicateNameSuffix:               string;
 }
 
 export function ItemDetailsDrawer({
   visible, item, category, restaurantId, todayISO, restaurantDefaultExpiryAlertDays,
-  fmt, canEditInventory, onClose, onEdit, onAdjustStock, duplicateNameSuffix,
+  fmt, canEditInventory, onClose, onEdit, onAdjustStock, onReceiveBatch, duplicateNameSuffix,
 }: ItemDetailsDrawerProps) {
   const [busy, setBusy] = useState(false);
+
+  const { batches, loading: batchesLoading } = useBatchesForItem(restaurantId, item?.id);
 
   if (!item) return null;
 
@@ -100,6 +72,12 @@ export function ItemDetailsDrawer({
     if (busy) return;
     onClose();
     onAdjustStock(item);
+  };
+
+  const handleReceiveBatchPress = () => {
+    if (busy) return;
+    onClose();
+    onReceiveBatch(item);
   };
 
   const handleDuplicate = async () => {
@@ -143,7 +121,6 @@ export function ItemDetailsDrawer({
     if (busy || !restaurantId) return;
 
     if (!isActive) {
-      // Restoring is non-destructive — no confirmation needed.
       doArchiveOrRestore();
       return;
     }
@@ -222,6 +199,9 @@ export function ItemDetailsDrawer({
               </View>
             )}
 
+            <Text style={styles.sectionLabel}>Batches</Text>
+            <InventoryBatchTable batches={batches} loading={batchesLoading} />
+
             {(item.expiryDate || item.batchNo) && (
               <>
                 <Text style={styles.sectionLabel}>Expiry</Text>
@@ -265,6 +245,12 @@ export function ItemDetailsDrawer({
               <TouchableOpacity style={styles.actionBtn} onPress={handleEditPress} disabled={busy}>
                 <MaterialIcons name="edit" size={18} color="#0369a1" />
                 <Text style={styles.actionBtnText}>Edit</Text>
+              </TouchableOpacity>
+            )}
+            {canEditInventory && (
+              <TouchableOpacity style={styles.actionBtn} onPress={handleReceiveBatchPress} disabled={busy}>
+                <MaterialIcons name="move-to-inbox" size={18} color="#0369a1" />
+                <Text style={styles.actionBtnText}>Receive Batch</Text>
               </TouchableOpacity>
             )}
             {canEditInventory && (

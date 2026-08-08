@@ -11,12 +11,20 @@
 // ✅ Prop names are specific rather than generic —
 //    shouldShowSeedBanner / onSeedStoreDefaults, anticipating other
 //    future "seed X defaults" flows.
-// ✅ FIX — header's paddingBottom reduced from the implicit 16
-//    (via padding: 16 shorthand) to 4. Combined with InventoryStats'
-//    own marginTop, the original spacing stacked to ~26px of empty
-//    vertical gap between "Inventory" and the stats row — this
-//    tightens it to a normal ~14px section gap without touching any
-//    other side's padding.
+// ✅ header's paddingBottom reduced from the implicit 16 (via
+//    padding: 16 shorthand) to 4 — tightens the gap to InventoryStats.
+// ✅ NEW — "Batch Report" button added alongside "Add Item", both
+//    inside a headerActions row (right side of the header). Opens
+//    InventoryBatchReport (the category-grouped, restaurant-wide
+//    batch view) — this button itself owns no modal state; it only
+//    reports the tap via onOpenBatchReport, exactly mirroring how
+//    onAddItem already works. The actual visible/onClose state for
+//    the report modal is owned by InventoryScreen.tsx, consistent
+//    with every other modal in this module.
+// ✅ Batch Report is visible to any user who can view Inventory
+//    (not gated behind canEditInventory like Add Item) since it's a
+//    read-only report — viewing batch history doesn't require edit
+//    permission.
 // FROZEN
 // ============================================
 
@@ -27,24 +35,31 @@ import { MaterialIcons } from "@expo/vector-icons";
 interface InventoryToolbarProps {
   canEditInventory:       boolean;
   onAddItem:              () => void;
+  onOpenBatchReport:      () => void;
   shouldShowSeedBanner:   boolean;
   seeding:                boolean;
   onSeedStoreDefaults:    () => void;
 }
 
 export function InventoryToolbar({
-  canEditInventory, onAddItem, shouldShowSeedBanner, seeding, onSeedStoreDefaults,
+  canEditInventory, onAddItem, onOpenBatchReport, shouldShowSeedBanner, seeding, onSeedStoreDefaults,
 }: InventoryToolbarProps) {
   return (
     <>
       <View style={styles.header}>
         <Text style={styles.title}>Inventory</Text>
-        {canEditInventory && (
-          <TouchableOpacity style={styles.addBtn} onPress={onAddItem}>
-            <MaterialIcons name="add" size={18} color="#fff" />
-            <Text style={styles.addBtnText}>Add Item</Text>
+        <View style={styles.headerActions}>
+          <TouchableOpacity style={styles.batchReportBtn} onPress={onOpenBatchReport}>
+            <MaterialIcons name="receipt-long" size={16} color="#0369a1" />
+            <Text style={styles.batchReportBtnText}>Batch Report</Text>
           </TouchableOpacity>
-        )}
+          {canEditInventory && (
+            <TouchableOpacity style={styles.addBtn} onPress={onAddItem}>
+              <MaterialIcons name="add" size={18} color="#fff" />
+              <Text style={styles.addBtnText}>Add Item</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {/* ✅ Seed Defaults — only when no categories exist yet */}
@@ -75,6 +90,12 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   title: { fontSize: 20, fontWeight: "800", color: "#1e293b" },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  batchReportBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: "#e0f2fe", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
+  },
+  batchReportBtnText: { color: "#0369a1", fontWeight: "700", fontSize: 13 },
   addBtn: {
     flexDirection: "row", alignItems: "center", gap: 6,
     backgroundColor: "#0369a1", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
