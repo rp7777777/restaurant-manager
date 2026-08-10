@@ -1,32 +1,28 @@
 // ============================================
 // SERVORA ERP — InventoryForm Component
-// ✅ Add/Edit form for InventoryItem — categoryId dropdown
-//    (grouped by Department), unit dropdown, expiry date (text
-//    input, YYYY-MM-DD — no native date-picker dependency yet),
-//    batch/storage/supplier optional fields.
+// ✅ Add/Edit form for InventoryItem.
 // ✅ Pure presentation — ALL form state, validation, and submit
-//    logic now lives in useInventoryForm.ts (extracted, matches
-//    the Screen → Hook → Component pattern already used by Kitchen
-//    module). This component only renders inputs and wires their
-//    onChange to the hook's setters.
+//    logic for the ITEM fields lives in useInventoryForm.ts.
 // ✅ Edit mode shows a "Manual correction only" warning above
 //    Current Stock.
-// ✅ NEW — sku, barcode, notes, isActive fields wired into the UI
-//    (previously only in the type/repository, unused by any form).
-// ✅ NEW — Save button now shows the hook's `submitting` state
-//    (spinner text + disabled) instead of the old locally-owned
-//    `saving` prop, preventing double-submit.
-// ✅ Category/Unit/Supplier dropdown lists remain ScrollView (not
-//    plain View) with nestedScrollEnabled — a plain View ignores
-//    maxHeight for scrolling purposes, so a long list (60+
-//    categories) pushed the rest of the form off-screen instead of
-//    scrolling internally within its own bounded box.
-// ✅ PHASE (component relocation) — this file now lives in
-//    modules/inventory-module/components/ (moved from
-//    src/components/inventory/), matching Kitchen module's pattern
-//    of keeping components inside their own module folder. Import
-//    paths below are relative to THIS location — one level up
-//    (`../`) reaches inventory-module directly, not two.
+// ✅ sku, barcode, notes, isActive fields wired into the UI.
+// ✅ Save button shows the hook's `submitting` state.
+// ✅ NEW — "Received Date" field, CREATE MODE ONLY. This is
+//    deliberately NOT part of useInventoryForm.ts's state — it's
+//    not an InventoryItem field at all (CreateInventoryItemInput
+//    has no receivedDate), it's metadata for the INITIAL BATCH that
+//    createInventoryItemWithInitialBatch() (inventory-service.ts)
+//    creates when the user enters a starting quantity. Kept as a
+//    local useState here, separate from the item-field hook, and
+//    passed as a SECOND argument to onSubmit — the parent
+//    (InventoryScreen.tsx) is what actually threads it through to
+//    createInventoryItemWithInitialBatch(). Defaults to today; the
+//    field itself defaults to blank display but the parent treats
+//    blank as "use today" (matching
+//    createInventoryItemWithInitialBatch()'s own default).
+//    Not shown in edit mode — editing an existing item never
+//    creates a new batch, so there's no "received date" concept to
+//    collect there.
 // FROZEN
 // ============================================
 
@@ -51,7 +47,7 @@ interface InventoryFormProps {
   initial?:        InventoryItem;
   categoryGroups:  CategoryPickerGroup[];
   suppliers:       Supplier[];
-  onSubmit:        (input: CreateInventoryItemInput | UpdateInventoryItemInput) => void | Promise<void>;
+  onSubmit:        (input: CreateInventoryItemInput | UpdateInventoryItemInput, receivedDate?: string) => void | Promise<void>;
   onCancel:        () => void;
 }
 
@@ -62,11 +58,17 @@ export function InventoryForm({
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showSupplierPicker, setShowSupplierPicker] = useState(false);
   const [showUnitPicker,     setShowUnitPicker]     = useState(false);
+  // ✅ NEW — create-mode-only, see FROZEN header.
+  const [receivedDate, setReceivedDate] = useState("");
 
   const selectedCategory = categoryGroups
     .flatMap((g) => g.categories)
     .find((c) => c.id === form.categoryId);
   const selectedSupplier = suppliers.find((s) => s.id === form.supplierId);
+
+  const handleSave = () => {
+    form.handleSubmit((input) => onSubmit(input, mode === "create" ? receivedDate.trim() || undefined : undefined));
+  };
 
   return (
     <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
@@ -134,6 +136,14 @@ export function InventoryForm({
           </Text>
         </View>
       )}
+      {mode === "create" && (
+        <View style={styles.infoBox}>
+          <MaterialIcons name="info-outline" size={14} color="#0369a1" />
+          <Text style={styles.infoText}>
+            Entering a starting quantity here creates the item's first batch automatically.
+          </Text>
+        </View>
+      )}
       <View style={styles.row}>
         <View style={styles.rowItem}>
           <TextInput
@@ -189,6 +199,19 @@ export function InventoryForm({
         </View>
       </View>
 
+      {/* ✅ NEW — Received Date, create mode only */}
+      {mode === "create" && (
+        <>
+          <Text style={styles.label}>Received Date (optional, defaults to today)</Text>
+          <TextInput
+            style={styles.input}
+            value={receivedDate}
+            onChangeText={setReceivedDate}
+            placeholder="YYYY-MM-DD"
+          />
+        </>
+      )}
+
       <Text style={styles.label}>Expiry Date (optional)</Text>
       <TextInput
         style={styles.input}
@@ -243,7 +266,6 @@ export function InventoryForm({
         </ScrollView>
       )}
 
-      {/* ✅ NEW — SKU */}
       <Text style={styles.label}>SKU (optional)</Text>
       <TextInput
         style={styles.input}
@@ -253,7 +275,6 @@ export function InventoryForm({
         autoCapitalize="characters"
       />
 
-      {/* ✅ NEW — Barcode */}
       <Text style={styles.label}>Barcode (optional)</Text>
       <TextInput
         style={styles.input}
@@ -263,7 +284,6 @@ export function InventoryForm({
         keyboardType={Platform.OS === "web" ? "default" : "numbers-and-punctuation"}
       />
 
-      {/* ✅ NEW — Notes */}
       <Text style={styles.label}>Notes (optional)</Text>
       <TextInput
         style={[styles.input, styles.notesInput]}
@@ -274,7 +294,6 @@ export function InventoryForm({
         numberOfLines={3}
       />
 
-      {/* ✅ NEW — Active/Inactive toggle */}
       <View style={styles.switchRow}>
         <View style={styles.switchLabelGroup}>
           <Text style={styles.label}>Active</Text>
@@ -291,7 +310,7 @@ export function InventoryForm({
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.saveBtn, form.submitting && { opacity: 0.6 }]}
-          onPress={() => form.handleSubmit(onSubmit)}
+          onPress={handleSave}
           disabled={form.submitting}
         >
           <Text style={styles.saveBtnText}>{form.submitting ? "Saving..." : "Save"}</Text>
@@ -340,6 +359,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#fffbeb", padding: 8, borderRadius: 6, marginBottom: 6,
   },
   warningText: { color: "#92400e", fontSize: 11, fontWeight: "600", flex: 1 },
+  infoBox: {
+    flexDirection: "row", alignItems: "flex-start", gap: 6,
+    backgroundColor: "#eff6ff", padding: 8, borderRadius: 6, marginBottom: 6,
+  },
+  infoText: { color: "#1e40af", fontSize: 11, fontWeight: "600", flex: 1 },
   switchRow: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     marginTop: 16, paddingVertical: 8,

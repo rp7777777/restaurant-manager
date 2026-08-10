@@ -10,49 +10,54 @@
 // ✅ receiveBatch() (Phase 3a) — orchestrates batch creation +
 //    PURCHASE movement + batch-derived currentStock recompute.
 // ✅ deductStockBatch() (Phase 3c) — orchestrates the FEFO deduction
-//    engine (batch-allocation-service.ts's deductStockFEFO()) + the
-//    matching StockMovement audit record. NO ARCHITECTURAL SEAM
-//    here (unlike receiveBatch()) — calls deductStockFEFO() FIRST
-//    (the single source of truth for currentStock, computed inside
-//    its own transaction), THEN records the StockMovement using the
-//    AllocationResult's beforeQuantity/afterQuantity DIRECTLY via
-//    writeMovementRecord() — a local helper that writes a
-//    StockMovement document with addDoc(), deliberately NOT a call
-//    to recordStockMovement() (which would re-read currentStock and
-//    could disagree with the FEFO-computed truth).
-// ✅ It CANNOT be called with movementType "PURCHASE"/"RETURN"/
-//    "TRANSFER_IN"/"ADJUSTMENT" — enforced via the
-//    DeductibleMovementType restriction, a TypeScript-level guard.
-// ⚠️ KNOWN LIMITATION (documented, accepted for this phase):
-//    writeMovementRecord()'s movementValue is currently computed as
-//    `deductedQuantity × item.unitCost` — i.e. the ITEM's current
-//    unitCost, NOT a weighted cost across the specific batches FEFO
-//    actually drew from. Since each batch can have its OWN unitCost,
-//    a deduction that spans multiple batches with different costs
-//    will report a movementValue/unitCostAtTime that doesn't exactly
-//    match a true weighted-average across the batches drawn from.
-//    This does NOT affect inventory quantity accuracy — it only
-//    affects the VALUATION figure on this movement record, an
-//    accounting-precision concern. THE PROPER FIX — deferred: return
-//    each batch's own unitCost per allocation line and compute a
-//    true weighted movementValue/effectiveUnitCostAtTime from that.
-//    Planned for a future accounting/valuation phase.
+//    engine + the matching StockMovement audit record.
+// ⚠️ KNOWN LIMITATION (documented, accepted): movementValue in
+//    writeMovementRecord() uses item.unitCost, not a per-batch
+//    weighted cost. Deferred to a future accounting/valuation phase.
+// ✅ NEW — createInventoryItemWithInitialBatch(): bridges "Add Item"
+//    to the batch tracking system. Previously, Add Item set
+//    currentStock/batchNo/expiryDate directly on the InventoryItem
+//    document but never created a real InventoryBatch — so a newly
+//    added item with, say, 168 units showed up as "No batches yet"
+//    / 0 in the batch-tracked table view, since that view reads
+//    ONLY from the InventoryBatch collection. This function makes
+//    Add Item create a REAL first batch (via receiveBatch(), the
+//    exact same path Receive Batch itself uses) whenever the user
+//    enters an initial quantity > 0.
+//    - The item is always created with currentStock: 0 first;
+//      receiveBatch() is what sets the real currentStock, computed
+//      from the batch it creates — avoids double-counting the
+//      user's entered quantity.
+//    - If no initial quantity is given (or it's 0), no batch is
+//      created — matches "just registering the item, stock arrives
+//      later" (identical to what Receive Batch would leave behind
+//      if invoked with nothing yet received).
+//    - batchNo auto-generates if omitted (Batch Number stays
+//      OPTIONAL on the Add Item form, per confirmed design):
+//      "{ITEM-INITIALS}-INIT-{timestamp}".
+//    - receivedDate defaults to today if omitted (the Add Item
+//      form's "Received Date" field is optional); purchaseDate
+//      mirrors receivedDate — Add Item has no separate "purchase
+//      date" concept the way the dedicated Receive Batch form does.
+//    - unitCost for the initial batch comes from the item's own
+//      unitCost, consistent with ReceiveBatchModal's own pre-fill
+//      behavior for subsequent batches.
 // ✅ DEFERRED (future phases, not built here):
 //    recordStockMovement() batch-awareness upgrade — Phase 3d.
-//    Per-batch weighted movementValue accuracy (see limitation).
+//    Per-batch weighted movementValue accuracy.
 //    bulkImportInventory() / bulkExportInventory() — Phase 7.
 //    mergeInventoryItems() / convertUnit() — no current UI need.
 //    receivePurchaseOrder() / issueStockToKitchen() — already live
 //      in purchase-order-module and kitchen-module; NOT duplicated
-//      here. FUTURE INTEGRATION NOTE: once those modules' flows are
-//      ready to adopt batch tracking, they should call
-//      receiveBatch()/deductStockBatch() — NOT recordStockMovement()
-//      directly and NOT a raw currentStock-- — so every stock change
-//      goes through FEFO and stays batch-consistent.
+//      here.
 // FROZEN
 // ============================================
 
-import { createInventoryItem as repoCreateInventoryItem, updateInventoryItem } from "../repository/inventory-repository";
+import {
+  createInventoryItem as repoCreateInventoryItem,
+  updateInventoryItem,
+  getInventoryItemById,
+} from "../repository/inventory-repository";
 import { InventoryItem, CreateInventoryItemInput } from "../types/inventory";
 import {
   createInventoryBatch,
@@ -69,6 +74,7 @@ import { deductStockFEFO, AllocationResult } from "./batch-allocation-service";
 import { db, auth } from "../../../firebase";
 import { doc, updateDoc, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { COL, RCOL } from "../../../constants/firestore-collections";
+import { todayISO } from "../../../utils/date-utils";
 
 function inventoryDoc(restaurantId: string, itemId: string) {
   return doc(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY, itemId);
@@ -265,4 +271,62 @@ export async function deductStockBatch(
   );
 
   return { movementId, allocation };
+}
+
+// ── Create Item WITH Initial Batch ────────────────
+export interface CreateItemWithInitialBatchInput {
+  itemInput:      CreateInventoryItemInput;
+  batchNo?:       string;
+  receivedDate?:  string; // YYYY-MM-DD, defaults to today
+}
+
+export interface CreateItemWithInitialBatchResult {
+  itemId:  string;
+  batchId: string | null; // null if no initial quantity was given
+}
+
+function generateInitialBatchNo(itemName: string): string {
+  const initials = itemName.trim().slice(0, 3).toUpperCase() || "ITM";
+  return `${initials}-INIT-${Date.now()}`;
+}
+
+export async function createInventoryItemWithInitialBatch(
+  restaurantId: string,
+  input: CreateItemWithInitialBatchInput
+): Promise<CreateItemWithInitialBatchResult> {
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
+
+  const requestedQuantity = input.itemInput.currentStock;
+
+  const itemId = await repoCreateInventoryItem(restaurantId, {
+    ...input.itemInput,
+    currentStock: 0,
+  });
+
+  if (!requestedQuantity || requestedQuantity <= 0) {
+    return { itemId, batchId: null };
+  }
+
+  const createdItem = await getInventoryItemById(restaurantId, itemId);
+  if (!createdItem) {
+    throw new Error("Failed to load newly created item for initial batch");
+  }
+
+  const receivedDate = input.receivedDate?.trim() || todayISO();
+  const batchNo = input.batchNo?.trim() || generateInitialBatchNo(input.itemInput.itemName);
+
+  const batchResult = await receiveBatch(restaurantId, createdItem, {
+    inventoryId:  itemId,
+    itemName:     input.itemInput.itemName,
+    batchNo,
+    quantity:     requestedQuantity,
+    unit:         input.itemInput.unit,
+    unitCost:     input.itemInput.unitCost,
+    purchaseDate: receivedDate,
+    receivedDate,
+    expiryDate:   input.itemInput.expiryDate,
+  });
+
+  return { itemId, batchId: batchResult.batchId };
 }

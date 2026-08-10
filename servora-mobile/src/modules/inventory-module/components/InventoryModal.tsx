@@ -7,11 +7,15 @@
 // ✅ Pure presentation/composition — no state, no Firestore calls.
 //    All data (visibility, editing item, category/supplier lists)
 //    and handlers (submit, cancel, delete) are passed in as props
-//    from InventoryScreen.tsx, which keeps ownership of
-//    open/close/editingItem state and the actual repository calls
-//    exactly where they already are.
+//    from InventoryScreen.tsx.
 // ✅ Delete icon only shown when editingItem exists AND
-//    canEditInventory is true — unchanged from the original.
+//    canEditInventory is true.
+// ✅ NEW — onSubmit signature extended with an optional second
+//    parameter (receivedDate) — a pure pass-through change. This
+//    component still does nothing with it itself; it only forwards
+//    whatever InventoryForm.tsx calls onSubmit with, straight to
+//    the parent (InventoryScreen.tsx), unchanged from how it always
+//    forwarded the first argument.
 // FROZEN
 // ============================================
 
@@ -29,7 +33,7 @@ interface InventoryModalProps {
   canEditInventory: boolean;
   categoryGroups:   CategoryPickerGroup[];
   suppliers:        Supplier[];
-  onSubmit:         (input: CreateInventoryItemInput | UpdateInventoryItemInput) => void | Promise<void>;
+  onSubmit:         (input: CreateInventoryItemInput | UpdateInventoryItemInput, receivedDate?: string) => void | Promise<void>;
   onCancel:         () => void;
   onDelete:         (item: InventoryItem) => void;
 }

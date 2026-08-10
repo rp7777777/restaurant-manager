@@ -1,20 +1,31 @@
 // ============================================
 // SERVORA ERP — InventoryScreen
-// [... all previous FROZEN header content unchanged — composition
-//    only, deep-link support, stats tap-to-filter wiring, Batch
-//    Report wiring ...]
-// ✅ NEW — Receive Batch wiring: `receiveBatchItem` state, owned
-//    here (consistent with every other modal in this screen).
-//    ItemDetailsDrawer's onReceiveBatch → openReceiveBatch(item),
-//    which closes the drawer first (setDrawerItem(undefined)) then
-//    sets receiveBatchItem — matching the confirmed pattern where
-//    the drawer never opens the next modal itself, it only reports
-//    intent upward. ReceiveBatchModal's onClose → closeReceiveBatch.
+// ✅ COMPOSITION ONLY — this screen owns state and data-fetching
+//    (hooks) and wiring.
+// ✅ MAIN VIEW is now InventoryTableView (category-grouped,
+//    Excel-style batch table) instead of the card-based
+//    InventoryList/InventoryCard.
+// ✅ useAllInventoryBatches(restaurantId) called here — always
+//    active while this screen is mounted (accepted trade-off, per
+//    subscribeAllBatches()'s own scale note).
+// ✅ NEW — Add Item now creates a real initial batch. handleSubmit's
+//    CREATE branch calls createInventoryItemWithInitialBatch()
+//    (inventory-service.ts) instead of the bare repository
+//    createInventoryItem() — this is what fixes the gap where a
+//    newly added item with a starting quantity showed 0/"No batches
+//    yet" in InventoryTableView, since that view reads only from
+//    the InventoryBatch collection. The EDIT branch is completely
+//    UNCHANGED — editing an existing item never creates a new
+//    batch (that's what Receive Batch is for), so
+//    updateInventoryItem() remains exactly as it was.
+// ✅ Row tap opens ItemDetailsDrawer. Search/Filter/Sort and Stats
+//    tap-to-filter continue to drive filteredItems.
+// ✅ Batch Report modal remains available via the toolbar button.
 // FROZEN
 // ============================================
 
-import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { View, Text, StyleSheet, Platform, Alert, FlatList } from "react-native";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
+import { View, Text, StyleSheet, Platform, Alert } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useApp } from "../../../context/AppContext";
 import { usePermission } from "../../../hooks/usePermission";
@@ -22,9 +33,11 @@ import { useInventory } from "../hooks/useInventory";
 import { useInventoryFilters } from "../hooks/useInventoryFilters";
 import { useCategoriesForPicker } from "../hooks/useCategoriesForPicker";
 import { useSuppliers } from "../../supplier-module/hooks/useSuppliers";
+import { useAllInventoryBatches } from "../hooks/useAllInventoryBatches";
 import {
-  createInventoryItem, updateInventoryItem, deleteInventoryItem,
+  updateInventoryItem, deleteInventoryItem,
 } from "../repository/inventory-repository";
+import { createInventoryItemWithInitialBatch } from "../services/inventory-service";
 import {
   InventoryItem, CreateInventoryItemInput, UpdateInventoryItemInput,
 } from "../types/inventory";
@@ -33,7 +46,7 @@ import { todayISO } from "../../../utils/date-utils";
 import { InventoryToolbar } from "../components/InventoryToolbar";
 import { InventoryStats } from "../components/InventoryStats";
 import { InventoryFilters } from "../components/InventoryFilters";
-import { InventoryList } from "../components/InventoryList";
+import { InventoryTableView } from "../components/InventoryTableView";
 import { InventoryModal } from "../components/InventoryModal";
 import { StockAdjustmentModal } from "../components/StockAdjustmentModal";
 import { ItemDetailsDrawer } from "../components/ItemDetailsDrawer";
@@ -52,6 +65,8 @@ export default function InventoryScreen() {
     useCategoriesForPicker(restaurantId);
   const { suppliers } = useSuppliers(restaurantId);
 
+  const { batches: allBatches, loading: batchesLoading } = useAllInventoryBatches(restaurantId);
+
   const categoryMap = useMemo(() => {
     return new Map(categories.map((c) => [c.id, c]));
   }, [categories]);
@@ -67,11 +82,8 @@ export default function InventoryScreen() {
     restaurantDefaultExpiryAlertDays: restaurant?.defaultExpiryAlertDays,
   });
 
-  const listRef = useRef<FlatList>(null);
-
   const handleStatusPress = useCallback((status: Parameters<typeof setStockStatus>[0]) => {
     setStockStatus(status);
-    listRef.current?.scrollToOffset({ offset: 0, animated: true });
   }, [setStockStatus]);
 
   const params = useLocalSearchParams<{ stockStatus?: string }>();
@@ -145,8 +157,12 @@ export default function InventoryScreen() {
     setReceiveBatchItem(undefined);
   }, []);
 
+  // ✅ NEW — CREATE branch now calls
+  // createInventoryItemWithInitialBatch() instead of the bare
+  // repository createInventoryItem(). EDIT branch is unchanged.
   const handleSubmit = useCallback(async (
-    input: CreateInventoryItemInput | UpdateInventoryItemInput
+    input: CreateInventoryItemInput | UpdateInventoryItemInput,
+    receivedDate?: string
   ) => {
     if (!restaurantId || saving) return;
     setSaving(true);
@@ -154,7 +170,10 @@ export default function InventoryScreen() {
       if (editingItem) {
         await updateInventoryItem(restaurantId, editingItem.id, editingItem, input);
       } else {
-        await createInventoryItem(restaurantId, input as CreateInventoryItemInput);
+        await createInventoryItemWithInitialBatch(restaurantId, {
+          itemInput: input as CreateInventoryItemInput,
+          receivedDate,
+        });
       }
       closeForm();
     } catch (err: any) {
@@ -207,7 +226,7 @@ export default function InventoryScreen() {
     }
   }, [restaurantId, seeding]);
 
-  const loading = itemsLoading || categoriesLoading;
+  const loading = itemsLoading || categoriesLoading || batchesLoading;
   const shouldShowSeedBanner = !categoriesLoading && categories.length === 0 && canEditInventory;
 
   return (
@@ -246,17 +265,13 @@ export default function InventoryScreen() {
         </View>
       )}
 
-      <InventoryList
-        ref={listRef}
-        items={items}
+      <InventoryTableView
         filteredItems={filteredItems}
+        allItemsCount={items.length}
+        categories={categories}
+        batches={allBatches}
         loading={loading}
-        categoryMap={categoryMap}
-        todayISO={today}
-        restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
-        fmt={fmt}
         onItemPress={openDrawer}
-        onAdjustStock={openAdjustStock}
       />
 
       <ItemDetailsDrawer
