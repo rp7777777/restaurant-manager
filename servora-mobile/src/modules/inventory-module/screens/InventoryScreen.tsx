@@ -2,22 +2,20 @@
 // SERVORA ERP — InventoryScreen
 // ✅ COMPOSITION ONLY — this screen owns state and data-fetching
 //    (hooks) and wiring.
-// ✅ MAIN VIEW is now InventoryTableView (category-grouped,
-//    Excel-style batch table) instead of the card-based
-//    InventoryList/InventoryCard.
+// ✅ MAIN VIEW is InventoryTableView (category-grouped, Excel-style
+//    batch table) — excludes archived items automatically.
 // ✅ useAllInventoryBatches(restaurantId) called here — always
-//    active while this screen is mounted (accepted trade-off, per
-//    subscribeAllBatches()'s own scale note).
-// ✅ NEW — Add Item now creates a real initial batch. handleSubmit's
-//    CREATE branch calls createInventoryItemWithInitialBatch()
-//    (inventory-service.ts) instead of the bare repository
-//    createInventoryItem() — this is what fixes the gap where a
-//    newly added item with a starting quantity showed 0/"No batches
-//    yet" in InventoryTableView, since that view reads only from
-//    the InventoryBatch collection. The EDIT branch is completely
-//    UNCHANGED — editing an existing item never creates a new
-//    batch (that's what Receive Batch is for), so
-//    updateInventoryItem() remains exactly as it was.
+//    active while this screen is mounted.
+// ✅ Add Item creates a real initial batch via
+//    createInventoryItemWithInitialBatch().
+// ✅ NEW — Archived Items wiring: `showArchivedItems` state, owned
+//    here (consistent with every other modal). InventoryToolbar's
+//    onOpenArchivedItems → openArchivedItems();
+//    ArchivedItemsModal's onClose → closeArchivedItems(). The modal
+//    receives `items` (the full, unfiltered list from useInventory())
+//    and filters to archived ones itself — this screen doesn't
+//    pre-filter, since InventoryTableView needs the same `items`
+//    source for its own active-only filtering.
 // ✅ Row tap opens ItemDetailsDrawer. Search/Filter/Sort and Stats
 //    tap-to-filter continue to drive filteredItems.
 // ✅ Batch Report modal remains available via the toolbar button.
@@ -52,6 +50,7 @@ import { StockAdjustmentModal } from "../components/StockAdjustmentModal";
 import { ItemDetailsDrawer } from "../components/ItemDetailsDrawer";
 import { InventoryBatchReport } from "../components/InventoryBatchReport";
 import { ReceiveBatchModal } from "../components/ReceiveBatchModal";
+import { ArchivedItemsModal } from "../components/ArchivedItemsModal";
 
 const isWeb = Platform.OS === "web";
 
@@ -98,14 +97,15 @@ export default function InventoryScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [showForm,          setShowForm]          = useState(false);
-  const [editingItem,       setEditingItem]       = useState<InventoryItem | undefined>(undefined);
-  const [saving,            setSaving]            = useState(false);
-  const [seeding,           setSeeding]           = useState(false);
-  const [adjustingItem,     setAdjustingItem]     = useState<InventoryItem | undefined>(undefined);
-  const [drawerItem,        setDrawerItem]        = useState<InventoryItem | undefined>(undefined);
-  const [showBatchReport,   setShowBatchReport]   = useState(false);
-  const [receiveBatchItem,  setReceiveBatchItem]  = useState<InventoryItem | undefined>(undefined);
+  const [showForm,           setShowForm]           = useState(false);
+  const [editingItem,        setEditingItem]        = useState<InventoryItem | undefined>(undefined);
+  const [saving,             setSaving]             = useState(false);
+  const [seeding,            setSeeding]            = useState(false);
+  const [adjustingItem,      setAdjustingItem]      = useState<InventoryItem | undefined>(undefined);
+  const [drawerItem,         setDrawerItem]         = useState<InventoryItem | undefined>(undefined);
+  const [showBatchReport,    setShowBatchReport]    = useState(false);
+  const [receiveBatchItem,   setReceiveBatchItem]   = useState<InventoryItem | undefined>(undefined);
+  const [showArchivedItems,  setShowArchivedItems]  = useState(false);
 
   const safeRestaurantId = restaurantId ?? "";
 
@@ -157,9 +157,14 @@ export default function InventoryScreen() {
     setReceiveBatchItem(undefined);
   }, []);
 
-  // ✅ NEW — CREATE branch now calls
-  // createInventoryItemWithInitialBatch() instead of the bare
-  // repository createInventoryItem(). EDIT branch is unchanged.
+  const openArchivedItems = useCallback(() => {
+    setShowArchivedItems(true);
+  }, []);
+
+  const closeArchivedItems = useCallback(() => {
+    setShowArchivedItems(false);
+  }, []);
+
   const handleSubmit = useCallback(async (
     input: CreateInventoryItemInput | UpdateInventoryItemInput,
     receivedDate?: string
@@ -235,6 +240,7 @@ export default function InventoryScreen() {
         canEditInventory={canEditInventory}
         onAddItem={openCreate}
         onOpenBatchReport={openBatchReport}
+        onOpenArchivedItems={openArchivedItems}
         shouldShowSeedBanner={shouldShowSeedBanner}
         seeding={seeding}
         onSeedStoreDefaults={handleSeedDefaults}
@@ -320,6 +326,15 @@ export default function InventoryScreen() {
         restaurantId={safeRestaurantId}
         suppliers={suppliers}
         onClose={closeReceiveBatch}
+      />
+
+      <ArchivedItemsModal
+        visible={showArchivedItems}
+        items={items}
+        categoryMap={categoryMap}
+        restaurantId={safeRestaurantId}
+        fmt={fmt}
+        onClose={closeArchivedItems}
       />
     </View>
   );

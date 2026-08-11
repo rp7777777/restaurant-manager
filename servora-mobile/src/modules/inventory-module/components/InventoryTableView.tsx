@@ -1,24 +1,26 @@
 // ============================================
 // SERVORA ERP — InventoryTableView Component
-// ✅ THIS IS NOW THE MAIN INVENTORY SCREEN VIEW — replaces the
+// ✅ THIS IS THE MAIN INVENTORY SCREEN VIEW — replaces the
 //    card-based InventoryList/InventoryCard as the primary way
 //    inventory is displayed.
 // ✅ InventoryCard/InventoryList are NOT deleted — remain in the
-//    codebase (evolutionary principle); this screen simply no
-//    longer imports them.
-// ✅ FIX — column order corrected to match the confirmed Excel
-//    reference exactly: S.N. → Item Name → Date → Lot/Batch No. →
-//    Current Stock → Unit → Expiry Date → Total QTY. Total QTY
-//    moved from the LEFT merged strip to the RIGHT-MOST column —
-//    the left strip now holds ONLY S.N. + Item Name (still visually
-//    row-spanned across the item's batch rows); Total QTY is its
-//    own right-side column, shown once per item (on the first batch
-//    row, blank on subsequent rows) rather than living in the left
-//    strip.
-// ✅ NEW BEHAVIOR (vs. InventoryBatchReport.tsx) — items with ZERO
-//    batches are NOT silently excluded. Every item in filteredItems
-//    appears; items with no batches show a single "No batches yet"
-//    row instead of being invisible.
+//    codebase; this screen simply no longer imports them.
+// ✅ Column order: S.N. → Item Name → Date → Lot/Batch No. →
+//    Current Stock → Unit → Expiry Date → Total QTY. Total QTY is
+//    its own right-side column, shown once per item.
+// ✅ NEW — archived items (isActive === false) are EXCLUDED from
+//    this view entirely, regardless of whether they have batches.
+//    An archived item should never appear in the main working
+//    table — it remains visible/restorable only via the separate
+//    "Archived" list (ArchivedItemsModal, reached from the
+//    toolbar). This is a pure display-layer filter here — no
+//    change to the underlying InventoryItem data or to
+//    useInventoryFilters.ts, which still returns archived items in
+//    filteredItems (other consumers, like the Archived list itself,
+//    need to see them).
+// ✅ Items with ZERO batches are NOT silently excluded — every
+//    active item in filteredItems appears; items with no batches
+//    show a single "No batches yet" row instead of being invisible.
 // ✅ Search/category filtering inherited for free — filteredItems is
 //    already the output of useInventoryFilters() in the parent
 //    screen.
@@ -59,9 +61,6 @@ interface CategoryGroup {
 
 const ROW_HEIGHT = 32;
 
-// ── LEFT strip now holds ONLY S.N. + Item Name (Total QTY moved
-//    out — see FROZEN header). RIGHT columns are Date, Batch No.,
-//    Current Stock, Unit, Expiry, Total QTY, in that order. ──
 const LEFT_COLS = { sn: 40, item: 130 };
 const RIGHT_COLS = { date: 90, batch: 100, stock: 80, unit: 60, expiry: 90, total: 80 };
 
@@ -84,6 +83,9 @@ export function InventoryTableView({
 
     const rowsByCategory = new Map<string, ItemRow[]>();
     for (const item of filteredItems) {
+      // ✅ NEW — archived items never appear in the main table.
+      if (item.isActive === false) continue;
+
       const itemBatches = (batchesByItem.get(item.id) ?? []).filter(isActiveBatch);
       const totalQuantity = itemBatches.reduce((sum, b) => sum + b.quantity, 0);
 
@@ -166,7 +168,6 @@ export function InventoryTableView({
                     onPress={() => onItemPress(row.item)}
                     activeOpacity={0.7}
                   >
-                    {/* LEFT — merged-look strip: S.N. + Item Name only */}
                     <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }]}>
                       <Text style={[styles.leftStripCell, { width: LEFT_COLS.sn }]}>{itemIndex + 1}</Text>
                       <Text style={[styles.leftStripCell, { width: LEFT_COLS.item }]} numberOfLines={2}>
@@ -174,8 +175,6 @@ export function InventoryTableView({
                       </Text>
                     </View>
 
-                    {/* RIGHT — batch detail rows + Total QTY on the
-                        first row only */}
                     <View style={styles.rightBatchRows}>
                       {row.hasBatches ? (
                         row.batches.map((batch, batchIndex) => (
