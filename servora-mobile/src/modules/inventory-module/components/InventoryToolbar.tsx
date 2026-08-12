@@ -1,20 +1,14 @@
 // ============================================
 // SERVORA ERP — InventoryToolbar Component
-// ✅ EVOLUTIONARY EXTRACTION — this is the exact header + "Add
-//    Item" button + "Seed Defaults" banner JSX that previously
-//    lived inline inside InventoryScreen.tsx's render body.
+// ✅ EVOLUTIONARY EXTRACTION — header + "Add Item" button + "Seed
+//    Defaults" banner, originally inline in InventoryScreen.tsx.
 // ✅ Pure presentation — no state, no Firestore calls.
-// ✅ Prop names are specific rather than generic —
-//    shouldShowSeedBanner / onSeedStoreDefaults.
-// ✅ header's paddingBottom tightened.
-// ✅ "Batch Report" button alongside "Add Item" — opens
-//    InventoryBatchReport.
-// ✅ NEW — "Archived" button added, opening ArchivedItemsModal.
-//    Visible to any user who can view Inventory (not gated behind
-//    canEditInventory) since it's primarily a viewing action —
-//    Restore itself (inside the modal) is where any permission
-//    check would matter, matching how Batch Report is similarly
-//    ungated here.
+// ✅ "Batch Report" and "Archived" buttons alongside "Add Item".
+// ✅ NEW — "Movement History" button, opening MovementHistoryModal.
+//    Placed as a top-level toolbar button for now, per confirmed
+//    decision — if the toolbar grows further with more report-style
+//    buttons, a dropdown/menu consolidation is a natural future
+//    refactor, not needed yet at 4 buttons.
 // FROZEN
 // ============================================
 
@@ -23,39 +17,45 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator }
 import { MaterialIcons } from "@expo/vector-icons";
 
 interface InventoryToolbarProps {
-  canEditInventory:       boolean;
-  onAddItem:              () => void;
-  onOpenBatchReport:      () => void;
-  onOpenArchivedItems:    () => void;
-  shouldShowSeedBanner:   boolean;
-  seeding:                boolean;
-  onSeedStoreDefaults:    () => void;
+  canEditInventory:         boolean;
+  onAddItem:                () => void;
+  onOpenBatchReport:        () => void;
+  onOpenArchivedItems:      () => void;
+  onOpenMovementHistory:    () => void;
+  shouldShowSeedBanner:     boolean;
+  seeding:                  boolean;
+  onSeedStoreDefaults:      () => void;
 }
 
 export function InventoryToolbar({
-  canEditInventory, onAddItem, onOpenBatchReport, onOpenArchivedItems,
+  canEditInventory, onAddItem, onOpenBatchReport, onOpenArchivedItems, onOpenMovementHistory,
   shouldShowSeedBanner, seeding, onSeedStoreDefaults,
 }: InventoryToolbarProps) {
   return (
     <>
       <View style={styles.header}>
         <Text style={styles.title}>Inventory</Text>
-        <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.archivedBtn} onPress={onOpenArchivedItems}>
-            <MaterialIcons name="archive" size={16} color="#64748b" />
-            <Text style={styles.archivedBtnText}>Archived</Text>
+      </View>
+
+      <View style={styles.actionRow}>
+        <TouchableOpacity style={styles.secondaryBtn} onPress={onOpenMovementHistory}>
+          <MaterialIcons name="history" size={16} color="#64748b" />
+          <Text style={styles.secondaryBtnText}>History</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.secondaryBtn} onPress={onOpenArchivedItems}>
+          <MaterialIcons name="archive" size={16} color="#64748b" />
+          <Text style={styles.secondaryBtnText}>Archived</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.secondaryBtn} onPress={onOpenBatchReport}>
+          <MaterialIcons name="receipt-long" size={16} color="#0369a1" />
+          <Text style={styles.batchReportBtnText}>Batch Report</Text>
+        </TouchableOpacity>
+        {canEditInventory && (
+          <TouchableOpacity style={styles.addBtn} onPress={onAddItem}>
+            <MaterialIcons name="add" size={18} color="#fff" />
+            <Text style={styles.addBtnText}>Add Item</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.batchReportBtn} onPress={onOpenBatchReport}>
-            <MaterialIcons name="receipt-long" size={16} color="#0369a1" />
-            <Text style={styles.batchReportBtnText}>Batch Report</Text>
-          </TouchableOpacity>
-          {canEditInventory && (
-            <TouchableOpacity style={styles.addBtn} onPress={onAddItem}>
-              <MaterialIcons name="add" size={18} color="#fff" />
-              <Text style={styles.addBtnText}>Add Item</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+        )}
       </View>
 
       {shouldShowSeedBanner && (
@@ -79,26 +79,25 @@ export function InventoryToolbar({
 
 const styles = StyleSheet.create({
   header: {
-    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
     paddingHorizontal: 16,
     paddingTop: Platform.OS === "web" ? 20 : 48,
     paddingBottom: 4,
   },
   title: { fontSize: 20, fontWeight: "800", color: "#1e293b" },
-  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
-  archivedBtn: {
+  actionRow: {
+    flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8,
+    paddingHorizontal: 16, paddingTop: 8,
+  },
+  secondaryBtn: {
     flexDirection: "row", alignItems: "center", gap: 6,
     backgroundColor: "#f1f5f9", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
   },
-  archivedBtnText: { color: "#64748b", fontWeight: "700", fontSize: 13 },
-  batchReportBtn: {
-    flexDirection: "row", alignItems: "center", gap: 6,
-    backgroundColor: "#e0f2fe", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
-  },
+  secondaryBtnText: { color: "#64748b", fontWeight: "700", fontSize: 13 },
   batchReportBtnText: { color: "#0369a1", fontWeight: "700", fontSize: 13 },
   addBtn: {
     flexDirection: "row", alignItems: "center", gap: 6,
     backgroundColor: "#0369a1", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
+    marginLeft: "auto",
   },
   addBtnText: { color: "#fff", fontWeight: "700", fontSize: 13 },
   seedBanner: {

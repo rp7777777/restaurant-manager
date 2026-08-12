@@ -2,28 +2,21 @@
 // SERVORA ERP — InventoryScreen
 // ✅ COMPOSITION ONLY — this screen owns state and data-fetching
 //    (hooks) and wiring.
-// ✅ MAIN VIEW is InventoryTableView (category-grouped, Excel-style
-//    batch table) — excludes archived items automatically.
+// ✅ MAIN VIEW is InventoryTableView — excludes archived items.
 // ✅ useAllInventoryBatches(restaurantId) called here — always
 //    active while this screen is mounted.
 // ✅ Add Item creates a real initial batch via
-//    createInventoryItemWithInitialBatch().
-// ✅ FIX — the user-entered Batch Number (input.batchNo, from
-//    InventoryForm's "Batch Number" field) is now actually passed
-//    through to createInventoryItemWithInitialBatch(). Previously
-//    this argument was omitted entirely, so
-//    createInventoryItemWithInitialBatch() always saw batchNo as
-//    undefined and fell back to auto-generation ("{ITEM}-INIT-
-//    {timestamp}") even when the user had manually typed a real lot
-//    number into the form — the auto-generate path is meant ONLY
-//    for when the field is left blank, per that function's own
-//    FROZEN header.
-// ✅ Archived Items wiring: `showArchivedItems` state, owned here.
-//    InventoryToolbar's onOpenArchivedItems → openArchivedItems();
-//    ArchivedItemsModal's onClose → closeArchivedItems().
+//    createInventoryItemWithInitialBatch(), with the user-entered
+//    batchNo correctly passed through.
+// ✅ Archived Items wiring via ArchivedItemsModal.
+// ✅ NEW — Movement History wiring: `showMovementHistory` state,
+//    owned here (consistent with every other modal). Toolbar's
+//    onOpenMovementHistory → openMovementHistory();
+//    MovementHistoryModal's onClose → closeMovementHistory(). This
+//    is a standalone, restaurant-wide, read-only report — no item
+//    selection or other state needs to be touched to open/close it.
 // ✅ Row tap opens ItemDetailsDrawer. Search/Filter/Sort and Stats
 //    tap-to-filter continue to drive filteredItems.
-// ✅ Batch Report modal remains available via the toolbar button.
 // FROZEN
 // ============================================
 
@@ -56,6 +49,7 @@ import { ItemDetailsDrawer } from "../components/ItemDetailsDrawer";
 import { InventoryBatchReport } from "../components/InventoryBatchReport";
 import { ReceiveBatchModal } from "../components/ReceiveBatchModal";
 import { ArchivedItemsModal } from "../components/ArchivedItemsModal";
+import { MovementHistoryModal } from "../components/MovementHistoryModal";
 
 const isWeb = Platform.OS === "web";
 
@@ -102,15 +96,16 @@ export default function InventoryScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [showForm,           setShowForm]           = useState(false);
-  const [editingItem,        setEditingItem]        = useState<InventoryItem | undefined>(undefined);
-  const [saving,             setSaving]             = useState(false);
-  const [seeding,            setSeeding]            = useState(false);
-  const [adjustingItem,      setAdjustingItem]      = useState<InventoryItem | undefined>(undefined);
-  const [drawerItem,         setDrawerItem]         = useState<InventoryItem | undefined>(undefined);
-  const [showBatchReport,    setShowBatchReport]    = useState(false);
-  const [receiveBatchItem,   setReceiveBatchItem]   = useState<InventoryItem | undefined>(undefined);
-  const [showArchivedItems,  setShowArchivedItems]  = useState(false);
+  const [showForm,             setShowForm]             = useState(false);
+  const [editingItem,          setEditingItem]          = useState<InventoryItem | undefined>(undefined);
+  const [saving,                setSaving]                = useState(false);
+  const [seeding,               setSeeding]               = useState(false);
+  const [adjustingItem,         setAdjustingItem]         = useState<InventoryItem | undefined>(undefined);
+  const [drawerItem,            setDrawerItem]            = useState<InventoryItem | undefined>(undefined);
+  const [showBatchReport,       setShowBatchReport]       = useState(false);
+  const [receiveBatchItem,      setReceiveBatchItem]      = useState<InventoryItem | undefined>(undefined);
+  const [showArchivedItems,     setShowArchivedItems]     = useState(false);
+  const [showMovementHistory,   setShowMovementHistory]   = useState(false);
 
   const safeRestaurantId = restaurantId ?? "";
 
@@ -170,6 +165,14 @@ export default function InventoryScreen() {
     setShowArchivedItems(false);
   }, []);
 
+  const openMovementHistory = useCallback(() => {
+    setShowMovementHistory(true);
+  }, []);
+
+  const closeMovementHistory = useCallback(() => {
+    setShowMovementHistory(false);
+  }, []);
+
   const handleSubmit = useCallback(async (
     input: CreateInventoryItemInput | UpdateInventoryItemInput,
     receivedDate?: string
@@ -183,8 +186,6 @@ export default function InventoryScreen() {
         const createInput = input as CreateInventoryItemInput;
         await createInventoryItemWithInitialBatch(restaurantId, {
           itemInput: createInput,
-          // ✅ FIX — pass the user-entered Batch Number through
-          // (see FROZEN header).
           batchNo: createInput.batchNo,
           receivedDate,
         });
@@ -250,6 +251,7 @@ export default function InventoryScreen() {
         onAddItem={openCreate}
         onOpenBatchReport={openBatchReport}
         onOpenArchivedItems={openArchivedItems}
+        onOpenMovementHistory={openMovementHistory}
         shouldShowSeedBanner={shouldShowSeedBanner}
         seeding={seeding}
         onSeedStoreDefaults={handleSeedDefaults}
@@ -344,6 +346,12 @@ export default function InventoryScreen() {
         restaurantId={safeRestaurantId}
         fmt={fmt}
         onClose={closeArchivedItems}
+      />
+
+      <MovementHistoryModal
+        visible={showMovementHistory}
+        restaurantId={safeRestaurantId}
+        onClose={closeMovementHistory}
       />
     </View>
   );
