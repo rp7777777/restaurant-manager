@@ -2,26 +2,21 @@
 // SERVORA ERP — ItemDetailsDrawer Component
 // ✅ New entry point for viewing an inventory item — Row tap opens
 //    THIS drawer instead of directly opening Edit.
-// ✅ Actions: Edit, Adjust Stock, Duplicate, Archive/Restore,
-//    Receive Batch.
+// ✅ Actions: Edit (item-level fields), Adjust Stock, Archive/
+//    Restore, Receive Batch. "Duplicate" removed.
 // ✅ busy guards EVERY action button.
 // ✅ Batch Table wiring: useBatchesForItem(restaurantId, item.id).
-// ✅ NEW — Batch editing: this drawer now owns `editingBatch` state
-//    (a small, LOCAL modal state — unlike Edit/Adjust Stock/Receive
-//    Batch, which are owned by the PARENT screen since they can
-//    outlive this drawer being open). EditBatchModal is scoped
-//    entirely to "editing one batch of the item this drawer is
-//    already showing" — it never needs to survive this drawer
-//    closing, so keeping its state local here (rather than pushing
-//    it up to InventoryScreen.tsx) avoids adding yet another
-//    top-level state variable for something that's really an
-//    internal detail of this drawer's own batch table.
-//    InventoryBatchTable's onEditBatch → sets editingBatch (opens
-//    EditBatchModal ON TOP of this drawer, drawer stays open
-//    underneath — unlike Edit/Adjust Stock/Receive Batch, which
-//    close this drawer first). This is intentional: editing a
-//    batch is a quick, in-context correction, not a full navigation
-//    away from "looking at this item's details."
+//    Batch-level corrections happen via the per-row "Edit" (pencil
+//    + text) → EditBatchModal.
+// ✅ Action grid pinned OUTSIDE the ScrollView, always visible at
+//    the bottom of the sheet.
+// ✅ NEW — InventoryBatchTable's "no batches yet" empty state is
+//    now tappable, wired to the SAME handleReceiveBatchPress used
+//    by the drawer's own "Receive Batch" action button — a single
+//    handler, two entry points (the dedicated action button, and
+//    the in-context prompt inside the batch section itself), both
+//    doing exactly the same thing (close this drawer, open
+//    ReceiveBatchModal via the parent's onReceiveBatch).
 // FROZEN
 // ============================================
 
@@ -33,7 +28,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { InventoryItem, classifyExpiry, resolveExpiryAlertDays } from "../types/inventory";
 import { Category } from "../types/category";
 import {
-  duplicateInventoryItem, archiveInventoryItem, restoreInventoryItem,
+  archiveInventoryItem, restoreInventoryItem,
 } from "../services/inventory-service";
 import { useBatchesForItem } from "../hooks/useBatchesForItem";
 import { InventoryBatchTable } from "./InventoryBatchTable";
@@ -60,7 +55,7 @@ interface ItemDetailsDrawerProps {
 
 export function ItemDetailsDrawer({
   visible, item, category, restaurantId, todayISO, restaurantDefaultExpiryAlertDays,
-  fmt, canEditInventory, onClose, onEdit, onAdjustStock, onReceiveBatch, duplicateNameSuffix,
+  fmt, canEditInventory, onClose, onEdit, onAdjustStock, onReceiveBatch,
 }: ItemDetailsDrawerProps) {
   const [busy, setBusy] = useState(false);
   const [editingBatch, setEditingBatch] = useState<InventoryBatch | undefined>(undefined);
@@ -93,24 +88,6 @@ export function ItemDetailsDrawer({
     if (busy) return;
     onClose();
     onReceiveBatch(item);
-  };
-
-  const handleDuplicate = async () => {
-    if (busy || !restaurantId) return;
-    setBusy(true);
-    try {
-      await duplicateInventoryItem(restaurantId, item, `${item.itemName} ${duplicateNameSuffix}`);
-      const msg = `"${item.itemName} ${duplicateNameSuffix}" created.`;
-      if (isWeb) window.alert(msg);
-      else Alert.alert("Item Duplicated", msg);
-      onClose();
-    } catch (err: any) {
-      const msg = err?.message ?? "Failed to duplicate item";
-      if (isWeb) window.alert(`Error: ${msg}`);
-      else Alert.alert("Error", msg);
-    } finally {
-      setBusy(false);
-    }
   };
 
   const doArchiveOrRestore = async () => {
@@ -220,6 +197,7 @@ export function ItemDetailsDrawer({
                 batches={batches}
                 loading={batchesLoading}
                 onEditBatch={setEditingBatch}
+                onReceiveBatchPress={handleReceiveBatchPress}
               />
 
               {(item.expiryDate || item.batchNo) && (
@@ -280,12 +258,6 @@ export function ItemDetailsDrawer({
                 </TouchableOpacity>
               )}
               {canEditInventory && (
-                <TouchableOpacity style={styles.actionBtn} onPress={handleDuplicate} disabled={busy}>
-                  <MaterialIcons name="content-copy" size={18} color="#0369a1" />
-                  <Text style={styles.actionBtnText}>Duplicate</Text>
-                </TouchableOpacity>
-              )}
-              {canEditInventory && (
                 <TouchableOpacity style={styles.actionBtn} onPress={handleArchiveToggle} disabled={busy}>
                   <MaterialIcons name={isActive ? "archive" : "unarchive"} size={18} color="#0369a1" />
                   <Text style={styles.actionBtnText}>{isActive ? "Archive" : "Restore"}</Text>
@@ -343,7 +315,8 @@ const styles = StyleSheet.create({
   busyText: { fontSize: 12, fontWeight: "600", color: "#0369a1" },
   actionGrid: {
     flexDirection: "row", flexWrap: "wrap", gap: 8,
-    paddingHorizontal: 16, paddingTop: 8,
+    paddingHorizontal: 16, paddingTop: 12,
+    borderTopWidth: 1, borderTopColor: "#e2e8f0",
   },
   actionBtn: {
     flexGrow: 1, flexBasis: "48%",

@@ -10,16 +10,17 @@
 //    quantity.
 // ✅ Pure presentation — receives batches as a prop; does not
 //    subscribe itself.
-// ✅ An "Edit" icon per row, reporting the tapped batch upward via
-//    onEditBatch.
-// ✅ FIX — the Edit TouchableOpacity now uses ONLY styles.colEdit
-//    (a ViewStyle-compatible layout style), not
-//    [styles.cell, styles.colEdit] — styles.cell contains TextStyle-
-//    only properties (fontSize, color) meant for the <Text> cells in
-//    this table, which TypeScript correctly rejects when applied to
-//    a TouchableOpacity/View. The icon's own size/color props
-//    already handle its visual appearance; the wrapper only needs
-//    layout (flex/alignment), which colEdit alone provides.
+// ✅ FIX — the per-row edit action now shows "Edit" text alongside
+//    the pencil icon (previously icon-only, which user testing
+//    showed was too easy to miss/misunderstand as decorative rather
+//    than interactive).
+// ✅ FIX — the "no batches yet" empty state is no longer plain text.
+//    It's now a tappable prompt (via the new onReceiveBatchPress
+//    prop) that opens Receive Batch directly from this section —
+//    previously a user viewing an item with zero batches had to
+//    close/scroll to the drawer's separate "Receive Batch" action
+//    button, even though they were already looking at exactly the
+//    section where that action belongs.
 // FROZEN
 // ============================================
 
@@ -29,9 +30,10 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { InventoryBatch, isActiveBatch, InventoryBatchStatus } from "../types/inventory-batch";
 
 interface InventoryBatchTableProps {
-  batches:      InventoryBatch[];
-  loading:      boolean;
-  onEditBatch:  (batch: InventoryBatch) => void;
+  batches:              InventoryBatch[];
+  loading:              boolean;
+  onEditBatch:          (batch: InventoryBatch) => void;
+  onReceiveBatchPress:  () => void;
 }
 
 const STATUS_BADGE: Record<Exclude<InventoryBatchStatus, "ACTIVE">, { label: string; color: string }> = {
@@ -41,7 +43,7 @@ const STATUS_BADGE: Record<Exclude<InventoryBatchStatus, "ACTIVE">, { label: str
   RECALLED:    { label: "Recalled",    color: "#dc2626" },
 };
 
-export function InventoryBatchTable({ batches, loading, onEditBatch }: InventoryBatchTableProps) {
+export function InventoryBatchTable({ batches, loading, onEditBatch, onReceiveBatchPress }: InventoryBatchTableProps) {
   const [showDepleted, setShowDepleted] = useState(false);
 
   const visibleBatches = useMemo(() => {
@@ -60,8 +62,15 @@ export function InventoryBatchTable({ batches, loading, onEditBatch }: Inventory
     return <Text style={styles.loadingText}>Loading batches...</Text>;
   }
 
+  // ✅ FIX — tappable "no batches yet" prompt, opens Receive Batch
+  // directly instead of a dead-end informational message.
   if (batches.length === 0) {
-    return <Text style={styles.emptyText}>No batches recorded for this item yet</Text>;
+    return (
+      <TouchableOpacity style={styles.noBatchesPrompt} onPress={onReceiveBatchPress}>
+        <MaterialIcons name="add-circle-outline" size={18} color="#0369a1" />
+        <Text style={styles.noBatchesPromptText}>No batches recorded yet — tap to Receive Batch</Text>
+      </TouchableOpacity>
+    );
   }
 
   return (
@@ -91,11 +100,12 @@ export function InventoryBatchTable({ batches, loading, onEditBatch }: Inventory
                 <Text style={[styles.cell, styles.colUnit]}>{batch.unit}</Text>
                 <Text style={[styles.cell, styles.colExpiry]}>{batch.expiryDate ?? "—"}</Text>
                 <TouchableOpacity
-                  style={styles.colEdit}
+                  style={styles.editBtn}
                   onPress={() => onEditBatch(batch)}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                  <MaterialIcons name="edit" size={14} color="#0369a1" />
+                  <MaterialIcons name="edit" size={13} color="#0369a1" />
+                  <Text style={styles.editBtnText}>Edit</Text>
                 </TouchableOpacity>
               </View>
               {badge && (
@@ -138,6 +148,11 @@ const styles = StyleSheet.create({
   container: { marginTop: 8 },
   loadingText: { fontSize: 12, color: "#94a3b8", paddingVertical: 12 },
   emptyText: { fontSize: 12, color: "#94a3b8", paddingVertical: 12, fontStyle: "italic" },
+  noBatchesPrompt: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: "#eff6ff", padding: 12, borderRadius: 8, marginTop: 4,
+  },
+  noBatchesPromptText: { fontSize: 12, fontWeight: "600", color: "#1e40af", flex: 1 },
   headerRow: {
     flexDirection: "row",
     borderBottomWidth: 2,
@@ -158,8 +173,13 @@ const styles = StyleSheet.create({
   colStock:  { flex: 1 },
   colUnit:   { flex: 0.7 },
   colExpiry: { flex: 1.3 },
-  colEdit:   { flex: 0.4, alignItems: "center" },
+  colEdit:   { flex: 0.6 },
   stockText: { fontWeight: "700", color: "#1e293b" },
+  editBtn: {
+    flex: 0.6,
+    flexDirection: "row", alignItems: "center", gap: 2,
+  },
+  editBtnText: { fontSize: 10, fontWeight: "700", color: "#0369a1" },
   badgeRow: {
     flexDirection: "row",
     paddingBottom: 6,
