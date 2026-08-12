@@ -4,30 +4,34 @@
 // ✅ Wraps useStockMovements() (restaurant-wide, live).
 // ✅ Movement-type filter chips (All + all 7 StockMovementType
 //    values).
-// ✅ FIX — date navigation now matches the Attendance module's
-//    exact pattern: a single "< [date] >" navigator (prev/next day
-//    arrows around the current date label), showing ONE day's
-//    movements at a time — replaces the previous "all dates in one
-//    long scroll" layout. "Today" label shown when the selected
-//    date is today; otherwise the raw date is shown. Defaults to
-//    today on open.
-// ✅ FIX — filter chips are now compact (Excel-default-row-height
-//    sized, ~20px vertical) instead of the previous tall pill
-//    buttons — significantly less vertical space consumed by the
-//    filter row.
-// ✅ FIX — movement rows are now compact (Excel-default-row-height
-//    sized, ~16-18px per row) instead of the previous spacious card
-//    layout — many more entries fit on screen at once without
-//    scrolling, matching the confirmed request to reduce per-item
-//    vertical space.
+// ✅ Attendance-style single-day date navigator — a "< [date] >"
+//    navigator (prev/next day arrows around the current date
+//    label), showing ONE day's movements at a time. "Today" label
+//    shown when the selected date is today; otherwise a formatted
+//    date is shown. Defaults to today on open.
+// ✅ FIX — shiftDate() rewritten to avoid a real timezone bug: the
+//    previous version built a Date via `new Date(dateISO + "T00:00:
+//    00")` (LOCAL time) then read the result back via
+//    `.toISOString()` (UTC) — for any user whose local timezone
+//    offset from UTC is non-zero, that local→UTC conversion could
+//    silently roll the date backward or forward by a day, making
+//    the "Next" arrow appear to do nothing (or the "Previous"
+//    arrow jump two days) depending on the user's offset and the
+//    time of day. The fix does ALL arithmetic in UTC from end to
+//    end (Date.UTC() to construct, getUTC*() to read back) so no
+//    local-timezone offset is ever involved in the calculation —
+//    pure calendar day arithmetic, immune to where the user
+//    physically is.
+// ✅ Compact filter chips (Excel-default-row-height sized, ~20px).
+// ✅ Compact movement rows (Excel-default-row-height sized, ~16-18px
+//    per row) — many more entries fit on screen without scrolling.
 // ✅ Each row shows: item name, quantity change (signed, colored),
-//    before→after, reason (if present), and time (HH:MM) — same
-//    information as before, just laid out far more densely.
+//    before→after, movement type, and time (HH:MM).
 // ✅ Read-only — no actions on this screen.
 // FROZEN
 // ============================================
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, Platform } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { StockMovement, StockMovementType } from "../../stock-movement-module/types/stock-movement";
@@ -79,18 +83,26 @@ function movementTimeLabel(movement: StockMovement): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-// ── YYYY-MM-DD +/- N days, string-based (no timezone drift risk
-//    from Date arithmetic across DST boundaries). ──
+// ── FIX — pure UTC calendar-day arithmetic, no local-timezone
+//    offset involved anywhere. See FROZEN header for the bug this
+//    replaces. ──
 function shiftDate(dateISO: string, deltaDays: number): string {
-  const d = new Date(`${dateISO}T00:00:00`);
-  d.setDate(d.getDate() + deltaDays);
-  return d.toISOString().slice(0, 10);
+  const [year, month, day] = dateISO.split("-").map(Number);
+  const utcMs = Date.UTC(year, month - 1, day) + deltaDays * 86400000;
+  const result = new Date(utcMs);
+  const yyyy = result.getUTCFullYear();
+  const mm = String(result.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(result.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 function formatDateLabel(dateISO: string, today: string): string {
   if (dateISO === today) return "Today";
-  const d = new Date(`${dateISO}T00:00:00`);
-  return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  const [year, month, day] = dateISO.split("-").map(Number);
+  const d = new Date(Date.UTC(year, month - 1, day));
+  return d.toLocaleDateString(undefined, {
+    weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
+  });
 }
 
 export function MovementHistoryModal({ visible, restaurantId, onClose }: MovementHistoryModalProps) {
@@ -100,8 +112,7 @@ export function MovementHistoryModal({ visible, restaurantId, onClose }: Movemen
   const today = useMemo(() => todayISO(), []);
   const [selectedDate, setSelectedDate] = useState(today);
 
-  // Reset to today whenever the modal is (re)opened.
-  React.useEffect(() => {
+  useEffect(() => {
     if (visible) setSelectedDate(today);
   }, [visible, today]);
 
@@ -122,7 +133,6 @@ export function MovementHistoryModal({ visible, restaurantId, onClose }: Movemen
           </TouchableOpacity>
         </View>
 
-        {/* ✅ FIX — compact filter chips */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -142,7 +152,6 @@ export function MovementHistoryModal({ visible, restaurantId, onClose }: Movemen
           ))}
         </ScrollView>
 
-        {/* ✅ FIX — Attendance-style single-day date navigator */}
         <View style={styles.dateNav}>
           <TouchableOpacity
             style={styles.dateNavArrow}
@@ -213,7 +222,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
   },
   title: { fontSize: 18, fontWeight: "800", color: "#1e293b" },
-  // ✅ Compact filter chips — Excel default row height (~20px)
   filterScroll: { marginTop: 8, maxHeight: 32 },
   filterScrollContent: { paddingHorizontal: 16, gap: 6, alignItems: "center" },
   filterChip: {
@@ -223,7 +231,6 @@ const styles = StyleSheet.create({
   filterChipActive: { backgroundColor: "#0369a1" },
   filterChipText: { fontSize: 11, fontWeight: "700", color: "#475569" },
   filterChipTextActive: { color: "#fff" },
-  // ✅ Attendance-style date navigator
   dateNav: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12,
     paddingVertical: 10,
@@ -240,7 +247,6 @@ const styles = StyleSheet.create({
   loadingText: { fontSize: 13, color: "#94a3b8", textAlign: "center", marginTop: 40 },
   emptyState: { alignItems: "center", marginTop: 60, gap: 8 },
   emptyStateText: { color: "#94a3b8", fontSize: 13, fontWeight: "600" },
-  // ✅ Compact movement rows — Excel default row height (~16-18px)
   movementRow: {
     flexDirection: "row", alignItems: "center", gap: 8,
     paddingVertical: 3, paddingHorizontal: 8,
