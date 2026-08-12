@@ -28,6 +28,22 @@
 //    the transaction, never trusted from the caller.
 // ✅ createdByName/createdByRole — snapshot of who made the change,
 //    readable even if the user account is later deleted.
+// ✅ NEW (additive) — batchAllocations: which specific batch(es) a
+//    movement drew from or added to, for the Batch Tracking system
+//    (inventory-module). Optional/undefined for movements recorded
+//    via the ORIGINAL non-batch recordStockMovement() path
+//    (ADJUSTMENT/increase/decrease via adjustStock() — these have
+//    no batch concept, by confirmed design). Populated by
+//    inventory-service.ts for:
+//    - PURCHASE (via receiveBatch()) — always exactly ONE entry,
+//      the batch just created.
+//    - WASTE/TRANSFER_OUT (via deductStockBatch()) — one entry PER
+//      BATCH the FEFO engine actually drew from, mirroring
+//      batch-allocation-service.ts's AllocationResult.allocations.
+//    This type file (stock-movement-module) stays a plain data
+//    shape — it does not itself know about FEFO/batches; that
+//    logic lives entirely in inventory-module, which populates this
+//    field when writing movement documents.
 // FROZEN
 // ============================================
 
@@ -54,6 +70,13 @@ export type StockMovementReasonCategory =
   | "CUSTOMER_RETURN"
   | "OTHER";
 
+// ── One batch's contribution to a movement — see FROZEN header. ──
+export interface BatchAllocationRecord {
+  batchId:   string;
+  batchNo:   string;
+  quantity:  number; // amount from THIS batch involved in the movement
+}
+
 export interface StockMovement {
   id:               string;
   inventoryId:      string;
@@ -71,6 +94,7 @@ export interface StockMovement {
   reason?:          string;  // free-text detail — REQUIRED when
                               // reasonCategory === "OTHER" (enforced
                               // in stock-movement-service.ts)
+  batchAllocations?: BatchAllocationRecord[]; // NEW — see FROZEN header
   restaurantId:     string;
   createdBy:        string;
   createdByName?:   string;

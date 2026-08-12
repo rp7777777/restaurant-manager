@@ -4,29 +4,32 @@
 // ✅ Wraps useStockMovements() (restaurant-wide, live).
 // ✅ Movement-type filter chips (All + all 7 StockMovementType
 //    values).
-// ✅ Attendance-style single-day date navigator — a "< [date] >"
-//    navigator (prev/next day arrows around the current date
-//    label), showing ONE day's movements at a time. "Today" label
-//    shown when the selected date is today; otherwise a formatted
-//    date is shown. Defaults to today on open.
-// ✅ FIX — shiftDate() rewritten to avoid a real timezone bug: the
-//    previous version built a Date via `new Date(dateISO + "T00:00:
-//    00")` (LOCAL time) then read the result back via
-//    `.toISOString()` (UTC) — for any user whose local timezone
-//    offset from UTC is non-zero, that local→UTC conversion could
-//    silently roll the date backward or forward by a day, making
-//    the "Next" arrow appear to do nothing (or the "Previous"
-//    arrow jump two days) depending on the user's offset and the
-//    time of day. The fix does ALL arithmetic in UTC from end to
-//    end (Date.UTC() to construct, getUTC*() to read back) so no
-//    local-timezone offset is ever involved in the calculation —
-//    pure calendar day arithmetic, immune to where the user
-//    physically is.
-// ✅ Compact filter chips (Excel-default-row-height sized, ~20px).
-// ✅ Compact movement rows (Excel-default-row-height sized, ~16-18px
-//    per row) — many more entries fit on screen without scrolling.
-// ✅ Each row shows: item name, quantity change (signed, colored),
-//    before→after, movement type, and time (HH:MM).
+// ✅ Attendance-style single-day date navigator (UTC-based
+//    shiftDate(), immune to timezone drift).
+// ✅ NEW — Category-grouped layout, matching InventoryBatchReport/
+//    InventoryTableView's visual language: date shown ONCE at the
+//    top (via the date navigator, unchanged), then movements
+//    grouped by the item's CATEGORY, each category as its own
+//    bordered block with a green header — not a flat list anymore.
+// ✅ NEW — Batch Allocation display: each movement row shows the
+//    batch(es) it actually involved (via the new
+//    StockMovement.batchAllocations field, populated by
+//    inventory-service.ts's receiveBatch()/writeMovementRecord()).
+//    A movement spanning MULTIPLE batches (e.g. a FEFO deduction
+//    that drew from 2 batches) renders as one merged-look row-group
+//    — S.N./Item/Type/Time/Before→After shown once (left strip
+//    style, matching InventoryBatchReport's own row-span technique
+//    for its item column), one sub-row per batch showing that
+//    batch's own batchNo + quantity. Movements with NO
+//    batchAllocations (the non-batch adjustStock() path —
+//    Increase/Decrease/Correction/Transfer In) show a single row
+//    with "—" in the batch column instead of a sub-row breakdown.
+// ✅ Grouping requires resolving each movement's item → category —
+//    done via a client-side join (movement.inventoryId → item →
+//    categoryId → category), using items/categories already loaded
+//    by the parent screen and passed down as props (no new
+//    Firestore subscription created here).
+// ✅ Compact rows (Excel-default-row-height sizing) preserved.
 // ✅ Read-only — no actions on this screen.
 // FROZEN
 // ============================================
@@ -34,13 +37,17 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, Platform } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { StockMovement, StockMovementType } from "../../stock-movement-module/types/stock-movement";
+import { StockMovement, StockMovementType, BatchAllocationRecord } from "../../stock-movement-module/types/stock-movement";
 import { useStockMovements } from "../hooks/useStockMovements";
+import { InventoryItem } from "../types/inventory";
+import { Category } from "../types/category";
 import { todayISO } from "../../../utils/date-utils";
 
 interface MovementHistoryModalProps {
   visible:      boolean;
   restaurantId: string;
+  items:        InventoryItem[];
+  categories:   Category[];
   onClose:      () => void;
 }
 
@@ -83,9 +90,6 @@ function movementTimeLabel(movement: StockMovement): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-// ── FIX — pure UTC calendar-day arithmetic, no local-timezone
-//    offset involved anywhere. See FROZEN header for the bug this
-//    replaces. ──
 function shiftDate(dateISO: string, deltaDays: number): string {
   const [year, month, day] = dateISO.split("-").map(Number);
   const utcMs = Date.UTC(year, month - 1, day) + deltaDays * 86400000;
@@ -105,7 +109,14 @@ function formatDateLabel(dateISO: string, today: string): string {
   });
 }
 
-export function MovementHistoryModal({ visible, restaurantId, onClose }: MovementHistoryModalProps) {
+interface CategoryGroup {
+  category:  Category;
+  movements: StockMovement[];
+}
+
+const ROW_HEIGHT = 24;
+
+export function MovementHistoryModal({ visible, restaurantId, items, categories, onClose }: MovementHistoryModalProps) {
   const { movements, loading, error } = useStockMovements(restaurantId);
   const [filter, setFilter] = useState<FilterType>("ALL");
 
@@ -116,12 +127,34 @@ export function MovementHistoryModal({ visible, restaurantId, onClose }: Movemen
     if (visible) setSelectedDate(today);
   }, [visible, today]);
 
-  const dayMovements = useMemo(() => {
-    const filtered = filter === "ALL" ? movements : movements.filter((m) => m.movementType === filter);
-    return filtered.filter((m) => movementDateKey(m) === selectedDate);
-  }, [movements, filter, selectedDate]);
+  const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
 
-  const isEmpty = !loading && dayMovements.length === 0;
+  const categoryGroups = useMemo<CategoryGroup[]>(() => {
+    const filtered = (filter === "ALL" ? movements : movements.filter((m) => m.movementType === filter))
+      .filter((m) => movementDateKey(m) === selectedDate);
+
+    const byCategory = new Map<string, StockMovement[]>();
+    for (const movement of filtered) {
+      const item = itemById.get(movement.inventoryId);
+      const categoryId = item?.categoryId;
+      if (!categoryId) continue; // item unknown/deleted — skip rather than crash
+      const list = byCategory.get(categoryId) ?? [];
+      list.push(movement);
+      byCategory.set(categoryId, list);
+    }
+
+    const groups: CategoryGroup[] = [];
+    for (const category of categories) {
+      const list = byCategory.get(category.id);
+      if (!list || list.length === 0) continue;
+      groups.push({ category, movements: list });
+    }
+
+    groups.sort((a, b) => a.category.name.localeCompare(b.category.name));
+    return groups;
+  }, [movements, filter, selectedDate, itemById, categories]);
+
+  const isEmpty = !loading && categoryGroups.length === 0;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -153,10 +186,7 @@ export function MovementHistoryModal({ visible, restaurantId, onClose }: Movemen
         </ScrollView>
 
         <View style={styles.dateNav}>
-          <TouchableOpacity
-            style={styles.dateNavArrow}
-            onPress={() => setSelectedDate((d) => shiftDate(d, -1))}
-          >
+          <TouchableOpacity style={styles.dateNavArrow} onPress={() => setSelectedDate((d) => shiftDate(d, -1))}>
             <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
           </TouchableOpacity>
           <Text style={styles.dateNavLabel}>{formatDateLabel(selectedDate, today)}</Text>
@@ -165,11 +195,7 @@ export function MovementHistoryModal({ visible, restaurantId, onClose }: Movemen
             onPress={() => setSelectedDate((d) => shiftDate(d, 1))}
             disabled={selectedDate >= today}
           >
-            <MaterialIcons
-              name="chevron-right"
-              size={22}
-              color={selectedDate >= today ? "#cbd5e1" : "#1e293b"}
-            />
+            <MaterialIcons name="chevron-right" size={22} color={selectedDate >= today ? "#cbd5e1" : "#1e293b"} />
           </TouchableOpacity>
         </View>
 
@@ -188,25 +214,71 @@ export function MovementHistoryModal({ visible, restaurantId, onClose }: Movemen
               <Text style={styles.emptyStateText}>No movements on this date</Text>
             </View>
           ) : (
-            dayMovements.map((movement) => {
-              const isIncrease = movement.quantityChanged > 0;
-              const color = MOVEMENT_COLOR[movement.movementType];
-
-              return (
-                <View key={movement.id} style={styles.movementRow}>
-                  <View style={[styles.typeDot, { backgroundColor: color }]} />
-                  <Text style={styles.itemName} numberOfLines={1}>{movement.itemName}</Text>
-                  <Text style={styles.typeLabel} numberOfLines={1}>{movement.movementType.replace("_", " ")}</Text>
-                  <Text style={styles.timeText}>{movementTimeLabel(movement)}</Text>
-                  <Text style={[styles.qtyChangeText, { color }]}>
-                    {isIncrease ? "+" : ""}{movement.quantityChanged} {movement.unit}
-                  </Text>
-                  <Text style={styles.beforeAfterText}>
-                    {movement.beforeQuantity}→{movement.afterQuantity}
+            categoryGroups.map((group) => (
+              <View key={group.category.id} style={styles.categoryBlock}>
+                <View style={styles.categoryHeader}>
+                  <Text style={styles.categoryHeaderText}>
+                    {group.category.icon ? `${group.category.icon} ` : ""}{group.category.name.toUpperCase()}
                   </Text>
                 </View>
-              );
-            })
+
+                <View style={styles.tableHeaderRow}>
+                  <Text style={[styles.tableHeaderCell, styles.colSN]}>S.N.</Text>
+                  <Text style={[styles.tableHeaderCell, styles.colItem]}>Item</Text>
+                  <Text style={[styles.tableHeaderCell, styles.colType]}>Type</Text>
+                  <Text style={[styles.tableHeaderCell, styles.colTime]}>Time</Text>
+                  <Text style={[styles.tableHeaderCell, styles.colBatch]}>Batch</Text>
+                  <Text style={[styles.tableHeaderCell, styles.colQty]}>Qty</Text>
+                  <Text style={[styles.tableHeaderCell, styles.colBeforeAfter]}>Before→After</Text>
+                </View>
+
+                {group.movements.map((movement, idx) => {
+                  const color = MOVEMENT_COLOR[movement.movementType];
+                  const allocations: BatchAllocationRecord[] = movement.batchAllocations ?? [];
+                  const rowCount = allocations.length > 0 ? allocations.length : 1;
+                  const groupHeight = ROW_HEIGHT * rowCount;
+
+                  return (
+                    <View key={movement.id} style={[styles.movementGroupRow, { minHeight: groupHeight }]}>
+                      <View style={[styles.leftStrip, { minHeight: groupHeight }]}>
+                        <Text style={[styles.leftStripCell, styles.colSN]}>{idx + 1}</Text>
+                        <Text style={[styles.leftStripCell, styles.colItem]} numberOfLines={1}>{movement.itemName}</Text>
+                        <Text style={[styles.leftStripCell, styles.colType, { color }]} numberOfLines={1}>
+                          {movement.movementType.replace("_", " ")}
+                        </Text>
+                        <Text style={[styles.leftStripCell, styles.colTime]}>{movementTimeLabel(movement)}</Text>
+                      </View>
+
+                      <View style={styles.rightBatchRows}>
+                        {allocations.length > 0 ? (
+                          allocations.map((alloc, allocIdx) => (
+                            <View key={alloc.batchId} style={[styles.batchRow, { height: ROW_HEIGHT }]}>
+                              <Text style={[styles.cell, styles.colBatch]} numberOfLines={1}>{alloc.batchNo}</Text>
+                              <Text style={[styles.cell, styles.colQty, { color }]}>{alloc.quantity}</Text>
+                              <Text style={[styles.cell, styles.colBeforeAfter]}>
+                                {allocIdx === allocations.length - 1
+                                  ? `${movement.beforeQuantity}→${movement.afterQuantity}`
+                                  : ""}
+                              </Text>
+                            </View>
+                          ))
+                        ) : (
+                          <View style={[styles.batchRow, { height: ROW_HEIGHT }]}>
+                            <Text style={[styles.cell, styles.colBatch]}>—</Text>
+                            <Text style={[styles.cell, styles.colQty, { color }]}>
+                              {movement.quantityChanged > 0 ? "+" : ""}{movement.quantityChanged}
+                            </Text>
+                            <Text style={[styles.cell, styles.colBeforeAfter]}>
+                              {movement.beforeQuantity}→{movement.afterQuantity}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            ))
           )}
         </ScrollView>
       </View>
@@ -243,20 +315,42 @@ const styles = StyleSheet.create({
   },
   errorBannerText: { color: "#dc2626", fontSize: 12, fontWeight: "600" },
   body: { flex: 1 },
-  bodyContent: { padding: 8 },
+  bodyContent: { padding: 12 },
   loadingText: { fontSize: 13, color: "#94a3b8", textAlign: "center", marginTop: 40 },
   emptyState: { alignItems: "center", marginTop: 60, gap: 8 },
   emptyStateText: { color: "#94a3b8", fontSize: 13, fontWeight: "600" },
-  movementRow: {
-    flexDirection: "row", alignItems: "center", gap: 8,
-    paddingVertical: 3, paddingHorizontal: 8,
-    borderBottomWidth: 1, borderBottomColor: "#f1f5f9",
-    minHeight: 22,
+  categoryBlock: {
+    marginBottom: 16,
+    borderWidth: 1, borderColor: "#1e293b", borderRadius: 6,
+    overflow: "hidden",
   },
-  typeDot: { width: 6, height: 6, borderRadius: 3 },
-  itemName: { flex: 1.4, fontSize: 12, fontWeight: "700", color: "#1e293b" },
-  typeLabel: { flex: 1, fontSize: 10, color: "#64748b", textTransform: "capitalize" },
-  timeText: { flex: 0.7, fontSize: 10, color: "#94a3b8" },
-  qtyChangeText: { flex: 0.9, fontSize: 12, fontWeight: "800", textAlign: "right" },
-  beforeAfterText: { flex: 0.8, fontSize: 10, color: "#94a3b8", textAlign: "right" },
+  categoryHeader: { backgroundColor: "#059669", paddingVertical: 6, paddingHorizontal: 10 },
+  categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 11, letterSpacing: 0.5 },
+  tableHeaderRow: {
+    flexDirection: "row",
+    backgroundColor: "#fef9c3",
+    borderBottomWidth: 2, borderBottomColor: "#1e293b",
+    paddingVertical: 4,
+  },
+  tableHeaderCell: { fontSize: 9, fontWeight: "800", color: "#1e293b", paddingHorizontal: 3 },
+  colSN:           { width: 24 },
+  colItem:         { width: 90 },
+  colType:         { width: 80 },
+  colTime:         { width: 50 },
+  colBatch:        { width: 70 },
+  colQty:          { width: 55, textAlign: "right" },
+  colBeforeAfter:  { width: 70, textAlign: "right" },
+  movementGroupRow: {
+    flexDirection: "row",
+    borderBottomWidth: 1, borderBottomColor: "#94a3b8",
+  },
+  leftStrip: {
+    flexDirection: "row", alignItems: "center",
+    borderRightWidth: 1, borderRightColor: "#cbd5e1",
+    backgroundColor: "#f8fafc",
+  },
+  leftStripCell: { fontSize: 10, color: "#334155", paddingHorizontal: 3 },
+  rightBatchRows: { flex: 1 },
+  batchRow: { flexDirection: "row", alignItems: "center", borderBottomWidth: 1, borderBottomColor: "#f1f5f9" },
+  cell: { fontSize: 10, color: "#334155", paddingHorizontal: 3 },
 });

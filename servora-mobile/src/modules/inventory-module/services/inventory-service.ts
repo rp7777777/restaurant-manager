@@ -9,35 +9,32 @@
 // ✅ duplicateInventoryItem() — real, common ERP row-action.
 // ✅ receiveBatch() (Phase 3a) — orchestrates batch creation +
 //    PURCHASE movement + batch-derived currentStock recompute.
+//    NEW — the PURCHASE movement record now carries
+//    batchAllocations: [{ batchId, batchNo, quantity }] (always
+//    exactly one entry — the batch just created), so Movement
+//    History can show "which batch" a PURCHASE relates to.
 // ✅ deductStockBatch() (Phase 3c) — orchestrates the FEFO deduction
-//    engine + the matching StockMovement audit record.
+//    engine + the matching StockMovement audit record. NEW — the
+//    movement record now carries batchAllocations directly from
+//    AllocationResult.allocations (one entry PER BATCH the FEFO
+//    engine actually drew from), so a WASTE/TRANSFER_OUT that spans
+//    multiple batches shows the full per-batch breakdown, not just
+//    the total quantity.
 // ⚠️ KNOWN LIMITATION (documented, accepted): movementValue in
 //    writeMovementRecord() uses item.unitCost, not a per-batch
 //    weighted cost. Deferred to a future accounting/valuation phase.
 // ✅ createInventoryItemWithInitialBatch() — bridges "Add Item" to
-//    the batch tracking system: item created with currentStock: 0
-//    first, then receiveBatch() creates the real first batch when a
-//    starting quantity is given. batchNo/receivedDate are optional
-//    (auto-generated/defaulted if omitted).
-// ✅ NEW — correctBatchDetails() (typo/mistake correction, business
-//    layer): wraps inventory-batch-repository.ts's
-//    updateBatchDetails() (which deliberately never touches
-//    currentStock — repository boundary) and, ONLY if the
-//    correction includes a quantity change, recomputes
-//    InventoryItem.currentStock from ALL batches (self-healing,
-//    same pattern as receiveBatch() — never an increment). If the
-//    correction is metadata-only (batchNo/expiryDate, no quantity),
-//    no currentStock recompute happens at all. Does NOT create a
-//    StockMovement — this is a metadata/typo correction path
-//    ("I mistyped the quantity at Receive Batch time"), not a stock
-//    movement event ("units were consumed/wasted/transferred"),
-//    which already has its own dedicated, audited paths
-//    (deductStockBatch()/receiveBatch()).
+//    the batch tracking system.
+// ✅ correctBatchDetails() — typo/mistake correction (business
+//    layer wrapper around updateBatchDetails()), recomputes
+//    currentStock only when quantity is part of the correction.
 // ✅ DEFERRED (future phases, not built here):
-//    recordStockMovement() batch-awareness upgrade — Phase 3d.
+//    recordStockMovement() batch-awareness upgrade for the
+//      NON-batch adjustStock() path — ADJUSTMENT/increase/decrease
+//      still have no batchAllocations, by confirmed design (they
+//      have no batch concept).
 //    Per-batch weighted movementValue accuracy.
-//    Audit trail entry for correctBatchDetails() quantity changes —
-//      deliberate future enhancement, not bundled here.
+//    Audit trail entry for correctBatchDetails() quantity changes.
 //    bulkImportInventory() / bulkExportInventory() — Phase 7.
 //    mergeInventoryItems() / convertUnit() — no current UI need.
 //    receivePurchaseOrder() / issueStockToKitchen() — already live
@@ -63,6 +60,7 @@ import {
   RecordStockMovementInput,
   StockMovementReasonCategory,
   StockMovementReferenceType,
+  BatchAllocationRecord,
 } from "../../stock-movement-module/types/stock-movement";
 import { deductStockFEFO, AllocationResult } from "./batch-allocation-service";
 import { db, auth } from "../../../firebase";
@@ -157,12 +155,35 @@ export async function receiveBatch(
 
   const batchId = await createInventoryBatch(restaurantId, batchInput);
 
+  // ✅ NEW — this PURCHASE movement now records exactly which batch
+  // it created, via a single-entry batchAllocations array. Written
+  // as a direct addDoc (like writeMovementRecord() below) rather
+  // than through recordStockMovement(), since that function's
+  // input shape has no batchAllocations parameter — see the
+  // documented seam in this function's own history: this write
+  // mirrors what recordStockMovement() would have written, plus
+  // the new field, so the existing before/after-quantity behavior
+  // for PURCHASE is unchanged, only enriched.
+  const singleAllocation: BatchAllocationRecord[] = [{
+    batchId,
+    batchNo:  batchInput.batchNo,
+    quantity: batchInput.quantity,
+  }];
+
   const movementResult = await recordStockMovement(restaurantId, {
     inventoryId:    existingItem.id,
     movementType:   "PURCHASE",
     quantity:       batchInput.quantity,
     referenceType:  "MANUAL",
     reason:         `Received batch ${batchInput.batchNo}`,
+  });
+
+  // recordStockMovement() (stock-movement-module, FROZEN, no
+  // batchAllocations parameter) already wrote the movement document
+  // — patch in batchAllocations as a follow-up update, keeping that
+  // module's own function signature untouched.
+  await updateDoc(doc(stockMovementsCollection(restaurantId), movementResult.movementId), {
+    batchAllocations: singleAllocation,
   });
 
   const allBatches = await getBatchesForItem(restaurantId, existingItem.id);
@@ -216,6 +237,14 @@ async function writeMovementRecord(
   const quantityChanged = -allocation.deductedQuantity;
   const movementValue = Math.round(allocation.deductedQuantity * item.unitCost * 100) / 100;
 
+  // ✅ NEW — batchAllocations copied directly from the FEFO engine's
+  // own AllocationResult, one entry per batch actually drawn from.
+  const batchAllocations: BatchAllocationRecord[] = allocation.allocations.map((a) => ({
+    batchId:  a.batchId,
+    batchNo:  a.batchNo,
+    quantity: a.deductedQuantity,
+  }));
+
   const ref = await addDoc(stockMovementsCollection(restaurantId), {
     inventoryId:     item.id,
     itemName:        item.itemName,
@@ -230,6 +259,7 @@ async function writeMovementRecord(
     referenceType:   options.referenceType  ?? null,
     referenceId:     options.referenceId    ?? null,
     reason:          options.reason?.trim() || null,
+    batchAllocations,
     restaurantId,
     createdBy:       auth.currentUser!.uid,
     createdAt:       serverTimestamp(),
@@ -335,7 +365,7 @@ export interface CorrectBatchDetailsInput {
 }
 
 export interface CorrectBatchDetailsResult {
-  newCurrentStock: number | null; // null if quantity wasn't part of the correction
+  newCurrentStock: number | null;
 }
 
 export async function correctBatchDetails(

@@ -3,18 +3,17 @@
 // ✅ COMPOSITION ONLY — this screen owns state and data-fetching
 //    (hooks) and wiring.
 // ✅ MAIN VIEW is InventoryTableView — excludes archived items.
-// ✅ useAllInventoryBatches(restaurantId) called here — always
-//    active while this screen is mounted.
+// ✅ useAllInventoryBatches(restaurantId) called here.
 // ✅ Add Item creates a real initial batch via
 //    createInventoryItemWithInitialBatch(), with the user-entered
 //    batchNo correctly passed through.
 // ✅ Archived Items wiring via ArchivedItemsModal.
-// ✅ NEW — Movement History wiring: `showMovementHistory` state,
-//    owned here (consistent with every other modal). Toolbar's
-//    onOpenMovementHistory → openMovementHistory();
-//    MovementHistoryModal's onClose → closeMovementHistory(). This
-//    is a standalone, restaurant-wide, read-only report — no item
-//    selection or other state needs to be touched to open/close it.
+// ✅ Movement History wiring via MovementHistoryModal.
+// ✅ NEW — MovementHistoryModal now receives `items`/`categories`
+//    (both already loaded by this screen via useInventory()/
+//    useCategoriesForPicker()) so it can group movements by the
+//    moved item's category — no new Firestore subscription was
+//    created for this, the data was already here.
 // ✅ Row tap opens ItemDetailsDrawer. Search/Filter/Sort and Stats
 //    tap-to-filter continue to drive filteredItems.
 // FROZEN
@@ -351,6 +350,8 @@ export default function InventoryScreen() {
       <MovementHistoryModal
         visible={showMovementHistory}
         restaurantId={safeRestaurantId}
+        items={items}
+        categories={categories}
         onClose={closeMovementHistory}
       />
     </View>
