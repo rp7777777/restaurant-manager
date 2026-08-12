@@ -14,37 +14,30 @@
 // ⚠️ KNOWN LIMITATION (documented, accepted): movementValue in
 //    writeMovementRecord() uses item.unitCost, not a per-batch
 //    weighted cost. Deferred to a future accounting/valuation phase.
-// ✅ NEW — createInventoryItemWithInitialBatch(): bridges "Add Item"
-//    to the batch tracking system. Previously, Add Item set
-//    currentStock/batchNo/expiryDate directly on the InventoryItem
-//    document but never created a real InventoryBatch — so a newly
-//    added item with, say, 168 units showed up as "No batches yet"
-//    / 0 in the batch-tracked table view, since that view reads
-//    ONLY from the InventoryBatch collection. This function makes
-//    Add Item create a REAL first batch (via receiveBatch(), the
-//    exact same path Receive Batch itself uses) whenever the user
-//    enters an initial quantity > 0.
-//    - The item is always created with currentStock: 0 first;
-//      receiveBatch() is what sets the real currentStock, computed
-//      from the batch it creates — avoids double-counting the
-//      user's entered quantity.
-//    - If no initial quantity is given (or it's 0), no batch is
-//      created — matches "just registering the item, stock arrives
-//      later" (identical to what Receive Batch would leave behind
-//      if invoked with nothing yet received).
-//    - batchNo auto-generates if omitted (Batch Number stays
-//      OPTIONAL on the Add Item form, per confirmed design):
-//      "{ITEM-INITIALS}-INIT-{timestamp}".
-//    - receivedDate defaults to today if omitted (the Add Item
-//      form's "Received Date" field is optional); purchaseDate
-//      mirrors receivedDate — Add Item has no separate "purchase
-//      date" concept the way the dedicated Receive Batch form does.
-//    - unitCost for the initial batch comes from the item's own
-//      unitCost, consistent with ReceiveBatchModal's own pre-fill
-//      behavior for subsequent batches.
+// ✅ createInventoryItemWithInitialBatch() — bridges "Add Item" to
+//    the batch tracking system: item created with currentStock: 0
+//    first, then receiveBatch() creates the real first batch when a
+//    starting quantity is given. batchNo/receivedDate are optional
+//    (auto-generated/defaulted if omitted).
+// ✅ NEW — correctBatchDetails() (typo/mistake correction, business
+//    layer): wraps inventory-batch-repository.ts's
+//    updateBatchDetails() (which deliberately never touches
+//    currentStock — repository boundary) and, ONLY if the
+//    correction includes a quantity change, recomputes
+//    InventoryItem.currentStock from ALL batches (self-healing,
+//    same pattern as receiveBatch() — never an increment). If the
+//    correction is metadata-only (batchNo/expiryDate, no quantity),
+//    no currentStock recompute happens at all. Does NOT create a
+//    StockMovement — this is a metadata/typo correction path
+//    ("I mistyped the quantity at Receive Batch time"), not a stock
+//    movement event ("units were consumed/wasted/transferred"),
+//    which already has its own dedicated, audited paths
+//    (deductStockBatch()/receiveBatch()).
 // ✅ DEFERRED (future phases, not built here):
 //    recordStockMovement() batch-awareness upgrade — Phase 3d.
 //    Per-batch weighted movementValue accuracy.
+//    Audit trail entry for correctBatchDetails() quantity changes —
+//      deliberate future enhancement, not bundled here.
 //    bulkImportInventory() / bulkExportInventory() — Phase 7.
 //    mergeInventoryItems() / convertUnit() — no current UI need.
 //    receivePurchaseOrder() / issueStockToKitchen() — already live
@@ -62,6 +55,7 @@ import { InventoryItem, CreateInventoryItemInput } from "../types/inventory";
 import {
   createInventoryBatch,
   getBatchesForItem,
+  updateBatchDetails,
 } from "../repository/inventory-batch-repository";
 import { CreateInventoryBatchInput, calculateTotalFromBatches } from "../types/inventory-batch";
 import { recordStockMovement } from "../../stock-movement-module/services/stock-movement-service";
@@ -329,4 +323,45 @@ export async function createInventoryItemWithInitialBatch(
   });
 
   return { itemId, batchId: batchResult.batchId };
+}
+
+// ── Correct Batch Details (typo/mistake correction) ────────────────
+export interface CorrectBatchDetailsInput {
+  batchId:     string;
+  itemId:      string;
+  batchNo?:    string;
+  expiryDate?: string;
+  quantity?:   number;
+}
+
+export interface CorrectBatchDetailsResult {
+  newCurrentStock: number | null; // null if quantity wasn't part of the correction
+}
+
+export async function correctBatchDetails(
+  restaurantId: string,
+  existingItem: InventoryItem,
+  input: CorrectBatchDetailsInput
+): Promise<CorrectBatchDetailsResult> {
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
+
+  await updateBatchDetails(restaurantId, input.batchId, {
+    batchNo:    input.batchNo,
+    expiryDate: input.expiryDate,
+    quantity:   input.quantity,
+  });
+
+  if (input.quantity === undefined) {
+    return { newCurrentStock: null };
+  }
+
+  const allBatches = await getBatchesForItem(restaurantId, input.itemId);
+  const newCurrentStock = calculateTotalFromBatches(allBatches);
+
+  await updateInventoryItem(restaurantId, input.itemId, existingItem, {
+    currentStock: newCurrentStock,
+  });
+
+  return { newCurrentStock };
 }

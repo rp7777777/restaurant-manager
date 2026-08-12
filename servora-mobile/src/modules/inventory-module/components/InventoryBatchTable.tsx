@@ -1,25 +1,25 @@
 // ============================================
 // SERVORA ERP — InventoryBatchTable Component
 // ✅ Displays the batch history for ONE item, matching the Excel-
-//    style layout confirmed earlier: Date | Batch Number | Current
-//    Stock | Unit | Expiry Date — EACH as its own separate column
-//    (Batch No., quantity, and unit are never merged into a shared
-//    cell — this was an explicit requirement).
-// ✅ This is the SINGLE-ITEM view (used inside ItemDetailsDrawer) —
-//    NOT the multi-item, category-grouped print report (a separate
-//    future component).
-// ✅ Only ACTIVE batches (isActiveBatch() — quantity > 0) are shown
-//    by default, per the confirmed design. A "Show depleted
-//    batches" toggle reveals the full history (including
-//    quantity-0 batches) for audit purposes.
-// ✅ Rows sorted by receivedDate ascending — matches
-//    getBatchesForItem()'s/subscribeBatchesForItem()'s existing
-//    Firestore query order.
-// ✅ Status badges (EXPIRED/QUARANTINED/RECALLED/CLOSED) shown in
-//    their own dedicated area below the quantity, not merged into
-//    the Stock cell's text itself.
+//    style layout confirmed earlier.
+// ✅ This is the SINGLE-ITEM view (used inside ItemDetailsDrawer).
+// ✅ Only ACTIVE batches (isActiveBatch()) are shown by default. A
+//    "Show depleted batches" toggle reveals the full history.
+// ✅ Rows sorted by receivedDate ascending.
+// ✅ Status badges shown in their own dedicated area below the
+//    quantity.
 // ✅ Pure presentation — receives batches as a prop; does not
 //    subscribe itself.
+// ✅ An "Edit" icon per row, reporting the tapped batch upward via
+//    onEditBatch.
+// ✅ FIX — the Edit TouchableOpacity now uses ONLY styles.colEdit
+//    (a ViewStyle-compatible layout style), not
+//    [styles.cell, styles.colEdit] — styles.cell contains TextStyle-
+//    only properties (fontSize, color) meant for the <Text> cells in
+//    this table, which TypeScript correctly rejects when applied to
+//    a TouchableOpacity/View. The icon's own size/color props
+//    already handle its visual appearance; the wrapper only needs
+//    layout (flex/alignment), which colEdit alone provides.
 // FROZEN
 // ============================================
 
@@ -29,8 +29,9 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { InventoryBatch, isActiveBatch, InventoryBatchStatus } from "../types/inventory-batch";
 
 interface InventoryBatchTableProps {
-  batches: InventoryBatch[];
-  loading: boolean;
+  batches:      InventoryBatch[];
+  loading:      boolean;
+  onEditBatch:  (batch: InventoryBatch) => void;
 }
 
 const STATUS_BADGE: Record<Exclude<InventoryBatchStatus, "ACTIVE">, { label: string; color: string }> = {
@@ -40,7 +41,7 @@ const STATUS_BADGE: Record<Exclude<InventoryBatchStatus, "ACTIVE">, { label: str
   RECALLED:    { label: "Recalled",    color: "#dc2626" },
 };
 
-export function InventoryBatchTable({ batches, loading }: InventoryBatchTableProps) {
+export function InventoryBatchTable({ batches, loading, onEditBatch }: InventoryBatchTableProps) {
   const [showDepleted, setShowDepleted] = useState(false);
 
   const visibleBatches = useMemo(() => {
@@ -71,6 +72,7 @@ export function InventoryBatchTable({ batches, loading }: InventoryBatchTablePro
         <Text style={[styles.headerCell, styles.colStock]}>Current Stock</Text>
         <Text style={[styles.headerCell, styles.colUnit]}>Unit</Text>
         <Text style={[styles.headerCell, styles.colExpiry]}>Expiry</Text>
+        <Text style={[styles.headerCell, styles.colEdit]}></Text>
       </View>
 
       {visibleBatches.length === 0 ? (
@@ -88,6 +90,13 @@ export function InventoryBatchTable({ batches, loading }: InventoryBatchTablePro
                 <Text style={[styles.cell, styles.colStock, styles.stockText]}>{batch.quantity}</Text>
                 <Text style={[styles.cell, styles.colUnit]}>{batch.unit}</Text>
                 <Text style={[styles.cell, styles.colExpiry]}>{batch.expiryDate ?? "—"}</Text>
+                <TouchableOpacity
+                  style={styles.colEdit}
+                  onPress={() => onEditBatch(batch)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <MaterialIcons name="edit" size={14} color="#0369a1" />
+                </TouchableOpacity>
               </View>
               {badge && (
                 <View style={styles.badgeRow}>
@@ -149,6 +158,7 @@ const styles = StyleSheet.create({
   colStock:  { flex: 1 },
   colUnit:   { flex: 0.7 },
   colExpiry: { flex: 1.3 },
+  colEdit:   { flex: 0.4, alignItems: "center" },
   stockText: { fontWeight: "700", color: "#1e293b" },
   badgeRow: {
     flexDirection: "row",

@@ -8,14 +8,19 @@
 //    active while this screen is mounted.
 // ✅ Add Item creates a real initial batch via
 //    createInventoryItemWithInitialBatch().
-// ✅ NEW — Archived Items wiring: `showArchivedItems` state, owned
-//    here (consistent with every other modal). InventoryToolbar's
-//    onOpenArchivedItems → openArchivedItems();
-//    ArchivedItemsModal's onClose → closeArchivedItems(). The modal
-//    receives `items` (the full, unfiltered list from useInventory())
-//    and filters to archived ones itself — this screen doesn't
-//    pre-filter, since InventoryTableView needs the same `items`
-//    source for its own active-only filtering.
+// ✅ FIX — the user-entered Batch Number (input.batchNo, from
+//    InventoryForm's "Batch Number" field) is now actually passed
+//    through to createInventoryItemWithInitialBatch(). Previously
+//    this argument was omitted entirely, so
+//    createInventoryItemWithInitialBatch() always saw batchNo as
+//    undefined and fell back to auto-generation ("{ITEM}-INIT-
+//    {timestamp}") even when the user had manually typed a real lot
+//    number into the form — the auto-generate path is meant ONLY
+//    for when the field is left blank, per that function's own
+//    FROZEN header.
+// ✅ Archived Items wiring: `showArchivedItems` state, owned here.
+//    InventoryToolbar's onOpenArchivedItems → openArchivedItems();
+//    ArchivedItemsModal's onClose → closeArchivedItems().
 // ✅ Row tap opens ItemDetailsDrawer. Search/Filter/Sort and Stats
 //    tap-to-filter continue to drive filteredItems.
 // ✅ Batch Report modal remains available via the toolbar button.
@@ -175,8 +180,12 @@ export default function InventoryScreen() {
       if (editingItem) {
         await updateInventoryItem(restaurantId, editingItem.id, editingItem, input);
       } else {
+        const createInput = input as CreateInventoryItemInput;
         await createInventoryItemWithInitialBatch(restaurantId, {
-          itemInput: input as CreateInventoryItemInput,
+          itemInput: createInput,
+          // ✅ FIX — pass the user-entered Batch Number through
+          // (see FROZEN header).
+          batchNo: createInput.batchNo,
           receivedDate,
         });
       }

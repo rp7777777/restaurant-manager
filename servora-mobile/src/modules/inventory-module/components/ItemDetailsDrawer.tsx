@@ -1,15 +1,27 @@
 // ============================================
 // SERVORA ERP — ItemDetailsDrawer Component
-// [... all previous FROZEN header content unchanged ...]
-// ✅ NEW — "Receive Batch" action added to the action grid,
-//    alongside Edit/Adjust Stock/Duplicate/Archive. Follows the
-//    exact same pattern as onEdit/onAdjustStock: this drawer does
-//    NOT own the ReceiveBatchModal's visibility state — it only
-//    closes itself, then reports the intent upward via
-//    onReceiveBatch(item). InventoryScreen.tsx owns
-//    receiveBatchItem state and renders ReceiveBatchModal, exactly
-//    matching how showForm/adjustingItem/drawerItem are all owned
-//    there.
+// ✅ New entry point for viewing an inventory item — Row tap opens
+//    THIS drawer instead of directly opening Edit.
+// ✅ Actions: Edit, Adjust Stock, Duplicate, Archive/Restore,
+//    Receive Batch.
+// ✅ busy guards EVERY action button.
+// ✅ Batch Table wiring: useBatchesForItem(restaurantId, item.id).
+// ✅ NEW — Batch editing: this drawer now owns `editingBatch` state
+//    (a small, LOCAL modal state — unlike Edit/Adjust Stock/Receive
+//    Batch, which are owned by the PARENT screen since they can
+//    outlive this drawer being open). EditBatchModal is scoped
+//    entirely to "editing one batch of the item this drawer is
+//    already showing" — it never needs to survive this drawer
+//    closing, so keeping its state local here (rather than pushing
+//    it up to InventoryScreen.tsx) avoids adding yet another
+//    top-level state variable for something that's really an
+//    internal detail of this drawer's own batch table.
+//    InventoryBatchTable's onEditBatch → sets editingBatch (opens
+//    EditBatchModal ON TOP of this drawer, drawer stays open
+//    underneath — unlike Edit/Adjust Stock/Receive Batch, which
+//    close this drawer first). This is intentional: editing a
+//    batch is a quick, in-context correction, not a full navigation
+//    away from "looking at this item's details."
 // FROZEN
 // ============================================
 
@@ -25,6 +37,8 @@ import {
 } from "../services/inventory-service";
 import { useBatchesForItem } from "../hooks/useBatchesForItem";
 import { InventoryBatchTable } from "./InventoryBatchTable";
+import { InventoryBatch } from "../types/inventory-batch";
+import { EditBatchModal } from "./EditBatchModal";
 
 const isWeb = Platform.OS === "web";
 
@@ -49,6 +63,7 @@ export function ItemDetailsDrawer({
   fmt, canEditInventory, onClose, onEdit, onAdjustStock, onReceiveBatch, duplicateNameSuffix,
 }: ItemDetailsDrawerProps) {
   const [busy, setBusy] = useState(false);
+  const [editingBatch, setEditingBatch] = useState<InventoryBatch | undefined>(undefined);
 
   const { batches, loading: batchesLoading } = useBatchesForItem(restaurantId, item?.id);
 
@@ -137,144 +152,158 @@ export function ItemDetailsDrawer({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={styles.sheet}>
-          <View style={styles.header}>
-            <Text style={styles.title} numberOfLines={1}>{item.itemName}</Text>
-            <TouchableOpacity onPress={onClose}>
-              <MaterialIcons name="close" size={22} color="#1e293b" />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView style={styles.body}>
-            {!isActive && (
-              <View style={styles.archivedBanner}>
-                <MaterialIcons name="archive" size={14} color="#92400e" />
-                <Text style={styles.archivedBannerText}>This item is archived</Text>
-              </View>
-            )}
-
-            <Text style={styles.sectionLabel}>Basic Information</Text>
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>Category</Text>
-              <Text style={styles.rowValue}>{category ? `${category.icon ?? ""} ${category.name}` : "—"}</Text>
+    <>
+      <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+        <View style={styles.overlay}>
+          <View style={styles.sheet}>
+            <View style={styles.header}>
+              <Text style={styles.title} numberOfLines={1}>{item.itemName}</Text>
+              <TouchableOpacity onPress={onClose}>
+                <MaterialIcons name="close" size={22} color="#1e293b" />
+              </TouchableOpacity>
             </View>
-            {item.sku && (
+
+            <ScrollView style={styles.body}>
+              {!isActive && (
+                <View style={styles.archivedBanner}>
+                  <MaterialIcons name="archive" size={14} color="#92400e" />
+                  <Text style={styles.archivedBannerText}>This item is archived</Text>
+                </View>
+              )}
+
+              <Text style={styles.sectionLabel}>Basic Information</Text>
               <View style={styles.row}>
-                <Text style={styles.rowLabel}>SKU</Text>
-                <Text style={styles.rowValue}>{item.sku}</Text>
+                <Text style={styles.rowLabel}>Category</Text>
+                <Text style={styles.rowValue}>{category ? `${category.icon ?? ""} ${category.name}` : "—"}</Text>
               </View>
-            )}
-            {item.barcode && (
+              {item.sku && (
+                <View style={styles.row}>
+                  <Text style={styles.rowLabel}>SKU</Text>
+                  <Text style={styles.rowValue}>{item.sku}</Text>
+                </View>
+              )}
+              {item.barcode && (
+                <View style={styles.row}>
+                  <Text style={styles.rowLabel}>Barcode</Text>
+                  <Text style={styles.rowValue}>{item.barcode}</Text>
+                </View>
+              )}
+
+              <Text style={styles.sectionLabel}>Stock</Text>
               <View style={styles.row}>
-                <Text style={styles.rowLabel}>Barcode</Text>
-                <Text style={styles.rowValue}>{item.barcode}</Text>
+                <Text style={styles.rowLabel}>Current Stock</Text>
+                <Text style={[styles.rowValue, item.isLowStock && styles.warnValue]}>
+                  {item.currentStock} {item.unit}
+                </Text>
               </View>
-            )}
-
-            <Text style={styles.sectionLabel}>Stock</Text>
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>Current Stock</Text>
-              <Text style={[styles.rowValue, item.isLowStock && styles.warnValue]}>
-                {item.currentStock} {item.unit}
-              </Text>
-            </View>
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>Minimum Stock</Text>
-              <Text style={styles.rowValue}>{item.minStock} {item.unit}</Text>
-            </View>
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>Unit Cost</Text>
-              <Text style={styles.rowValue}>{fmt(item.unitCost)}</Text>
-            </View>
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>Inventory Value</Text>
-              <Text style={styles.rowValue}>{fmt(item.totalValue)}</Text>
-            </View>
-            {item.storageLocation && (
               <View style={styles.row}>
-                <Text style={styles.rowLabel}>Storage Location</Text>
-                <Text style={styles.rowValue}>{item.storageLocation}</Text>
+                <Text style={styles.rowLabel}>Minimum Stock</Text>
+                <Text style={styles.rowValue}>{item.minStock} {item.unit}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Unit Cost</Text>
+                <Text style={styles.rowValue}>{fmt(item.unitCost)}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Inventory Value</Text>
+                <Text style={styles.rowValue}>{fmt(item.totalValue)}</Text>
+              </View>
+              {item.storageLocation && (
+                <View style={styles.row}>
+                  <Text style={styles.rowLabel}>Storage Location</Text>
+                  <Text style={styles.rowValue}>{item.storageLocation}</Text>
+                </View>
+              )}
+
+              <Text style={styles.sectionLabel}>Batches</Text>
+              <InventoryBatchTable
+                batches={batches}
+                loading={batchesLoading}
+                onEditBatch={setEditingBatch}
+              />
+
+              {(item.expiryDate || item.batchNo) && (
+                <>
+                  <Text style={styles.sectionLabel}>Expiry</Text>
+                  {item.expiryDate && (
+                    <View style={styles.row}>
+                      <Text style={styles.rowLabel}>Expiry Date</Text>
+                      <Text style={[
+                        styles.rowValue,
+                        (expiryStatus === "expired" || expiryStatus === "expiringSoon") && styles.warnValue,
+                      ]}>
+                        {item.expiryDate}
+                      </Text>
+                    </View>
+                  )}
+                  {item.batchNo && (
+                    <View style={styles.row}>
+                      <Text style={styles.rowLabel}>Batch Number</Text>
+                      <Text style={styles.rowValue}>{item.batchNo}</Text>
+                    </View>
+                  )}
+                </>
+              )}
+
+              {item.notes && (
+                <>
+                  <Text style={styles.sectionLabel}>Notes</Text>
+                  <Text style={styles.notesText}>{item.notes}</Text>
+                </>
+              )}
+            </ScrollView>
+
+            {busy && (
+              <View style={styles.busyRow}>
+                <ActivityIndicator size="small" color="#0369a1" />
+                <Text style={styles.busyText}>Working...</Text>
               </View>
             )}
 
-            <Text style={styles.sectionLabel}>Batches</Text>
-            <InventoryBatchTable batches={batches} loading={batchesLoading} />
-
-            {(item.expiryDate || item.batchNo) && (
-              <>
-                <Text style={styles.sectionLabel}>Expiry</Text>
-                {item.expiryDate && (
-                  <View style={styles.row}>
-                    <Text style={styles.rowLabel}>Expiry Date</Text>
-                    <Text style={[
-                      styles.rowValue,
-                      (expiryStatus === "expired" || expiryStatus === "expiringSoon") && styles.warnValue,
-                    ]}>
-                      {item.expiryDate}
-                    </Text>
-                  </View>
-                )}
-                {item.batchNo && (
-                  <View style={styles.row}>
-                    <Text style={styles.rowLabel}>Batch Number</Text>
-                    <Text style={styles.rowValue}>{item.batchNo}</Text>
-                  </View>
-                )}
-              </>
-            )}
-
-            {item.notes && (
-              <>
-                <Text style={styles.sectionLabel}>Notes</Text>
-                <Text style={styles.notesText}>{item.notes}</Text>
-              </>
-            )}
-          </ScrollView>
-
-          {busy && (
-            <View style={styles.busyRow}>
-              <ActivityIndicator size="small" color="#0369a1" />
-              <Text style={styles.busyText}>Working...</Text>
+            <View style={styles.actionGrid}>
+              {canEditInventory && (
+                <TouchableOpacity style={styles.actionBtn} onPress={handleEditPress} disabled={busy}>
+                  <MaterialIcons name="edit" size={18} color="#0369a1" />
+                  <Text style={styles.actionBtnText}>Edit</Text>
+                </TouchableOpacity>
+              )}
+              {canEditInventory && (
+                <TouchableOpacity style={styles.actionBtn} onPress={handleReceiveBatchPress} disabled={busy}>
+                  <MaterialIcons name="move-to-inbox" size={18} color="#0369a1" />
+                  <Text style={styles.actionBtnText}>Receive Batch</Text>
+                </TouchableOpacity>
+              )}
+              {canEditInventory && (
+                <TouchableOpacity style={styles.actionBtn} onPress={handleAdjustStockPress} disabled={busy}>
+                  <MaterialIcons name="tune" size={18} color="#0369a1" />
+                  <Text style={styles.actionBtnText}>Adjust Stock</Text>
+                </TouchableOpacity>
+              )}
+              {canEditInventory && (
+                <TouchableOpacity style={styles.actionBtn} onPress={handleDuplicate} disabled={busy}>
+                  <MaterialIcons name="content-copy" size={18} color="#0369a1" />
+                  <Text style={styles.actionBtnText}>Duplicate</Text>
+                </TouchableOpacity>
+              )}
+              {canEditInventory && (
+                <TouchableOpacity style={styles.actionBtn} onPress={handleArchiveToggle} disabled={busy}>
+                  <MaterialIcons name={isActive ? "archive" : "unarchive"} size={18} color="#0369a1" />
+                  <Text style={styles.actionBtnText}>{isActive ? "Archive" : "Restore"}</Text>
+                </TouchableOpacity>
+              )}
             </View>
-          )}
-
-          <View style={styles.actionGrid}>
-            {canEditInventory && (
-              <TouchableOpacity style={styles.actionBtn} onPress={handleEditPress} disabled={busy}>
-                <MaterialIcons name="edit" size={18} color="#0369a1" />
-                <Text style={styles.actionBtnText}>Edit</Text>
-              </TouchableOpacity>
-            )}
-            {canEditInventory && (
-              <TouchableOpacity style={styles.actionBtn} onPress={handleReceiveBatchPress} disabled={busy}>
-                <MaterialIcons name="move-to-inbox" size={18} color="#0369a1" />
-                <Text style={styles.actionBtnText}>Receive Batch</Text>
-              </TouchableOpacity>
-            )}
-            {canEditInventory && (
-              <TouchableOpacity style={styles.actionBtn} onPress={handleAdjustStockPress} disabled={busy}>
-                <MaterialIcons name="tune" size={18} color="#0369a1" />
-                <Text style={styles.actionBtnText}>Adjust Stock</Text>
-              </TouchableOpacity>
-            )}
-            {canEditInventory && (
-              <TouchableOpacity style={styles.actionBtn} onPress={handleDuplicate} disabled={busy}>
-                <MaterialIcons name="content-copy" size={18} color="#0369a1" />
-                <Text style={styles.actionBtnText}>Duplicate</Text>
-              </TouchableOpacity>
-            )}
-            {canEditInventory && (
-              <TouchableOpacity style={styles.actionBtn} onPress={handleArchiveToggle} disabled={busy}>
-                <MaterialIcons name={isActive ? "archive" : "unarchive"} size={18} color="#0369a1" />
-                <Text style={styles.actionBtnText}>{isActive ? "Archive" : "Restore"}</Text>
-              </TouchableOpacity>
-            )}
           </View>
         </View>
-      </View>
-    </Modal>
+      </Modal>
+
+      <EditBatchModal
+        visible={!!editingBatch}
+        batch={editingBatch}
+        item={item}
+        restaurantId={restaurantId}
+        onClose={() => setEditingBatch(undefined)}
+      />
+    </>
   );
 }
 

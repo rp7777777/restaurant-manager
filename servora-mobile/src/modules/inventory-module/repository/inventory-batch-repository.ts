@@ -1,12 +1,9 @@
 // ============================================
 // SERVORA ERP — Inventory Batch Repository
 // ✅ Single gateway for all InventoryBatch Firestore operations.
-// ✅ ARCHITECTURE BOUNDARY (important — do not blur this):
-//    - This repository ONLY manages batch documents (create,
-//      update quantity/status, query). It NEVER touches
-//      InventoryItem.currentStock itself.
-//    - Keeping InventoryItem.currentStock in sync with the sum of
-//      its batches is inventory-service.ts's job.
+// ✅ ARCHITECTURE BOUNDARY — this repository ONLY manages batch
+//    documents. It NEVER touches InventoryItem.currentStock itself
+//    — keeping that in sync is inventory-service.ts's job.
 // ✅ Validation — quantity/unitCost cannot be negative, batchNo/
 //    itemName required, purchaseDate/receivedDate must be valid
 //    YYYY-MM-DD strings.
@@ -14,26 +11,24 @@
 // ✅ Duplicate batchNo guard — scoped to inventoryId, not global.
 // ✅ updatedBy captured on updateBatchQuantity()/updateBatchStatus().
 // ✅ getBatchesForItem() returns batches ordered by receivedDate
-//    ASCENDING — this is NOT FEFO order. FEFO ordering is computed
-//    at the service layer via sortBatchesByFEFO().
+//    ASCENDING — NOT FEFO order.
+// ✅ subscribeAllBatches() — restaurant-wide live subscription, for
+//    InventoryBatchReport / InventoryTableView.
+// ✅ NEW — updateBatchDetails() (correction/typo-fix support):
+//    for a HUMAN correcting a mistake — a mistyped batchNo, a wrong
+//    expiryDate, or a mis-keyed quantity. Distinct from
+//    updateBatchQuantity() (the FEFO engine's deduction path) and
+//    updateBatchStatus() (lifecycle changes) — this is the manual-
+//    correction entry point. Updates whichever of batchNo/
+//    expiryDate/quantity are provided (all optional). Does NOT
+//    check for duplicate batchNo across batches the way
+//    createInventoryBatch() does at creation time — an accepted gap
+//    for this manual-correction path, not the automated receiving
+//    path. Does NOT touch status/unitCost/purchaseDate/
+//    receivedDate/supplierId/locationId/notes — outside this
+//    correction flow's confirmed scope.
 // ✅ No delete function — batches are never deleted, only depleted
-//    or status-changed.
-// ✅ ADDITIVE — subscribeAllBatches() (for the future
-//    InventoryBatchReport modal): restaurant-wide live subscription
-//    across ALL batches, not scoped to a single item. Used ONLY by
-//    the batch report (Category → Item → Batch rows → Total QTY),
-//    which groups batches by item/category client-side.
-//    Deliberately a SEPARATE function rather than a modification to
-//    subscribeBatchesForItem() (which stays exactly as it was,
-//    still scoped to one inventoryId) — the two serve genuinely
-//    different callers, and merging them would force an unnecessary
-//    optional parameter into the single-item path.
-//    Scale note (documented, not solved here): a full-collection
-//    realtime subscription is fine at the current scale (hundreds
-//    of batches). If this grows to thousands, this should evolve to
-//    a paginated or active-only query — a future optimization, not
-//    built here, per the confirmed decision to not over-engineer
-//    ahead of actual scale.
+//    or status-changed. This preserves the audit trail permanently.
 // FROZEN
 // ============================================
 
@@ -57,7 +52,6 @@ function batchDoc(restaurantId: string, batchId: string) {
   return doc(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY_BATCHES, batchId);
 }
 
-// ── Lightweight YYYY-MM-DD shape check ──
 function isValidDateString(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
 }
@@ -86,8 +80,6 @@ function validateInput(input: CreateInventoryBatchInput) {
   }
 }
 
-// ── Duplicate check — batchNo must be unique WITHIN one inventory
-//    item. ──
 async function assertBatchNoNotTaken(
   restaurantId: string,
   inventoryId: string,
@@ -106,7 +98,6 @@ async function assertBatchNoNotTaken(
   }
 }
 
-// ── Create — always creates a NEW batch document. ──
 export async function createInventoryBatch(
   restaurantId: string,
   input: CreateInventoryBatchInput
@@ -140,7 +131,6 @@ export async function createInventoryBatch(
   return ref.id;
 }
 
-// ── The ONLY way a batch's quantity changes after creation. ──
 export async function updateBatchQuantity(
   restaurantId: string,
   batchId: string,
@@ -159,7 +149,6 @@ export async function updateBatchQuantity(
   });
 }
 
-// ── Change a batch's status. ──
 export async function updateBatchStatus(
   restaurantId: string,
   batchId: string,
@@ -175,6 +164,42 @@ export async function updateBatchStatus(
   });
 }
 
+// ── Correction/typo-fix support — see FROZEN header. ──
+export interface UpdateBatchDetailsInput {
+  batchNo?:    string;
+  expiryDate?: string; // pass empty string "" to clear it
+  quantity?:   number;
+}
+
+export async function updateBatchDetails(
+  restaurantId: string,
+  batchId: string,
+  input: UpdateBatchDetailsInput
+): Promise<void> {
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
+
+  if (input.batchNo !== undefined && !input.batchNo.trim()) {
+    throw new Error("Batch number cannot be empty");
+  }
+  if (input.quantity !== undefined && input.quantity < 0) {
+    throw new Error("Batch quantity cannot be negative");
+  }
+  if (input.expiryDate && !isValidDateString(input.expiryDate)) {
+    throw new Error("Expiry date must be a valid date (YYYY-MM-DD)");
+  }
+
+  const updates: Record<string, unknown> = {
+    updatedAt: serverTimestamp(),
+    updatedBy: auth.currentUser.uid,
+  };
+  if (input.batchNo !== undefined) updates.batchNo = input.batchNo.trim();
+  if (input.expiryDate !== undefined) updates.expiryDate = input.expiryDate.trim() || null;
+  if (input.quantity !== undefined) updates.quantity = input.quantity;
+
+  await updateDoc(batchDoc(restaurantId, batchId), updates);
+}
+
 export async function getBatchById(
   restaurantId: string,
   batchId: string
@@ -184,8 +209,6 @@ export async function getBatchById(
   return { id: snap.id, ...(snap.data() as Omit<InventoryBatch, "id">) };
 }
 
-// ── All batches for one item, ordered by receivedDate ASCENDING —
-//    NOT FEFO order. ──
 export async function getBatchesForItem(
   restaurantId: string,
   inventoryId: string
@@ -227,8 +250,6 @@ export function subscribeBatchesForItem(
   );
 }
 
-// ── ADDITIVE — restaurant-wide live subscription across ALL
-//    batches, for InventoryBatchReport. See FROZEN header. ──
 export function subscribeAllBatches(
   restaurantId: string,
   callback: (batches: InventoryBatch[]) => void,

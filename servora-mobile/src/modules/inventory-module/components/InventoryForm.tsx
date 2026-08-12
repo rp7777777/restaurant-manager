@@ -7,22 +7,28 @@
 //    Current Stock.
 // ✅ sku, barcode, notes, isActive fields wired into the UI.
 // ✅ Save button shows the hook's `submitting` state.
-// ✅ NEW — "Received Date" field, CREATE MODE ONLY. This is
-//    deliberately NOT part of useInventoryForm.ts's state — it's
-//    not an InventoryItem field at all (CreateInventoryItemInput
-//    has no receivedDate), it's metadata for the INITIAL BATCH that
-//    createInventoryItemWithInitialBatch() (inventory-service.ts)
-//    creates when the user enters a starting quantity. Kept as a
-//    local useState here, separate from the item-field hook, and
-//    passed as a SECOND argument to onSubmit — the parent
-//    (InventoryScreen.tsx) is what actually threads it through to
-//    createInventoryItemWithInitialBatch(). Defaults to today; the
-//    field itself defaults to blank display but the parent treats
-//    blank as "use today" (matching
-//    createInventoryItemWithInitialBatch()'s own default).
-//    Not shown in edit mode — editing an existing item never
-//    creates a new batch, so there's no "received date" concept to
-//    collect there.
+// ✅ "Received Date" field, CREATE MODE ONLY — metadata for the
+//    initial batch createInventoryItemWithInitialBatch() creates.
+// ✅ FIX — "Batch Number" and "Expiry Date" fields are now
+//    CREATE MODE ONLY, matching Received Date. Rationale (real bug
+//    report): editing these fields in EDIT mode never actually
+//    changed anything a user could observe — InventoryItem.batchNo/
+//    expiryDate are legacy item-level fields from before batch
+//    tracking existed, and the InventoryTableView / batch table the
+//    user actually looks at reads ONLY from the InventoryBatch
+//    collection, which "Edit Item" never touches (only "Receive
+//    Batch" and "Add Item"'s initial-batch creation do). Showing
+//    editable Batch Number/Expiry Date fields in Edit mode was
+//    actively misleading — a user editing them would see no visible
+//    change anywhere, since the field they edited isn't the one any
+//    view displays. In CREATE mode, these fields remain fully
+//    meaningful: they become the first batch's batchNo/expiryDate
+//    via createInventoryItemWithInitialBatch(). The underlying
+//    InventoryItem.batchNo/expiryDate fields themselves are
+//    untouched at the type/repository level — this is a UI-only
+//    change, hiding fields that were never wired to anything
+//    visible in edit mode rather than removing the fields from the
+//    data model.
 // FROZEN
 // ============================================
 
@@ -58,8 +64,9 @@ export function InventoryForm({
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
   const [showSupplierPicker, setShowSupplierPicker] = useState(false);
   const [showUnitPicker,     setShowUnitPicker]     = useState(false);
-  // ✅ NEW — create-mode-only, see FROZEN header.
   const [receivedDate, setReceivedDate] = useState("");
+
+  const isCreateMode = mode === "create";
 
   const selectedCategory = categoryGroups
     .flatMap((g) => g.categories)
@@ -67,13 +74,13 @@ export function InventoryForm({
   const selectedSupplier = suppliers.find((s) => s.id === form.supplierId);
 
   const handleSave = () => {
-    form.handleSubmit((input) => onSubmit(input, mode === "create" ? receivedDate.trim() || undefined : undefined));
+    form.handleSubmit((input) => onSubmit(input, isCreateMode ? receivedDate.trim() || undefined : undefined));
   };
 
   return (
     <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
       <Text style={styles.title}>
-        {mode === "create" ? "Add Inventory Item" : "Edit Inventory Item"}
+        {isCreateMode ? "Add Inventory Item" : "Edit Inventory Item"}
       </Text>
 
       {form.error && (
@@ -128,7 +135,7 @@ export function InventoryForm({
 
       {/* ✅ Current Stock — Manual correction warning in Edit mode */}
       <Text style={styles.label}>Current Stock *</Text>
-      {mode === "edit" && (
+      {!isCreateMode && (
         <View style={styles.warningBox}>
           <MaterialIcons name="warning" size={14} color="#d97706" />
           <Text style={styles.warningText}>
@@ -136,7 +143,7 @@ export function InventoryForm({
           </Text>
         </View>
       )}
-      {mode === "create" && (
+      {isCreateMode && (
         <View style={styles.infoBox}>
           <MaterialIcons name="info-outline" size={14} color="#0369a1" />
           <Text style={styles.infoText}>
@@ -199,8 +206,10 @@ export function InventoryForm({
         </View>
       </View>
 
-      {/* ✅ NEW — Received Date, create mode only */}
-      {mode === "create" && (
+      {/* ✅ FIX — Received Date, Batch Number, Expiry Date: CREATE
+          MODE ONLY. See FROZEN header for why these are hidden in
+          Edit mode. */}
+      {isCreateMode && (
         <>
           <Text style={styles.label}>Received Date (optional, defaults to today)</Text>
           <TextInput
@@ -209,24 +218,24 @@ export function InventoryForm({
             onChangeText={setReceivedDate}
             placeholder="YYYY-MM-DD"
           />
+
+          <Text style={styles.label}>Expiry Date (optional)</Text>
+          <TextInput
+            style={styles.input}
+            value={form.expiryDate}
+            onChangeText={form.setExpiryDate}
+            placeholder="YYYY-MM-DD"
+          />
+
+          <Text style={styles.label}>Batch Number (optional)</Text>
+          <TextInput
+            style={styles.input}
+            value={form.batchNo}
+            onChangeText={form.setBatchNo}
+            placeholder="e.g. B-2026-0714"
+          />
         </>
       )}
-
-      <Text style={styles.label}>Expiry Date (optional)</Text>
-      <TextInput
-        style={styles.input}
-        value={form.expiryDate}
-        onChangeText={form.setExpiryDate}
-        placeholder="YYYY-MM-DD"
-      />
-
-      <Text style={styles.label}>Batch Number (optional)</Text>
-      <TextInput
-        style={styles.input}
-        value={form.batchNo}
-        onChangeText={form.setBatchNo}
-        placeholder="e.g. B-2026-0714"
-      />
 
       <Text style={styles.label}>Storage Location (optional)</Text>
       <TextInput
