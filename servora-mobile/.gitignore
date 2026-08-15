@@ -46,3 +46,6 @@ app-example
 restro-manager-7cf02-firebase-adminsdk-fbsvc-ba8f8d9dcb.json
 
 scripts/*firebase-adminsdk*.json
+
+# Firebase Admin service account credentials
+*-firebase-adminsdk-*.json
