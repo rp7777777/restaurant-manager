@@ -1,50 +1,47 @@
 // ============================================
 // SERVORA ERP — StockAdjustmentModal Component
 // ✅ UI-facing "Adjustment Type" maps directly onto the existing
-//    StockMovementType/reasonCategory contract from
-//    stock-movement-module/types.
-// ✅ Field semantics per type (confirmed design decision):
-//    - Increase / Decrease / Correction → user enters the NEW
-//      ABSOLUTE stock value (movementType: "ADJUSTMENT").
+//    StockMovementType/reasonCategory contract.
+// ✅ Field semantics per type:
+//    - Increase / Decrease / Correction → new ABSOLUTE stock value
+//      (movementType: "ADJUSTMENT").
 //    - Damage → movementType "WASTE", reasonCategory defaults to
-//      "BROKEN" but is USER-EDITABLE via the reason picker.
+//      "BROKEN" but user-editable.
 //    - Waste → movementType "WASTE", reasonCategory defaults to
-//      "SPOILED" but is USER-EDITABLE via the reason picker.
+//      "SPOILED" but user-editable.
 //    - Transfer In/Out → movementType "TRANSFER_IN"/"TRANSFER_OUT",
 //      quantity is a DELTA.
-// ✅ FIX — Reason picker selection bug: mapToMovementInput() no
-//    longer hardcodes reasonCategory for damage/waste. Previously,
-//    mapped.reasonCategory ?? reasonCategory meant the hardcoded
-//    default ("BROKEN"/"SPOILED") ALWAYS won over whatever the user
-//    actually selected in the picker, since mapped.reasonCategory
-//    was never undefined for those two types. The default is now
-//    set ONLY once, in handleTypeChange() (when the user picks
-//    Damage/Waste), as the picker's initial value — from that point
-//    on, the picker's own state (reasonCategory) is the single
-//    source of truth, and mapToMovementInput() no longer overrides
-//    it.
-// ✅ FIX — Zero-quantity guard for batch-aware types: Increase/
-//    Decrease/Correction legitimately allow 0 (a physical recount
-//    can genuinely find zero stock). Damage/Waste/Transfer Out do
-//    not — a "deduct 0" batch operation is meaningless and is now
-//    blocked at the UI validation level (quantityIsValid requires
-//    > 0 for non-absolute types, >= 0 only for absolute types).
-// ✅ BATCH-AWARE ROUTING (confirmed design):
-//    - Increase / Decrease / Correction / Transfer In → routed
-//      through the ORIGINAL non-batch path (useStockAdjustment() →
-//      adjustStock()). Physical-count corrections and stock-IN
-//      events don't involve deciding which batch to draw from.
-//    - Damage / Waste / Transfer Out → routed through
-//      deductStockBatch() (Phase 3c) — real consumption/loss events
-//      where FEFO batch selection matters. Decrease ≠ Waste: a
-//      "Decrease" is a system correction, a "Waste" is a real loss
-//      event — they stay on separate paths for audit accuracy.
-//    Both paths share the same submitting/error/success UI state,
-//    managed locally, so the two write paths are indistinguishable
-//    to the user.
-// ✅ Current stock is always shown read-only for context.
-// ✅ Success state shows a brief confirmation (before → after) then
-//    the parent is responsible for closing the modal.
+//    - NEW — Return → movementType "RETURN", quantity is a DELTA
+//      (stock increases). Routed through the SAME non-batch path as
+//      Transfer In (submitNonBatch() → adjustStock()) — a return
+//      isn't attributed to any specific existing batch (there's no
+//      clear "which batch does this belong back to" answer for a
+//      customer/kitchen return), so it increases the item's
+//      aggregate currentStock directly rather than creating or
+//      crediting a particular InventoryBatch. This mirrors exactly
+//      how Transfer In already works — both are "stock arrived,
+//      not from a new purchase, no specific batch to attach it to."
+// ✅ BATCH-AWARE ROUTING: Increase/Decrease/Correction/Transfer
+//    In/Return → non-batch path (adjustStock()). Damage/Waste/
+//    Transfer Out → deductStockBatch() (FEFO).
+// ✅ Reason picker (structured reasonCategory) shown for Damage/
+//    Waste only — Return doesn't get a reason-category picker
+//    (RETURN isn't currently a reasonCategory-bearing type in this
+//    UI), only the free-text Notes field, consistent with Transfer
+//    In/Out/Increase/Decrease/Correction.
+// ✅ Zero-quantity guard for batch-aware types (Damage/Waste/
+//    Transfer Out) requires > 0; absolute types (Increase/Decrease/
+//    Correction) allow >= 0; Transfer In/Return (delta, non-batch,
+//    non-zero-required) also require > 0 — a "return of 0" is a
+//    no-op just like a "transfer of 0" would be.
+// ✅ Reason picker selection is never overridden by
+//    mapToMovementInput() — the picker's own state is the single
+//    source of truth for reasonCategory.
+// ✅ Success handling unified across both write paths — same
+//    before→after confirmation regardless of which backend function
+//    actually ran.
+// ✅ State reset on modal (re)open — no stale type/quantity/reason/
+//    error/success leaks between items.
 // FROZEN
 // ============================================
 
@@ -63,7 +60,7 @@ import {
 } from "../../stock-movement-module/types/stock-movement";
 
 type AdjustmentTypeOption =
-  | "increase" | "decrease" | "correction" | "damage" | "waste" | "transferIn" | "transferOut";
+  | "increase" | "decrease" | "correction" | "damage" | "waste" | "transferIn" | "transferOut" | "return";
 
 const ADJUSTMENT_TYPE_OPTIONS: { value: AdjustmentTypeOption; label: string; icon: keyof typeof MaterialIcons.glyphMap }[] = [
   { value: "increase",    label: "Increase",     icon: "add-circle-outline" },
@@ -73,12 +70,11 @@ const ADJUSTMENT_TYPE_OPTIONS: { value: AdjustmentTypeOption; label: string; ico
   { value: "waste",       label: "Waste",        icon: "delete-outline" },
   { value: "transferIn",  label: "Transfer In",  icon: "call-received" },
   { value: "transferOut", label: "Transfer Out", icon: "call-made" },
+  { value: "return",      label: "Return",       icon: "keyboard-return" },
 ];
 
 const ABSOLUTE_VALUE_TYPES: AdjustmentTypeOption[] = ["increase", "decrease", "correction"];
 
-// ── Types routed through deductStockFEFO (batch-aware). Everything
-//    else uses the original item-level adjustStock() path. ──
 const BATCH_AWARE_TYPES: AdjustmentTypeOption[] = ["damage", "waste", "transferOut"];
 
 const REASON_CATEGORY_OPTIONS: { value: StockMovementReasonCategory; label: string }[] = [
@@ -91,10 +87,6 @@ const REASON_CATEGORY_OPTIONS: { value: StockMovementReasonCategory; label: stri
   { value: "OTHER",             label: "Other" },
 ];
 
-// ── FIX — no longer hardcodes reasonCategory for damage/waste. The
-//    default lives ONLY in handleTypeChange() (the picker's initial
-//    value); from there, whatever the user selects in the picker
-//    (reasonCategory local state) is the single source of truth. ──
 function mapToMovementInput(
   type: AdjustmentTypeOption,
   quantityInput: number
@@ -111,6 +103,8 @@ function mapToMovementInput(
       return { movementType: "TRANSFER_IN", quantity: quantityInput };
     case "transferOut":
       return { movementType: "TRANSFER_OUT", quantity: quantityInput };
+    case "return":
+      return { movementType: "RETURN", quantity: quantityInput };
   }
 }
 
@@ -163,9 +157,6 @@ export function StockAdjustmentModal({ visible, item, restaurantId, onClose }: S
   const handleTypeChange = (type: AdjustmentTypeOption) => {
     setAdjustmentType(type);
     setQuantity(ABSOLUTE_VALUE_TYPES.includes(type) ? String(item.currentStock) : "");
-    // ── Sets the picker's INITIAL default only — from here on, the
-    // user's own picker selection (if changed) is what's actually
-    // submitted. See mapToMovementInput()'s FROZEN note. ──
     setReasonCategory(type === "damage" ? "BROKEN" : type === "waste" ? "SPOILED" : undefined);
   };
 
@@ -173,11 +164,7 @@ export function StockAdjustmentModal({ visible, item, restaurantId, onClose }: S
     if (submitting) return;
     const quantityNum = Number(quantity);
     if (Number.isNaN(quantityNum) || quantityNum < 0) return;
-    // ── FIX — batch-aware types (Damage/Waste/Transfer Out) must
-    // deduct a positive amount; 0 is a no-op that shouldn't reach
-    // the backend. Absolute types (Increase/Decrease/Correction)
-    // legitimately allow 0 (a real recount can find zero stock). ──
-    if (isBatchAwareType && quantityNum <= 0) return;
+    if (!isAbsoluteType && quantityNum <= 0) return;
 
     const mapped = mapToMovementInput(adjustmentType, quantityNum);
 
