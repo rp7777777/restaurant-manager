@@ -2,25 +2,47 @@
 // SERVORA ERP — MovementHistoryModal Component
 // ✅ Full-screen Modal, restaurant-wide movement log.
 // ✅ Wraps useStockMovements() (restaurant-wide, live).
-// ✅ Movement-type filter chips.
-// ✅ Attendance-style single-day date navigator.
+// ✅ Movement-type filter chips (All + all 7 StockMovementType
+//    values, including RETURN).
+// ✅ Attendance-style single-day date navigator — UTC-based
+//    shiftDate()/formatDateLabel() and LOCAL-timezone
+//    movementDateKey().
 // ✅ Category-grouped layout, alphabetical by category name.
-// ✅ Batch Allocation display — per-batch row-span breakdown.
-// ✅ Content-aware dynamic column widths — character-count heuristic
-//    per column, floored at COL_MIN, and for Item/Notes CAPPED at
-//    COL_MAX (180/220px respectively) so a single abnormally long
-//    item name or reason text can't blow out the whole table width
-//    — numberOfLines={1}/{2} on those cells still truncates/wraps
-//    within the capped width as needed.
-// ✅ TABLE_WIDTH always derived from the same dynamic COLS object —
-//    never out of sync with what's actually rendered.
+// ✅ Batch Allocation display — per-batch row-span breakdown, with
+//    "Before" on the first sub-row and "Stock After" on the last.
+// ✅ FIX — categoryBlock's outer bordered box is now explicitly
+//    sized to TABLE_WIDTH (via an inline style,
+//    [styles.categoryBlock, { width: TABLE_WIDTH }]), not left to
+//    stretch to its parent (pageContainer, ~850px). Previously the
+//    outer box's border extended the FULL page width regardless of
+//    how wide the inner table's actual content was — for a table
+//    with few/short columns, this left a visible strip of empty
+//    space to the right of the table INSIDE the bordered box, with
+//    the box's own right border sitting far past where the table's
+//    content actually ended. Now the outer box's border hugs
+//    exactly the table's real width, so the border only ever
+//    appears where content actually is.
+// ✅ Row-border fix (previous pass) — rightBatchRows uses only
+//    flex:1; batchRow carries no border itself; batchRowDivider is
+//    applied only to interior batch sub-rows so a multi-batch
+//    group's last row gets exactly one border (from
+//    movementGroupRow), not a doubled one.
+// ✅ Content-aware dynamic column widths (Item/Notes capped at
+//    180/220px) — TABLE_WIDTH is always derived from the same
+//    dynamic COLS object, so this box-width fix can never drift out
+//    of sync with the actual rendered columns.
 // ✅ "Before" / "Stock After" — historical audit-log terminology.
 // ✅ Notes column — movement.reason, shown once per movement group.
 // ✅ A4-ish centered page container (~850px max width) as a soft
-//    outer boundary; actual table width is content-driven within
-//    it, scrolling horizontally if it exceeds that boundary.
+//    outer boundary; each category's own box now sizes itself to
+//    its own content width within that boundary, scrolling
+//    horizontally per-category if content exceeds it.
 // ✅ Compact rows (Excel-default-row-height sizing).
 // ✅ Read-only — no actions on this screen.
+// ⚠️ SCALE NOTE (documented, not addressed here): movements are
+//    loaded live restaurant-wide, then filtered client-side by
+//    date/type. Fine at current scale; a future date-ranged query
+//    could optimize this if movement volume grows substantially.
 // FROZEN
 // ============================================
 
@@ -115,8 +137,6 @@ const HEADER_LABELS = {
   batch: "Batch", qty: "Qty", before: "Before", stockAfter: "Stock After", notes: "Notes",
 };
 const COL_MIN = { sn: 26, item: 78, type: 68, time: 44, batch: 56, qty: 44, before: 44, stockAfter: 60, notes: 100 };
-// ✅ FIX — item is now capped too, alongside notes — a single
-// abnormally long item name can no longer blow out the table width.
 const COL_MAX = { item: 180, notes: 220 };
 
 function widthFor(key: keyof typeof COL_MIN, longestChars: number): number {
@@ -279,7 +299,9 @@ export function MovementHistoryModal({ visible, restaurantId, items, categories,
               </View>
             ) : (
               categoryGroups.map((group) => (
-                <View key={group.category.id} style={styles.categoryBlock}>
+                // ✅ FIX — outer box explicitly sized to TABLE_WIDTH,
+                // not stretched to pageContainer's full width.
+                <View key={group.category.id} style={[styles.categoryBlock, { width: TABLE_WIDTH }]}>
                   <ScrollView horizontal showsHorizontalScrollIndicator={true}>
                     <View style={{ width: TABLE_WIDTH }}>
                       <View style={styles.categoryHeader}>
@@ -320,7 +342,14 @@ export function MovementHistoryModal({ visible, restaurantId, items, categories,
                             <View style={styles.rightBatchRows}>
                               {allocations.length > 0 ? (
                                 allocations.map((alloc, allocIdx) => (
-                                  <View key={alloc.batchId} style={[styles.batchRow, { height: ROW_HEIGHT }]}>
+                                  <View
+                                    key={alloc.batchId}
+                                    style={[
+                                      styles.batchRow,
+                                      { height: ROW_HEIGHT },
+                                      allocIdx < allocations.length - 1 && styles.batchRowDivider,
+                                    ]}
+                                  >
                                     <Text style={[styles.cell, { width: COLS.batch }]} numberOfLines={1}>{alloc.batchNo}</Text>
                                     <Text style={[styles.cell, { width: COLS.qty, color }]}>{alloc.quantity}</Text>
                                     <Text style={[styles.cell, { width: COLS.before }]}>
@@ -391,7 +420,7 @@ const styles = StyleSheet.create({
   errorBannerText: { color: "#dc2626", fontSize: 12, fontWeight: "600" },
   body: { flex: 1 },
   bodyContent: { padding: 12, alignItems: "center" },
-  pageContainer: { width: "100%", maxWidth: 850 },
+  pageContainer: { width: "100%", maxWidth: 850, alignItems: "center" },
   loadingText: { fontSize: 13, color: "#94a3b8", textAlign: "center", marginTop: 40 },
   emptyState: { alignItems: "center", marginTop: 60, gap: 8 },
   emptyStateText: { color: "#94a3b8", fontSize: 13, fontWeight: "600" },
@@ -411,6 +440,7 @@ const styles = StyleSheet.create({
   tableHeaderCell: { fontSize: 9, fontWeight: "800", color: "#1e293b", paddingHorizontal: 3 },
   movementGroupRow: {
     flexDirection: "row",
+    width: "100%",
     borderBottomWidth: 1, borderBottomColor: "#94a3b8",
   },
   leftStrip: {
@@ -420,7 +450,13 @@ const styles = StyleSheet.create({
   },
   leftStripCell: { fontSize: 10, color: "#334155", paddingHorizontal: 3 },
   rightBatchRows: { flex: 1 },
-  batchRow: { flexDirection: "row", alignItems: "center", borderBottomWidth: 1, borderBottomColor: "#f1f5f9" },
+  batchRow: {
+    flexDirection: "row", alignItems: "center",
+    width: "100%",
+  },
+  batchRowDivider: {
+    borderBottomWidth: 1, borderBottomColor: "#f1f5f9",
+  },
   cell: { fontSize: 10, color: "#334155", paddingHorizontal: 3 },
   stockAfterCell: { fontWeight: "800", color: "#059669" },
 });

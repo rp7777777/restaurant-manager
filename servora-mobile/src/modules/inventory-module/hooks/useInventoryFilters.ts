@@ -12,30 +12,37 @@
 // ✅ Search — case-insensitive match on itemName.
 // ✅ Sort — by name (A-Z), by stock level (low→high), by value
 //    (high→low). Sorts a COPY, never mutates the original array.
-// ✅ NEW — "expiringSoon" stock status option, added to support
-//    InventoryStats' tap-to-filter behavior (tapping the "Expiring
-//    Soon" stat card). Requires expiryContext (today's date +
-//    category lookup + restaurant default alert days) since expiry
-//    classification needs the same 3-tier priority logic used
-//    everywhere else in this module (classifyExpiry/
-//    resolveExpiryAlertDays from types/inventory.ts). expiryContext
-//    is optional — if the caller doesn't pass it, items simply
-//    can't match "expiringSoon" rather than throwing.
+// ✅ "expiringSoon" stock status option — supports InventoryStats'
+//    tap-to-filter behavior. Requires expiryContext (today's date +
+//    category lookup + restaurant default alert days); optional —
+//    if the caller doesn't pass it, items simply can't match
+//    "expiringSoon" rather than throwing.
 // ✅ "expiringSoon" here matches ONLY classifyExpiry's
-//    "expiringSoon" status — NOT "expired". This matches standard
-//    ERP practice (SAP/Odoo separate "Expiring Soon" from
-//    "Expired" as distinct filters/reports) and stays consistent
-//    with InventoryStats' card being explicitly labeled "Expiring
-//    Soon" (not a broader "Needs Attention" grouping). An "Expired"
-//    filter option is a natural future addition, not folded into
-//    this one.
+//    "expiringSoon" status — NOT "expired". Matches standard ERP
+//    practice (SAP/Odoo separate "Expiring Soon" from "Expired") and
+//    stays consistent with InventoryStats' card label.
+// ✅ FIX — lowStock/outOfStock predicates now EXACTLY match
+//    InventoryStats.tsx's mutually-exclusive classification rule:
+//      currentStock <= 0              → Out of Stock (only)
+//      currentStock > 0 && isLowStock → Low Stock (only)
+//    Previously: lowStock matched isLowStock alone (an item with
+//    currentStock === 0 AND isLowStock === true could appear in the
+//    "Low Stock" filtered list even though the stats card's own
+//    count excluded it under Out of Stock — tapping the card could
+//    surface more items than its own displayed number); outOfStock
+//    matched currentStock === 0 exactly rather than <= 0 (defensive
+//    inconsistency — even though deductStockBatch()'s negative-
+//    stock guard makes negative currentStock unreachable in normal
+//    flow, using the same <= 0 comparison as InventoryStats.tsx
+//    keeps both places expressing the identical rule, rather than
+//    two subtly different ones that happen to agree only because of
+//    an invariant enforced elsewhere). Now the stats card COUNT and
+//    the filtered LIST always agree exactly, for both Low Stock and
+//    Out of Stock.
 // ✅ expiryContext fields destructured individually in the useMemo
-//    dependency array (not the whole object) — a fresh
-//    expiryContext object from the caller on every render (even
-//    with unchanged underlying values) would otherwise force a
-//    recompute every time; depending on the primitive fields plus
-//    the categoryMap reference is stable unless something actually
-//    changed.
+//    dependency array (not the whole object) — avoids an
+//    unnecessary recompute if the caller passes a fresh object
+//    reference with unchanged underlying values on every render.
 // FROZEN
 // ============================================
 
@@ -119,9 +126,13 @@ export function useInventoryFilters(
     }
 
     if (filters.stockStatus === "lowStock") {
-      result = result.filter((item) => item.isLowStock);
+      // ✅ FIX — matches InventoryStats.tsx exactly: > 0 AND
+      // isLowStock, so Out of Stock items never appear here.
+      result = result.filter((item) => item.currentStock > 0 && item.isLowStock);
     } else if (filters.stockStatus === "outOfStock") {
-      result = result.filter((item) => item.currentStock === 0);
+      // ✅ FIX — <= 0, not === 0, for defensive consistency with
+      // InventoryStats.tsx's identical comparison.
+      result = result.filter((item) => item.currentStock <= 0);
     } else if (filters.stockStatus === "expiringSoon") {
       if (expiryContext) {
         const { todayISO, categoryMap, restaurantDefaultExpiryAlertDays } = expiryContext;

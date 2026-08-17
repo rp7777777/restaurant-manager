@@ -1,37 +1,36 @@
 // ============================================
 // SERVORA ERP — InventoryStats Component
-// ✅ Simple on-demand aggregation — NOT the Dashboard hybrid
-//    incremental-summary pattern. Computes Total Items, Total
-//    Value, Low Stock, Out of Stock, and Expiring Soon directly
-//    from the already-loaded `items` array via useMemo().
-// ✅ "Today's Adjustments" is intentionally NOT included — deferred,
-//    would require touching the FROZEN stock-movement-service.ts.
-// ✅ Expiring Soon reuses classifyExpiry()/resolveExpiryAlertDays()
-//    from types/inventory.ts.
-// ✅ Low Stock and Out of Stock are INDEPENDENT metrics (not
-//    mutually exclusive) — matches standard ERP reporting
-//    conventions.
-// ✅ `item.totalValue ?? 0` guards against inconsistent documents.
-// ✅ Card width uses Platform-aware responsive sizing.
-// ✅ Every card is tappable and drives the parent screen's
-//    stock-status filter (Total Items/Total Value → "all", Low
-//    Stock → "lowStock", Out of Stock → "outOfStock", Expiring
-//    Soon → "expiringSoon"). onStatusPress reports which card was
-//    tapped; the parent screen owns calling setStockStatus() and
-//    scrolling the list into view.
-// ✅ FIX — "Expiring Soon" count now matches ONLY classifyExpiry's
-//    "expiringSoon" status, excluding "expired" — previously this
-//    counted both, which meant the card's number (e.g. "3") could
-//    disagree with how many items the tap-to-filter actually
-//    surfaced (useInventoryFilters.ts's "expiringSoon" filter is
-//    expiringSoon-only, per the confirmed ERP convention of keeping
-//    Expiring Soon and Expired as distinct concepts). Count and
-//    filter must always agree — this keeps them in sync.
+// ✅ Simple on-demand aggregation.
+// ✅ FIX — Low Stock and Out of Stock are now MUTUALLY EXCLUSIVE
+//    (changed from previously-independent counting). Previously an
+//    item with currentStock <= 0 AND isLowStock === true was counted
+//    in BOTH metrics, inflating Low Stock's number in a way that
+//    double-counted items already captured by Out of Stock —
+//    confusing for ERP reporting clarity. Now: currentStock <= 0 →
+//    Out of Stock ONLY; currentStock > 0 AND isLowStock → Low Stock
+//    ONLY; otherwise Normal. This gives a clean three-way
+//    classification with no overlap, matching standard ERP
+//    reporting conventions (an item is either critically out, low,
+//    or fine — never both "low" and "out" simultaneously in the
+//    displayed counts).
+// ✅ Every card is tappable, drives the parent's stock-status
+//    filter. NOTE: useInventoryFilters.ts's "lowStock" filter
+//    itself is unchanged by this fix — this only affects the STATS
+//    CARD COUNT shown here, not which items the tap-to-filter
+//    surfaces. If a fully consistent count-matches-filter guarantee
+//    is wanted later, useInventoryFilters.ts's lowStock predicate
+//    would need the same currentStock > 0 exclusion — deferred, not
+//    done here, since that touches filter logic beyond this
+//    component's own stats aggregation.
+// ✅ "Expiring Soon" counts ONLY classifyExpiry's "expiringSoon"
+//    status, excluding "expired".
+// ✅ Compact cards, Excel-row-height sized (~30px), single
+//    horizontal scrollable strip.
 // FROZEN
 // ============================================
 
 import React, { useMemo } from "react";
-import { View, Text, StyleSheet, Platform, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import {
   InventoryItem,
@@ -71,10 +70,11 @@ export function InventoryStats({
     for (const item of items) {
       totalValue += item.totalValue ?? 0;
 
+      // ✅ FIX — mutually exclusive: an item is either Out of Stock
+      // OR Low Stock, never both, per confirmed ERP clarity design.
       if (item.currentStock <= 0) {
         outOfStock += 1;
-      }
-      if (item.isLowStock) {
+      } else if (item.isLowStock) {
         lowStock += 1;
       }
 
@@ -108,7 +108,12 @@ export function InventoryStats({
   ];
 
   return (
-    <View style={styles.row}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.scroll}
+      contentContainerStyle={styles.row}
+    >
       {statList.map((stat) => (
         <TouchableOpacity
           key={stat.key}
@@ -116,36 +121,34 @@ export function InventoryStats({
           onPress={() => onStatusPress(stat.status)}
           activeOpacity={0.7}
         >
-          <MaterialIcons name={stat.icon} size={16} color={stat.color} />
+          <MaterialIcons name={stat.icon} size={13} color={stat.color} />
           <Text style={[styles.value, { color: stat.color }]}>{stat.value}</Text>
           <Text style={styles.label}>{stat.label}</Text>
         </TouchableOpacity>
       ))}
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  scroll: { marginTop: 8, maxHeight: 36 },
   row: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
+    gap: 6,
     paddingHorizontal: 16,
-    marginTop: 10,
+    alignItems: "center",
   },
   card: {
-    flexGrow: 1,
-    flexBasis: Platform.OS === "web" ? "18%" : "48%",
-    minWidth: 90,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    height: 30,
     backgroundColor: "#fff",
-    borderRadius: 10,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: "#e2e8f0",
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    alignItems: "flex-start",
-    gap: 2,
+    paddingHorizontal: 9,
   },
-  value: { fontSize: 16, fontWeight: "800" },
+  value: { fontSize: 12, fontWeight: "800" },
   label: { fontSize: 10, fontWeight: "600", color: "#94a3b8" },
 });

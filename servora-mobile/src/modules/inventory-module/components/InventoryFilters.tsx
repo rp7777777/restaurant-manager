@@ -2,26 +2,11 @@
 // SERVORA ERP — InventoryFilters Component
 // ✅ Search box, category filter chips, and sort chips.
 // ✅ Pure presentation — all filter STATE lives in
-//    useInventoryFilters.ts, owned by InventoryScreen.tsx. This
-//    component only renders the current `filters` values and calls
-//    the setters passed in as props.
-// ✅ REMOVED — the standalone stock-status filter chip row (All/Low
-//    Stock/Out of Stock/Expiring Soon) was dropped entirely.
-//    InventoryStats' tap-to-filter cards (added earlier in this
-//    restructuring) already drive the exact same setStockStatus
-//    state — keeping a second, separate row of the same 4 options
-//    was redundant UI surface for one piece of state. The
-//    stockStatus filter itself, and setStockStatus, remain fully
-//    functional — only this chip row's rendering was removed. If a
-//    future design wants an explicit chip-based selector back
-//    (e.g. for keyboard/accessibility navigation), STOCK_FILTER_
-//    OPTIONS below can be reintroduced as its own row again.
-// ✅ Category chip list stays conditionally rendered
-//    (`categories.length > 0`), now positioned directly under the
-//    search box (previously came after stock-status chips).
-// ✅ The hook's filter-state interface is named InventoryFilters —
-//    same name as this component. Imported aliased as
-//    InventoryFilterState to avoid a naming collision.
+//    useInventoryFilters.ts, owned by InventoryScreen.tsx.
+// ✅ Category chip list conditionally rendered.
+// ✅ FIX — category chips are now COMPACT, Excel-row-height sized
+//    (~22px), matching the confirmed request — reduced vertical
+//    padding and font size from the previous larger pill style.
 // FROZEN
 // ============================================
 
@@ -140,19 +125,23 @@ const styles = StyleSheet.create({
     borderRadius: 10, borderWidth: 1, borderColor: "#e2e8f0",
   },
   searchInput: { flex: 1, fontSize: 14, color: "#1e293b" },
-  categoryScroll: { marginTop: 10 },
-  categoryScrollContent: { paddingHorizontal: 16, gap: 8 },
+  // ✅ FIX — compact category chips (~22px height)
+  categoryScroll: { marginTop: 8, maxHeight: 30 },
+  categoryScrollContent: { paddingHorizontal: 16, gap: 6, alignItems: "center" },
   categoryChip: {
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
+    height: 22,
+    justifyContent: "center",
+    paddingHorizontal: 9,
+    borderRadius: 12,
     backgroundColor: "#f1f5f9",
     borderWidth: 1, borderColor: "#e2e8f0",
   },
   categoryChipActive: { backgroundColor: "#1e293b", borderColor: "#1e293b" },
-  categoryChipText: { fontSize: 12, fontWeight: "600", color: "#475569" },
+  categoryChipText: { fontSize: 10, fontWeight: "600", color: "#475569" },
   categoryChipTextActive: { color: "#fff" },
   sortRow: {
     flexDirection: "row", alignItems: "center", gap: 6,
-    paddingHorizontal: 16, marginTop: 10,
+    paddingHorizontal: 16, marginTop: 8,
   },
   sortLabel: { fontSize: 12, fontWeight: "700", color: "#94a3b8", marginRight: 2 },
   sortChip: {

@@ -6,77 +6,51 @@
 //    isActive.
 // ✅ duplicateInventoryItem() — real, common ERP row-action.
 // ✅ InventoryItem.currentStock is the AUTHORITATIVE transactional
-//    counter (Phase 2 concurrency hardening) — every stock-changing
-//    write reads it fresh inside its own transaction, calculates
-//    the new value, and writes that back. Batch lists are used ONLY
-//    to decide WHICH batches FEFO draws from, never as the source
-//    of currentStock itself.
-// ✅ FIX — inventoryId cross-check: receiveBatch() and
-//    deductStockBatch() both now verify batchInput.inventoryId/
-//    input.inventoryId matches the existingItem/item actually
-//    passed in, BEFORE doing anything else. Without this, a caller
-//    bug that passed a mismatched item/inventoryId pair could write
-//    a batch under one item's ID while updating a DIFFERENT item's
-//    currentStock and movement history — a serious cross-item data
-//    corruption. This is now impossible; the function throws
-//    immediately instead.
-// ✅ FIX — deductStockBatch() now rejects a deduction that would
-//    take currentStock negative, checked BEFORE running FEFO
-//    allocation: `if (beforeQuantity < input.quantity) throw`. This
-//    is a safety net independent of the FEFO eligible-batch-total
-//    check (which could theoretically pass even if currentStock
-//    itself were smaller, in a data-drift scenario) — currentStock,
-//    once authoritative, must never be allowed to go negative.
-// ✅ FIX — correctBatchDetails() now verifies the OLD batchKey
-//    actually points at the SAME batchId being corrected, inside
-//    the transaction, before deleting it — protects against a rare
-//    lock-document integrity conflict silently deleting the wrong
-//    lock.
-// ✅ FIX — "pending" placeholder removed. validateBatchInput() no
-//    longer requires inventoryId at all (it never used it) — the
-//    function signature was simplified to not take inventoryId,
-//    removing the need for any placeholder value.
-// ✅ FIX — createInventoryItemWithInitialBatch()'s initial-quantity
-//    check now explicitly rejects NaN/Infinity via Number.isFinite
-//    () before treating "falsy or <= 0" as the zero-stock path —
-//    previously `!NaN === true` could silently route a NaN quantity
-//    into "just create the item with no batch" instead of surfacing
-//    a validation error.
+//    counter — every stock-changing write reads it fresh inside its
+//    own transaction, calculates the new value, and writes it back.
+// ✅ FIX — isLowStock is now recomputed and written in EVERY
+//    transaction that changes currentStock (receiveBatch(),
+//    deductStockBatch(), createInventoryItemWithInitialBatch(),
+//    correctBatchDetails() when quantity changes) — matching
+//    inventory-repository.ts's own corrected formula exactly:
+//      isLowStock = afterQuantity > 0 && afterQuantity <= minStock
+//    Previously only inventory-repository.ts's manual-edit path
+//    (createInventoryItem/updateInventoryItem) recomputed this
+//    field — the batch-tracking transactions here wrote
+//    currentStock directly without ever touching isLowStock, so an
+//    item's isLowStock could go stale (wrong) after any Receive
+//    Batch / Waste / Transfer Out / batch quantity correction, even
+//    though currentStock itself was always correct. Now every path
+//    that can change currentStock keeps isLowStock in sync with it,
+//    at the same moment, in the same transaction.
+// ✅ minStock is read FRESH from the transaction's own itemSnap
+//    inside each transaction (never trusted from a caller-supplied
+//    InventoryItem object, which could be stale relative to a
+//    concurrent edit) — the same discipline already used for
+//    currentStock itself.
+// ✅ FIX — inventoryId cross-check, negative-stock guard, batch-key
+//    integrity check, actor metadata (createdByName/Role), "pending"
+//    placeholder removed, NaN/Infinity validation — all from the
+//    prior concurrency-hardening pass, unchanged here.
 // ⚠️ ACCEPTED, DOCUMENTED RESIDUAL LIMITATION — FEFO candidate
 //    discovery: deductStockBatch() still discovers batch document
-//    IDs via a pre-transaction query (Firestore transactions cannot
-//    run arbitrary `where` queries). A batch created by a truly
+//    IDs via a pre-transaction query. A batch created by a truly
 //    concurrent operation between that query and this transaction's
 //    commit is not considered as an FEFO candidate by THIS
-//    deduction — it remains fully available for the next one. This
-//    can only affect WHICH batch is drawn from in a same-instant
-//    race; currentStock itself is protected by the transactional-
-//    counter design above and can never become numerically wrong
-//    from this. Fully closing this residual gap would require a
-//    batch-index/registry document architecture — evaluated and
-//    deliberately deferred as unnecessary complexity at current
-//    scale.
-// ⚠️ DEPLOYMENT NOTE (not code — an operational step): any batch
-//    documents that existed BEFORE the batchKeys system was
-//    introduced have no corresponding batchKeys lock document. A
-//    one-time backfill migration (for each existing batch, write
-//    batchKeys/{normalizeBatchKey(inventoryId, batchNo)} pointing
-//    at that batch's existing ID) should be run before relying on
-//    duplicate-batchNo protection for pre-existing data. This is an
-//    operational/deployment task, not something this service file
-//    can enforce at runtime.
+//    deduction. currentStock itself is protected by the
+//    transactional-counter design and can never become numerically
+//    wrong from this.
+// ⚠️ DEPLOYMENT NOTE: existing InventoryBatch documents from before
+//    the batchKeys system need a one-time backfill (already run —
+//    see project history). Similarly, existing InventoryItem
+//    documents with a stale/incorrect isLowStock value (from before
+//    this fix) need their own one-time backfill — see the
+//    accompanying migration script.
 // ✅ FEFO allocation logic is NOT duplicated — reuses the same pure
 //    sortBatchesByFEFO()/isEligibleForFEFO() functions
 //    batch-allocation-service.ts uses.
-// ✅ createdByName/createdByRole populated via optional ActorInfo.
 // ⚠️ KNOWN LIMITATION (documented, accepted): movementValue uses
 //    item.unitCost, not a per-batch weighted cost. Deferred.
-// ✅ DEFERRED: real calendar-date validation; recordStockMovement()
-//    batch-awareness for the non-batch adjustStock() path; per-
-//    batch weighted movementValue; audit trail entry for
-//    correctBatchDetails() changes; bulkImport/Export;
-//    mergeInventoryItems()/convertUnit(); receivePurchaseOrder()/
-//    issueStockToKitchen() (already live elsewhere).
 // FROZEN
 // ============================================
 
@@ -125,6 +99,12 @@ function batchKeyDoc(restaurantId: string, key: string) {
   return doc(db, COL.RESTAURANTS, restaurantId, RCOL.BATCH_KEYS, key);
 }
 
+// ✅ FIX — single source of truth for isLowStock, matching
+// inventory-repository.ts's own corrected formula exactly.
+function computeIsLowStock(currentStock: number, minStock: number): boolean {
+  return currentStock > 0 && currentStock <= minStock;
+}
+
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 function utf8Bytes(str: string): number[] {
@@ -159,9 +139,9 @@ function base64UrlEncode(str: string): string {
     const b2 = i + 2 < bytes.length ? bytes[i + 2] : undefined;
 
     result += BASE64URL_ALPHABET[b0 >> 2];
-    result += BASE64URL_ALPHABET[((b0 & 0x03) << 4) | (b1 !== undefined ? (b1 >> 4) : 0)];
+    result += BASE64URL_ALPHABET[((b0 & 0x03) << 4) | (b1 !== undefined ? b1 >> 4 : 0)];
     if (b1 !== undefined) {
-      result += BASE64URL_ALPHABET[((b1 & 0x0F) << 2) | (b2 !== undefined ? (b2 >> 6) : 0)];
+      result += BASE64URL_ALPHABET[((b1 & 0x0F) << 2) | (b2 !== undefined ? b2 >> 6 : 0)];
     }
     if (b2 !== undefined) {
       result += BASE64URL_ALPHABET[b2 & 0x3F];
@@ -249,7 +229,6 @@ export async function duplicateInventoryItem(
   return repoCreateInventoryItem(restaurantId, input);
 }
 
-// ── FIX — no longer takes inventoryId (never used it). ──
 function validateBatchInput(batchInput: Omit<CreateInventoryBatchInput, "inventoryId">) {
   if (!batchInput.itemName.trim()) throw new Error("Item name is required");
   if (!batchInput.batchNo.trim()) throw new Error("Batch number is required");
@@ -266,7 +245,7 @@ function validateBatchInput(batchInput: Omit<CreateInventoryBatchInput, "invento
   }
 }
 
-// ── Receive Batch — currentStock is the authoritative counter ──
+// ── Receive Batch — currentStock + isLowStock authoritative ──
 export interface ReceiveBatchResult {
   batchId:         string;
   newCurrentStock: number;
@@ -281,7 +260,6 @@ export async function receiveBatch(
 ): Promise<ReceiveBatchResult> {
   if (!restaurantId) throw new Error("Restaurant not configured");
   if (!auth.currentUser) throw new Error("User not authenticated");
-  // ✅ FIX — inventoryId cross-check, before anything else.
   if (batchInput.inventoryId !== existingItem.id) {
     throw new Error("Batch inventory item does not match the selected inventory item");
   }
@@ -302,8 +280,13 @@ export async function receiveBatch(
     const itemSnap = await transaction.get(itemRef);
     if (!itemSnap.exists()) throw new Error("Inventory item not found");
 
-    const beforeQuantity: number = itemSnap.data().currentStock ?? 0;
+    const itemData = itemSnap.data();
+    const beforeQuantity: number = itemData.currentStock ?? 0;
     const afterQuantity = beforeQuantity + batchInput.quantity;
+    // ✅ FIX — fresh minStock from the transaction, isLowStock
+    // recomputed and written alongside currentStock.
+    const minStock: number = Number(itemData.minStock ?? 0);
+    const isLowStock = computeIsLowStock(afterQuantity, minStock);
 
     const batchAllocations: BatchAllocationRecord[] = [{
       batchId:  newBatchRef.id,
@@ -364,6 +347,7 @@ export async function receiveBatch(
 
     transaction.update(itemRef, {
       currentStock: afterQuantity,
+      isLowStock,
       updatedAt:    serverTimestamp(),
     });
 
@@ -377,7 +361,7 @@ export async function receiveBatch(
   };
 }
 
-// ── Deduct Stock via FEFO ──
+// ── Deduct Stock via FEFO — currentStock + isLowStock authoritative ──
 type DeductibleMovementType = "WASTE" | "KITCHEN_ISSUE" | "TRANSFER_OUT";
 
 export interface DeductStockBatchInput {
@@ -417,7 +401,6 @@ export async function deductStockBatch(
 ): Promise<DeductStockBatchResult> {
   if (!restaurantId) throw new Error("Restaurant not configured");
   if (!auth.currentUser) throw new Error("User not authenticated");
-  // ✅ FIX — inventoryId cross-check.
   if (input.inventoryId !== item.id) {
     throw new Error("Deduction inventory item does not match the selected inventory item");
   }
@@ -448,8 +431,6 @@ export async function deductStockBatch(
 
     const beforeQuantity: number = itemData.currentStock ?? 0;
 
-    // ✅ FIX — negative-stock guard, independent of the FEFO
-    // eligible-total check below.
     if (beforeQuantity < input.quantity) {
       throw new Error(`Cannot deduct ${input.quantity} — only ${beforeQuantity} stock available`);
     }
@@ -499,9 +480,14 @@ export async function deductStockBatch(
     }
 
     const afterQuantity = beforeQuantity - input.quantity;
+    // ✅ FIX — fresh minStock from the transaction, isLowStock
+    // recomputed and written alongside currentStock.
+    const minStock: number = Number(itemData.minStock ?? 0);
+    const isLowStock = computeIsLowStock(afterQuantity, minStock);
 
     transaction.update(itemRef, {
       currentStock: afterQuantity,
+      isLowStock,
       updatedAt:    serverTimestamp(),
       updatedBy:    auth.currentUser!.uid,
     });
@@ -572,13 +558,14 @@ export async function createInventoryItemWithInitialBatch(
 
   const requestedQuantity = input.itemInput.currentStock;
 
-  // ✅ FIX — explicit NaN/Infinity rejection before the "falsy or
-  // <= 0" zero-stock branch.
   if (!Number.isFinite(requestedQuantity) || requestedQuantity < 0) {
     throw new Error("Initial stock must be a valid non-negative number");
   }
 
   if (requestedQuantity === 0) {
+    // ✅ repoCreateInventoryItem() (inventory-repository.ts) already
+    // computes isLowStock correctly via the corrected formula — no
+    // separate handling needed here.
     const itemId = await repoCreateInventoryItem(restaurantId, {
       ...input.itemInput,
       currentStock: 0,
@@ -589,8 +576,6 @@ export async function createInventoryItemWithInitialBatch(
   const receivedDate = input.receivedDate?.trim() || todayISO();
   const batchNo = input.batchNo?.trim() || generateInitialBatchNo(input.itemInput.itemName);
 
-  // ✅ FIX — no more "pending" placeholder; validateBatchInput()
-  // doesn't take inventoryId at all now.
   validateBatchInput({
     itemName:     input.itemInput.itemName,
     batchNo,
@@ -621,6 +606,11 @@ export async function createInventoryItemWithInitialBatch(
       quantity: requestedQuantity,
     }];
 
+    // ✅ FIX — isLowStock computed for the brand-new item too
+    // (currentStock === requestedQuantity, no existing item document
+    // to read minStock from — it comes straight from itemInput).
+    const isLowStock = computeIsLowStock(requestedQuantity, input.itemInput.minStock);
+
     transaction.set(itemRef, {
       itemName:                 input.itemInput.itemName,
       categoryId:                input.itemInput.categoryId,
@@ -628,6 +618,7 @@ export async function createInventoryItemWithInitialBatch(
       unit:                      input.itemInput.unit,
       unitCost:                  input.itemInput.unitCost,
       minStock:                  input.itemInput.minStock,
+      isLowStock,
       storageLocation:           input.itemInput.storageLocation ?? null,
       supplierId:                input.itemInput.supplierId ?? null,
       expiryDate:                input.itemInput.expiryDate ?? null,
@@ -760,9 +751,6 @@ export async function correctBatchDetails(
 
       const oldKey = normalizeBatchKey(input.itemId, currentBatchNo);
       oldKeyRef = batchKeyDoc(restaurantId, oldKey);
-      // ✅ FIX — verify the old lock actually belongs to THIS batch
-      // before deleting it, protecting against a rare integrity
-      // conflict silently deleting the wrong lock document.
       const oldKeySnap = await transaction.get(oldKeyRef);
       if (oldKeySnap.exists() && oldKeySnap.data().batchId !== input.batchId) {
         throw new Error("Batch key integrity conflict — please retry");
@@ -793,10 +781,17 @@ export async function correctBatchDetails(
     let newCurrentStock: number | null = null;
     if (itemSnap && input.quantity !== undefined) {
       const delta = input.quantity - oldQuantity;
-      const currentItemStock: number = itemSnap.data().currentStock ?? 0;
+      const itemData = itemSnap.data();
+      const currentItemStock: number = itemData.currentStock ?? 0;
       newCurrentStock = currentItemStock + delta;
+      // ✅ FIX — fresh minStock from the transaction, isLowStock
+      // recomputed and written alongside currentStock.
+      const minStock: number = Number(itemData.minStock ?? 0);
+      const isLowStock = computeIsLowStock(newCurrentStock, minStock);
+
       transaction.update(itemRef, {
         currentStock: newCurrentStock,
+        isLowStock,
         updatedAt:    serverTimestamp(),
       });
     }

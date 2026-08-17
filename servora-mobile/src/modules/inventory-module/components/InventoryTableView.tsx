@@ -1,33 +1,33 @@
 // ============================================
 // SERVORA ERP — InventoryTableView Component
-// ✅ THIS IS THE MAIN INVENTORY SCREEN VIEW — replaces the
-//    card-based InventoryList/InventoryCard as the primary way
-//    inventory is displayed.
-// ✅ InventoryCard/InventoryList are NOT deleted — remain in the
-//    codebase; this screen simply no longer imports them.
+// ✅ THIS IS THE MAIN INVENTORY SCREEN VIEW.
 // ✅ Column order: S.N. → Item Name → Date → Lot/Batch No. →
-//    Current Stock → Unit → Expiry Date → Total QTY. Total QTY is
-//    its own right-side column, shown once per item.
-// ✅ NEW — archived items (isActive === false) are EXCLUDED from
-//    this view entirely, regardless of whether they have batches.
-//    An archived item should never appear in the main working
-//    table — it remains visible/restorable only via the separate
-//    "Archived" list (ArchivedItemsModal, reached from the
-//    toolbar). This is a pure display-layer filter here — no
-//    change to the underlying InventoryItem data or to
-//    useInventoryFilters.ts, which still returns archived items in
-//    filteredItems (other consumers, like the Archived list itself,
-//    need to see them).
-// ✅ Items with ZERO batches are NOT silently excluded — every
-//    active item in filteredItems appears; items with no batches
-//    show a single "No batches yet" row instead of being invisible.
-// ✅ Search/category filtering inherited for free — filteredItems is
-//    already the output of useInventoryFilters() in the parent
-//    screen.
-// ✅ Row tap opens ItemDetailsDrawer via onItemPress.
-// ✅ S.N. per item, restarting at 1 per category.
-// ✅ Total QTY = sum of active batch quantities (blank/0 for the
-//    "no batches yet" case).
+//    Batch QTY → Unit → Expiry Date → Total QTY.
+// ✅ FIX — column renamed "Current Stock" → "Batch QTY". This
+//    column shows batch.quantity (a single batch's own remaining
+//    quantity), NOT InventoryItem.currentStock (the item's
+//    authoritative transactional stock counter) — "Current Stock"
+//    was misleading, since a multi-batch item would show several
+//    different "Current Stock" values (one per batch row) none of
+//    which is actually the item's real current stock. "Batch QTY"
+//    unambiguously labels what the column is: this specific batch's
+//    quantity. The item's true authoritative stock remains visible
+//    via the "Total QTY" column (sum of active batch quantities,
+//    shown once per item) and via ItemDetailsDrawer's own "Current
+//    Stock" row (which correctly shows item.currentStock).
+// ✅ Archived items excluded; zero-batch items show "No batches
+//    yet"; active batches only in the total; alphabetical category/
+//    item sorting; S.N. restarts per category; search/filter
+//    inherited via filteredItems; row tap opens ItemDetailsDrawer.
+// ✅ Compact, Movement-History-style sizing (ROW_HEIGHT: 24,
+//    tightened fonts/padding); categoryBlock sized to TABLE_WIDTH.
+// ✅ FIX — double-border overlap on a multi-batch item's LAST row
+//    resolved, mirroring the same fix already applied to
+//    MovementHistoryModal.tsx: batchRow itself no longer carries a
+//    border; a batchRowDivider style applies ONLY to batch rows
+//    before the last one within an item group, so the group's own
+//    bottom border (on itemGroupRow) is the only border on the
+//    final row — no doubling/thicker line.
 // FROZEN
 // ============================================
 
@@ -59,10 +59,10 @@ interface CategoryGroup {
   rows:     ItemRow[];
 }
 
-const ROW_HEIGHT = 32;
+const ROW_HEIGHT = 24;
 
-const LEFT_COLS = { sn: 40, item: 130 };
-const RIGHT_COLS = { date: 90, batch: 100, stock: 80, unit: 60, expiry: 90, total: 80 };
+const LEFT_COLS = { sn: 30, item: 110 };
+const RIGHT_COLS = { date: 74, batch: 84, stock: 62, unit: 48, expiry: 74, total: 62 };
 
 const LEFT_WIDTH = LEFT_COLS.sn + LEFT_COLS.item;
 const RIGHT_WIDTH =
@@ -83,7 +83,6 @@ export function InventoryTableView({
 
     const rowsByCategory = new Map<string, ItemRow[]>();
     for (const item of filteredItems) {
-      // ✅ NEW — archived items never appear in the main table.
       if (item.isActive === false) continue;
 
       const itemBatches = (batchesByItem.get(item.id) ?? []).filter(isActiveBatch);
@@ -133,7 +132,7 @@ export function InventoryTableView({
   return (
     <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
       {categoryGroups.map((group) => (
-        <View key={group.category.id} style={styles.categoryBlock}>
+        <View key={group.category.id} style={[styles.categoryBlock, { width: TABLE_WIDTH }]}>
           <ScrollView horizontal showsHorizontalScrollIndicator={true}>
             <View style={{ width: TABLE_WIDTH }}>
               <View style={styles.categoryHeader}>
@@ -150,7 +149,7 @@ export function InventoryTableView({
                 <View style={styles.rightHeaderGroup}>
                   <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.date }]}>Date</Text>
                   <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
-                  <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.stock }]}>Current Stock</Text>
+                  <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.stock }]}>Batch QTY</Text>
                   <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
                   <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry Date</Text>
                   <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.total }]}>Total QTY</Text>
@@ -178,7 +177,14 @@ export function InventoryTableView({
                     <View style={styles.rightBatchRows}>
                       {row.hasBatches ? (
                         row.batches.map((batch, batchIndex) => (
-                          <View key={batch.id} style={[styles.batchRow, { height: ROW_HEIGHT }]}>
+                          <View
+                            key={batch.id}
+                            style={[
+                              styles.batchRow,
+                              { height: ROW_HEIGHT },
+                              batchIndex < row.batches.length - 1 && styles.batchRowDivider,
+                            ]}
+                          >
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.date }]}>{batch.receivedDate}</Text>
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.batch }]} numberOfLines={1}>{batch.batchNo}</Text>
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.stock }]}>{batch.quantity}</Text>
@@ -214,9 +220,9 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: "center", marginTop: 60, gap: 8 },
   emptyStateText: { color: "#94a3b8", fontSize: 14, fontWeight: "600" },
   body: { flex: 1 },
-  bodyContent: { padding: 16, paddingTop: 4 },
+  bodyContent: { padding: 12, paddingTop: 4, alignItems: "center" },
   categoryBlock: {
-    marginBottom: 24,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: "#1e293b",
     borderRadius: 6,
@@ -224,20 +230,20 @@ const styles = StyleSheet.create({
   },
   categoryHeader: {
     backgroundColor: "#059669",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
   },
-  categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.5 },
+  categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 11, letterSpacing: 0.5 },
   tableHeaderRow: {
     flexDirection: "row",
     backgroundColor: "#fef9c3",
     borderBottomWidth: 2,
     borderBottomColor: "#1e293b",
-    paddingVertical: 6,
+    paddingVertical: 4,
   },
   leftHeaderGroup: { flexDirection: "row" },
   rightHeaderGroup: { flexDirection: "row" },
-  tableHeaderCell: { fontSize: 10, fontWeight: "800", color: "#1e293b", paddingHorizontal: 4 },
+  tableHeaderCell: { fontSize: 9, fontWeight: "800", color: "#1e293b", paddingHorizontal: 3 },
   itemGroupRow: {
     flexDirection: "row",
     borderBottomWidth: 1,
@@ -246,20 +252,24 @@ const styles = StyleSheet.create({
   leftStrip: {
     flexDirection: "row",
     alignItems: "center",
-    borderRightWidth: 2,
-    borderRightColor: "#1e293b",
+    borderRightWidth: 1,
+    borderRightColor: "#cbd5e1",
     backgroundColor: "#f8fafc",
-    paddingVertical: 4,
   },
-  leftStripCell: { fontSize: 11, color: "#334155", paddingHorizontal: 4 },
+  leftStripCell: { fontSize: 9, color: "#334155", paddingHorizontal: 3 },
   rightBatchRows: { flex: 1 },
+  // ✅ FIX — no border of its own now.
   batchRow: {
     flexDirection: "row",
     alignItems: "center",
+  },
+  // ✅ NEW — applied only to batch rows before the last one within
+  // an item group.
+  batchRowDivider: {
     borderBottomWidth: 1,
     borderBottomColor: "#f1f5f9",
   },
-  tableCell: { fontSize: 11, color: "#334155", paddingHorizontal: 4 },
-  totalCell: { fontWeight: "800", color: "#059669", fontSize: 13 },
-  noBatchText: { fontSize: 11, color: "#94a3b8", fontStyle: "italic" },
+  tableCell: { fontSize: 9, color: "#334155", paddingHorizontal: 3 },
+  totalCell: { fontWeight: "800", color: "#059669", fontSize: 10 },
+  noBatchText: { fontSize: 9, color: "#94a3b8", fontStyle: "italic" },
 });

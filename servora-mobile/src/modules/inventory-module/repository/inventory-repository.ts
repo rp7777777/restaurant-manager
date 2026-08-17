@@ -2,34 +2,59 @@
 // SERVORA ERP — Inventory Repository
 // ✅ Single gateway for all inventory Firestore operations
 // ✅ isLowStock/totalValue always recomputed server-side
+// ✅ FIX — isLowStock calculation corrected. Previously:
+//    isLowStock = currentStock <= minStock
+//    This incorrectly marked an OUT-OF-STOCK item (currentStock ===
+//    0) as ALSO "low stock" whenever minStock > 0 (0 <= minStock is
+//    always true) — a semantic bug, since "out of stock" and "low
+//    stock" are meant to be mutually exclusive states per the
+//    confirmed classification (InventoryStats.tsx/
+//    useInventoryFilters.ts). The UI layer was already patched to
+//    compensate (currentStock > 0 && isLowStock checks added at the
+//    stats/filter level), but THIS repository-level field itself
+//    was still wrong — any future code reading item.isLowStock
+//    directly (Dashboard, reports, other modules) would still see
+//    the incorrect value. Now:
+//      isLowStock = currentStock > 0 && currentStock <= minStock
+//    So an out-of-stock item is NEVER also flagged low-stock at the
+//    source, and every consumer of this field — not just the ones
+//    we've already patched — gets the correct value going forward.
 // ✅ Validation — itemName/currentStock/unit required, negative
-//    currentStock/unitCost/minStock rejected
+//    currentStock/unitCost/minStock rejected.
 // ✅ MIGRATION: quantity → currentStock, category (string) →
 //    categoryId (real Category collection reference)
 // ✅ Delete guard — an item cannot be deleted while it still has
 //    stock (currentStock > 0) or has any stock movement history.
-//    Deleting an item with movement history would silently orphan
-//    those audit records.
 // ✅ ARCHITECTURE BOUNDARY (important — do not blur this):
 //    - Manual form edits → sync via THIS file's own
 //      syncStoreSummaryForItemChange() calls.
 //    - Quantity ADJUSTMENTS from real operations → MUST go through
-//      stock-movement-service.ts's recordStockMovement() instead.
+//      stock-movement-service.ts's recordStockMovement(), or the
+//      batch-tracking system's receiveBatch()/deductStockBatch()
+//      (inventory-service.ts) — NOT this file's updateInventoryItem
+//      (). NOTE: this means isLowStock is only recomputed HERE when
+//      a manual form edit touches currentStock/minStock —
+//      receiveBatch()/deductStockBatch() write currentStock directly
+//      inside their own Firestore transactions and do NOT
+//      recompute/write isLowStock at all currently. This is a KNOWN
+//      GAP (not fixed in this pass): after a batch receive/
+//      deduction, an item's isLowStock field can go stale until the
+//      next manual edit touches it. Since InventoryStats.tsx/
+//      useInventoryFilters.ts derive Low Stock display purely from
+//      currentStock vs minStock comparisons at read time in some
+//      paths but trust the stored isLowStock field in others, this
+//      gap should be closed in a future pass by having
+//      receiveBatch()/deductStockBatch() also recompute and write
+//      isLowStock in their own transactions, mirroring this file's
+//      corrected formula exactly.
 // ✅ Defensive try/catch around the summary sync call here too.
 // ✅ Reuses InventorySummarySnapshot for the before/after shape.
-// ✅ PHASE 2 (Enterprise restructuring) — sku, barcode, notes now
-//    saved/updated. isActive explicitly defaults to true on create
-//    (undefined would still mean "active" per the type's contract,
-//    but writing it explicitly keeps future "active items only"
-//    Firestore queries simple and indexable).
+// ✅ sku, barcode, notes saved/updated. isActive explicitly defaults
+//    to true on create.
 // ✅ Barcode/SKU uniqueness validation intentionally NOT enforced
-//    yet — deferred to the future Barcode Scanner / POS module,
-//    where duplicate-check queries, scan lookup, and bulk-import
-//    conflict handling belong together in one phase instead of
-//    being bolted on piecemeal now.
-// ✅ categoryId/supplierId now trimmed consistently with itemName,
-//    storageLocation, sku, barcode, notes — protects against
-//    accidental trailing whitespace from future bulk import.
+//    yet — deferred to the future Barcode Scanner / POS module.
+// ✅ categoryId/supplierId trimmed consistently with itemName,
+//    storageLocation, sku, barcode, notes.
 // FROZEN
 // ============================================
 
@@ -76,6 +101,13 @@ function validateInput(input: CreateInventoryItemInput | UpdateInventoryItemInpu
   }
 }
 
+// ✅ FIX — single source of truth for isLowStock, used by both
+// createInventoryItem() and updateInventoryItem() below so the two
+// can never drift into computing this differently from each other.
+function computeIsLowStock(currentStock: number, minStock: number): boolean {
+  return currentStock > 0 && currentStock <= minStock;
+}
+
 async function safeSyncSummary(
   restaurantId: string,
   before: InventorySummarySnapshot | null,
@@ -100,7 +132,7 @@ export async function createInventoryItem(
   const unitCost      = input.unitCost;
   const minStock      = input.minStock;
   const totalValue    = calculateInventoryTotalValue(currentStock, unitCost);
-  const isLowStock    = currentStock <= minStock;
+  const isLowStock    = computeIsLowStock(currentStock, minStock);
 
   const ref = await addDoc(inventoryCollection(restaurantId), {
     itemName:         input.itemName.trim(),
@@ -149,7 +181,7 @@ export async function updateInventoryItem(
   const minStock      = input.minStock ?? existing.minStock;
 
   const newTotalValue = calculateInventoryTotalValue(currentStock, unitCost);
-  const newIsLowStock = currentStock <= minStock;
+  const newIsLowStock = computeIsLowStock(currentStock, minStock);
 
   const updates: Record<string, unknown> = {
     ...(input.itemName        !== undefined && { itemName: input.itemName.trim() }),

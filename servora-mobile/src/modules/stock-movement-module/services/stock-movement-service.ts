@@ -1,13 +1,13 @@
 // ============================================
 // SERVORA ERP — Stock Movement Service
 // ✅ THE ONLY function anywhere in Servora that changes an
-//    inventory item's currentStock.
-// ✅ MIGRATION: reads/writes InventoryItem's `currentStock` field
-//    (was `quantity`) — matches inventory-repository.ts's schema.
-//    NOTE: the StockMovement audit record's OWN fields
-//    (beforeQuantity/afterQuantity/quantityChanged) are UNCHANGED —
-//    those describe the movement itself, not the InventoryItem
-//    schema, so they keep their existing names.
+//    inventory item's currentStock via the NON-BATCH path
+//    (PURCHASE/RETURN/TRANSFER_IN/KITCHEN_ISSUE/WASTE/TRANSFER_OUT/
+//    ADJUSTMENT called via adjustStock()). The batch-tracking system
+//    (inventory-service.ts's receiveBatch()/deductStockBatch()/
+//    createInventoryItemWithInitialBatch()/correctBatchDetails())
+//    changes currentStock through its own separate transactions.
+// ✅ MIGRATION: reads/writes InventoryItem's `currentStock` field.
 // ✅ Fully transaction-safe — reads current currentStock + writes
 //    new currentStock + writes the movement audit log ATOMICALLY.
 // ✅ Validation enforced here:
@@ -22,8 +22,21 @@
 // ✅ movementValue is pre-computed and stored (|quantityChanged| ×
 //    unitCostAtTime), so future valuation-method changes never
 //    retroactively alter historical movement values.
-// ✅ totalValue/isLowStock on the inventory item are recomputed
-//    here too, so they never drift out of sync with currentStock.
+// ✅ FIX — isLowStock calculation corrected to match the
+//    authoritative rule now used consistently across
+//    inventory-repository.ts and inventory-service.ts:
+//      isLowStock = quantity > 0 && quantity <= minStock
+//    Previously both beforeIsLowStock and isLowStock used
+//    `quantity <= minStock` alone — the same root-cause bug found
+//    elsewhere: a quantity of 0 (or, in principle, negative) was
+//    incorrectly flagged as "low stock" whenever minStock > 0,
+//    instead of being exclusively "out of stock". Since ADJUSTMENT
+//    (Increase/Decrease/Correction) commonly sets stock to exactly
+//    0 via this same function, this was a live, frequently-hit path
+//    for the bug, not just a batch-tracking edge case. Now this
+//    file's calculation matches the same formula everywhere else in
+//    the codebase, so isLowStock is correct regardless of which of
+//    the (now four+) write paths last touched an item's stock.
 // ✅ syncStoreSummaryForItemChange() is called after every
 //    successful movement.
 // FROZEN
@@ -53,6 +66,13 @@ function stockMovementsCollection(restaurantId: string) {
 }
 
 const INCREASING_TYPES: StockMovementType[] = ["PURCHASE", "RETURN", "TRANSFER_IN"];
+
+// ✅ FIX — single source of truth for isLowStock in THIS file,
+// matching inventory-repository.ts's/inventory-service.ts's
+// identical formula.
+function computeIsLowStock(quantity: number, minStock: number): boolean {
+  return quantity > 0 && quantity <= minStock;
+}
 
 function validateInput(input: RecordStockMovementInput): void {
   if (!input.inventoryId) throw new Error("Inventory item is required");
@@ -84,8 +104,8 @@ async function safeSyncSummary(
   }
 }
 
-// ── Record a stock movement — THE single entry point for changing
-//    an inventory item's currentStock. ──
+// ── Record a stock movement — THE single entry point for the
+//    non-batch stock-change path. ──
 export async function recordStockMovement(
   restaurantId: string,
   input: RecordStockMovementInput
@@ -104,7 +124,6 @@ export async function recordStockMovement(
     }
 
     const itemData       = itemSnap.data();
-    // ✅ Reads currentStock (migrated field name)
     const beforeQuantity  = Number(itemData.currentStock ?? 0);
     const unitCostAtTime  = Number(itemData.unitCost     ?? 0);
     const minStock        = Number(itemData.minStock     ?? 0);
@@ -133,13 +152,15 @@ export async function recordStockMovement(
     }
 
     const beforeTotalValue = calculateInventoryTotalValue(beforeQuantity, unitCostAtTime);
-    const beforeIsLowStock = beforeQuantity <= minStock;
+    // ✅ FIX — > 0 required, matches computeIsLowStock() everywhere
+    // else in the codebase.
+    const beforeIsLowStock = computeIsLowStock(beforeQuantity, minStock);
 
     const totalValue     = calculateInventoryTotalValue(afterQuantity, unitCostAtTime);
-    const isLowStock      = afterQuantity <= minStock;
+    // ✅ FIX — > 0 required.
+    const isLowStock      = computeIsLowStock(afterQuantity, minStock);
     const movementValue  = Math.round(Math.abs(quantityChanged) * unitCostAtTime * 100) / 100;
 
-    // ✅ Writes currentStock (migrated field name)
     transaction.update(itemRef, {
       currentStock: afterQuantity,
       totalValue,
