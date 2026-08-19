@@ -1,290 +1,138 @@
 // ============================================
-// SERVORA ERP — Store Module
-// Approve requests + Issue stock + Auto inventory
+// SERVORA ERP — Store Module (Kitchen Request Management)
+// ✅ FINAL ORCHESTRATOR — after the file-by-file split, this file
+//    contains ONLY: subscription/state wiring (via useStoreRequests),
+//    status-based routing decisions (which modal opens on row tap),
+//    and calls to kitchen-request-service.ts's workflow functions.
+//    All presentation lives in components/; all business logic lives
+//    in kitchen-module/services/kitchen-request-service.ts.
+// ✅ Row-tap routing (via KitchenRequestTable's generic onRowPress):
+//      PENDING  → PendingActionModal (Approve/Reject/Cancel)
+//      APPROVED → IssueKitchenRequestModal (FEFO issue flow)
+//      ISSUED   → RequestDetailModal (read-only)
+//      REJECTED → RequestDetailModal (read-only)
+// ✅ Single-date model (StoreDateNavigator) — no tab system.
+// ✅ Stats (StoreStats) are ALWAYS restaurant-wide totals (from the
+//    full `requests` array), independent of the selected date —
+//    matches original behavior exactly.
+// ✅ FIX — removed dead `notify()` function (no callers) and the
+//    inline `require("react-native")` for Alert — Alert is now a
+//    proper top-level import alongside the rest of react-native's
+//    exports, used directly in showAlert().
+// 🔒 CONFIRMED BUSINESS RULE — Partial Issue: issuing less than
+//    orderQuantity still marks the request ISSUED (no
+//    PARTIALLY_ISSUED status, no remainder tracking). See
+//    kitchen-request-service.ts's own header for full rationale.
+// FROZEN
 // ============================================
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, TextInput,
-  TouchableOpacity, Alert, ActivityIndicator,
-  Platform, RefreshControl, Modal,
+  ScrollView, StyleSheet, ActivityIndicator, Text, View,
+  RefreshControl, Platform, Alert,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
-import {
-  collection, onSnapshot, query, orderBy,
-  doc, updateDoc, serverTimestamp,
-} from "firebase/firestore";
-import { db, auth } from "../../firebase";
 import { useApp } from "../../context/AppContext";
-import { recordStockMovement } from "../../modules/stock-movement-module/services/stock-movement-service";
+import { auth } from "../../firebase";
+import {
+  approveKitchenRequest, rejectKitchenRequest, issueKitchenRequest,
+} from "../kitchen-module/services/kitchen-request-service";
+import { IngredientRequest } from "../kitchen-module/types/kitchen-types";
 import { useInventory } from "../../modules/inventory-module/hooks/useInventory";
-import { InventoryItem } from "../../modules/inventory-module/types/inventory";
-
-// ── Types ────────────────────────────────────
-type RequestStatus = "PENDING" | "APPROVED" | "ISSUED" | "REJECTED";
-
-interface KitchenRequest {
-  id: string;
-  itemName: string;
-  inventoryId?: string | null;  // ✅ links to a real Inventory item, when known
-  closingStock: number;
-  minimumLevel: number;
-  orderQuantity: number;
-  unit: string;
-  requiredDate: string;
-  requestedBy: string;
-  note: string;
-  status: RequestStatus;
-  issuedQuantity?: number;
-  issuedBy?: string;
-  issuedAt?: unknown;
-  issueNote?: string | null;  // ✅ Store Keeper's own note at issue time (e.g. "only 18kg in stock, issuing partial") — separate from the Kitchen's original request note
-  restaurantId: string;
-  createdAt?: unknown;
-}
-
-const STATUS_COLORS: Record<RequestStatus, string> = {
-  PENDING: "#f59e0b",
-  APPROVED: "#3b82f6",
-  ISSUED: "#10b981",
-  REJECTED: "#ef4444",
-};
-
-const STATUS_ICONS: Record<RequestStatus, string> = {
-  PENDING: "schedule",
-  APPROVED: "check-circle",
-  ISSUED: "done-all",
-  REJECTED: "cancel",
-};
+import { useStoreRequests } from "./hooks/useStoreRequests";
+import { StoreHeader } from "./components/StoreHeader";
+import { StoreStats } from "./components/StoreStats";
+import { StoreDateNavigator } from "./components/StoreDateNavigator";
+import { KitchenRequestTable } from "./components/KitchenRequestTable";
+import { PendingActionModal } from "./components/PendingActionModal";
+import { IssueKitchenRequestModal } from "./components/IssueKitchenRequestModal";
+import { RequestDetailModal } from "./components/RequestDetailModal";
+import { shiftDate } from "./utils/store-formatters";
 
 export default function StoreScreen() {
   const { theme, restaurantId, userProfile } = useApp();
+  const { items: inventoryItems } = useInventory(restaurantId);
 
-  const [requests, setRequests] = useState<KitchenRequest[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [activeTab, setActiveTab] = useState<"pending" | "all">("pending");
-  // ✅ Day-by-day view for "All Requests" — same idea as Attendance's
-  // selectedDate: defaults to today, filters requests by their
-  // requiredDate (the date Kitchen said they needed the item by),
-  // so each day's history is its own view instead of one endless
-  // mixed list.
-  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [selectedRequest, setSelectedRequest] = useState<KitchenRequest | null>(null);
-  const [issueQty, setIssueQty] = useState("");
-  const [issueNote, setIssueNote] = useState("");
-  const [showIssueModal, setShowIssueModal] = useState(false);
+  const {
+    requests, displayRequests, loading, refreshing, onRefresh,
+    today, selectedDate, setSelectedDate,
+  } = useStoreRequests(restaurantId);
+
   const [processing, setProcessing] = useState(false);
 
-  // ✅ Only relevant when selectedRequest.inventoryId is missing
-  // (an older request created before Kitchen requests linked to
-  // Inventory) — lets the Store Keeper search and pick the real
-  // Inventory item at issue time instead of guessing by name match.
-  const { items: inventoryItems } = useInventory(restaurantId);
-  const [linkItemQuery, setLinkItemQuery] = useState("");
-  const [linkedItem, setLinkedItem] = useState<InventoryItem | undefined>(undefined);
-  const [showLinkPicker, setShowLinkPicker] = useState(false);
+  const [pendingTarget, setPendingTarget] = useState<IngredientRequest | null>(null);
+  const [issueTarget, setIssueTarget] = useState<IngredientRequest | null>(null);
+  const [detailTarget, setDetailTarget] = useState<IngredientRequest | null>(null);
 
-  // ── Load requests ─────────────────────────
-  useEffect(() => {
-    if (!restaurantId) return;
-    const q = query(
-      collection(db, "restaurants", restaurantId, "kitchenRequests"),
-      orderBy("createdAt", "desc")
-    );
-    return onSnapshot(q, (snap) => {
-      setRequests(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
-      setLoading(false);
-      setRefreshing(false);
-    }, () => setLoading(false));
-  }, [restaurantId]);
+  const actorName = userProfile?.name ?? auth.currentUser?.email ?? "Store";
 
-  // ── Approve request ───────────────────────
-  const handleApprove = async (req: KitchenRequest) => {
-    if (!restaurantId) return;
-    setProcessing(true);
-    try {
-      await updateDoc(
-        doc(db, "restaurants", restaurantId, "kitchenRequests", req.id),
-        {
-          status: "APPROVED",
-          approvedBy: userProfile?.name ?? auth.currentUser?.email ?? "Store",
-          approvedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        }
-      );
-      Alert.alert("✅ Approved", `${req.itemName} request approved`);
-    } catch (err: any) {
-      Alert.alert("Error", err?.message ?? "Failed");
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  // ── Reject request ────────────────────────
-  const handleReject = (req: KitchenRequest) => {
-    const doReject = async () => {
-      await updateDoc(
-        doc(db, "restaurants", restaurantId, "kitchenRequests", req.id),
-        {
-          status: "REJECTED",
-          rejectedBy: userProfile?.name ?? "Store",
-          rejectedAt: serverTimestamp(),
-        }
-      );
-    };
-
-    // ✅ Alert.alert() doesn't reliably render on react-native-web —
-    // same fix already proven for PO Approve/Cancel.
+  const showAlert = (title: string, msg: string) => {
     if (Platform.OS === "web") {
-      if (window.confirm(`Reject ${req.itemName} request?`)) doReject();
-      return;
-    }
-    Alert.alert(
-      "Reject Request",
-      `Reject ${req.itemName} request?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Reject", style: "destructive", onPress: doReject },
-      ]
-    );
-  };
-
-  // ── Open issue modal ──────────────────────
-  const openIssueModal = (req: KitchenRequest) => {
-    setSelectedRequest(req);
-    setIssueQty(req.orderQuantity.toString());
-    setIssueNote("");
-    setLinkItemQuery("");
-    setShowLinkPicker(false);
-    // ✅ Suggest an exact-name match as a starting point when the
-    // request isn't linked yet — the Store Keeper still has to see
-    // and effectively confirm it (it's shown as "Suggested match",
-    // changeable via the search picker), never silently auto-applied.
-    if (!req.inventoryId) {
-      const suggested = inventoryItems.find(
-        (it) => it.itemName.toLowerCase() === req.itemName.toLowerCase()
-      );
-      setLinkedItem(suggested);
+      window.alert(`${title}\n\n${msg}`);
     } else {
-      setLinkedItem(undefined);
+      Alert.alert(title, msg);
     }
-    setShowIssueModal(true);
   };
 
-  // ── Issue stock ───────────────────────────
-  const handleIssue = async () => {
-    if (!selectedRequest || !restaurantId) return;
-    const qty = Number(issueQty);
-    if (!qty || qty <= 0) {
-      Alert.alert("Error", "Enter valid quantity");
-      return;
-    }
+  const handleRowPress = (req: IngredientRequest) => {
+    if (req.status === "PENDING") setPendingTarget(req);
+    else if (req.status === "APPROVED") setIssueTarget(req);
+    else setDetailTarget(req);
+  };
 
-    // ✅ Resolve which Inventory item this issue applies to — either
-    // already linked on the request, or the one just picked/
-    // confirmed in this modal (required for older, unlinked
-    // requests). No itemName-matching fallback — an unresolved link
-    // blocks issuing rather than silently guessing.
-    const resolvedInventoryId = selectedRequest.inventoryId ?? linkedItem?.id;
-    if (!resolvedInventoryId) {
-      Alert.alert("Error", "Please link this request to an Inventory item first");
-      return;
-    }
-
+  const handleApprove = async () => {
+    if (!pendingTarget || !restaurantId) return;
     setProcessing(true);
     try {
-      // ✅ THE single source of truth for this deduction —
-      // recordStockMovement() (FROZEN) atomically: decreases
-      // InventoryItem.currentStock, recomputes totalValue/
-      // isLowStock, writes a StockMovement audit record (with
-      // unitCostAtTime/movementValue), and syncs the Store Summary.
-      // Replaces the old itemName-matching query + manual
-      // quantity/isLowStock write + separate stockIssues log, none
-      // of which touched currentStock or created a StockMovement —
-      // which is why Kitchen issues never showed up in Daily
-      // Report's Stock-Out or in real Inventory deductions.
-      await recordStockMovement(restaurantId, {
-        inventoryId:   resolvedInventoryId,
-        movementType:  "KITCHEN_ISSUE",
-        quantity:      qty,
-        referenceType: "KITCHEN_REQUEST",
-        referenceId:   selectedRequest.id,
-        createdByName: userProfile?.name ?? auth.currentUser?.email ?? "Store",
-        reason:        issueNote.trim() || undefined,
-      });
-
-      // Update request status — and save the resolved inventoryId
-      // back onto it if it wasn't already linked, so this request
-      // never needs re-linking again. issueNote (e.g. "only had
-      // 18kg in stock, issuing partial") is saved onto the request
-      // too, separate from the original Kitchen note, so the Store
-      // Keeper's own reason for this specific issue stays visible.
-      await updateDoc(
-        doc(db, "restaurants", restaurantId, "kitchenRequests", selectedRequest.id),
-        {
-          status: "ISSUED",
-          issuedQuantity: qty,
-          issuedBy: userProfile?.name ?? auth.currentUser?.email ?? "Store",
-          issuedAt: serverTimestamp(),
-          issueNote: issueNote.trim() || null,
-          updatedAt: serverTimestamp(),
-          ...(selectedRequest.inventoryId ? {} : { inventoryId: resolvedInventoryId }),
-        }
-      );
-
-      setShowIssueModal(false);
-      Alert.alert(
-        "✅ Issued",
-        `${qty} ${selectedRequest.unit} of ${selectedRequest.itemName} issued!\nInventory auto-updated.`
-      );
+      await approveKitchenRequest(restaurantId, pendingTarget.id, actorName);
+      setPendingTarget(null);
+      showAlert("✅ Approved", `${pendingTarget.itemName} request approved`);
     } catch (err: any) {
-      Alert.alert("Error", err?.message ?? "Failed to issue");
+      showAlert("Error", err?.message ?? "Failed");
     } finally {
       setProcessing(false);
     }
   };
 
-  const onRefresh = useCallback(() => setRefreshing(true), []);
-
-  const pendingRequests = requests.filter((r) => r.status === "PENDING");
-  const approvedRequests = requests.filter((r) => r.status === "APPROVED");
-  // ✅ "All Requests" is now day-scoped by requiredDate (matching
-  // selectedDate) — Pending & Approved stays unfiltered by date
-  // since those are active/actionable regardless of which day they
-  // were requested for.
-  const displayRequests = activeTab === "pending"
-    ? [...pendingRequests, ...approvedRequests]
-    : requests.filter((r) => r.requiredDate === selectedDate);
-
-  const goToPrevDay = () => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() - 1);
-    setSelectedDate(d.toISOString().slice(0, 10));
-  };
-  const goToNextDay = () => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() + 1);
-    setSelectedDate(d.toISOString().slice(0, 10));
-  };
-  const isToday = selectedDate === new Date().toISOString().slice(0, 10);
-
-  const formatDate = (ts: any): string => {
-    if (!ts) return "";
+  const handleReject = async () => {
+    if (!pendingTarget || !restaurantId) return;
+    setProcessing(true);
     try {
-      const d = ts.toDate ? ts.toDate() : new Date(ts);
-      return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-    } catch { return ""; }
+      await rejectKitchenRequest(restaurantId, pendingTarget.id, actorName);
+      setPendingTarget(null);
+    } catch (err: any) {
+      showAlert("Error", err?.message ?? "Failed");
+    } finally {
+      setProcessing(false);
+    }
   };
 
-  const formatSelectedDate = (dateStr: string): string => {
+  const handleIssueConfirm = async (params: { quantity: number; inventoryId: string; note: string }) => {
+    if (!issueTarget || !restaurantId) return;
+    setProcessing(true);
     try {
-      return new Date(dateStr).toLocaleDateString("en-GB", {
-        weekday: "short", day: "numeric", month: "short", year: "numeric",
+      await issueKitchenRequest({
+        restaurantId,
+        requestId: issueTarget.id,
+        inventoryId: params.inventoryId,
+        quantity: params.quantity,
+        issuerName: actorName,
+        issueNote: params.note || undefined,
       });
-    } catch { return dateStr; }
+      const msg = `${params.quantity} ${issueTarget.unit} of ${issueTarget.itemName} issued!\nInventory auto-updated via FEFO.`;
+      setIssueTarget(null);
+      showAlert("✅ Issued", msg);
+    } catch (err: any) {
+      showAlert("Error", err?.message ?? "Failed to issue");
+    } finally {
+      setProcessing(false);
+    }
   };
+
+  const pendingCount  = requests.filter((r) => r.status === "PENDING").length;
+  const approvedCount = requests.filter((r) => r.status === "APPROVED").length;
+  const issuedCount   = requests.filter((r) => r.status === "ISSUED").length;
+  const rejectedCount = requests.filter((r) => r.status === "REJECTED").length;
 
   return (
     <ScrollView
@@ -292,440 +140,73 @@ export default function StoreScreen() {
       showsVerticalScrollIndicator={false}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.primary]} tintColor={theme.primary} />}
     >
-      {/* Header */}
-      <LinearGradient colors={["#00154f", "#0039cb"]} style={styles.header}>
-        <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.headerTitle}>STORE</Text>
-            <Text style={styles.headerSub}>Stock Issue & Requests</Text>
-          </View>
-          {pendingRequests.length > 0 && (
-            <View style={styles.notifBadge}>
-              <Text style={styles.notifText}>{pendingRequests.length} Pending</Text>
-            </View>
-          )}
-        </View>
-      </LinearGradient>
+      <StoreHeader pendingCount={pendingCount} />
 
       <View style={styles.body}>
+        <StoreStats
+          pendingCount={pendingCount}
+          approvedCount={approvedCount}
+          issuedCount={issuedCount}
+          rejectedCount={rejectedCount}
+          cardBg={theme.card}
+          textSecondary={theme.textSecondary}
+        />
 
-        {/* Stats */}
-        <View style={styles.statsRow}>
-          {[
-            { label: "Pending", value: pendingRequests.length, color: "#f59e0b", icon: "schedule" },
-            { label: "Approved", value: requests.filter(r => r.status === "APPROVED").length, color: "#3b82f6", icon: "check-circle" },
-            { label: "Issued", value: requests.filter(r => r.status === "ISSUED").length, color: "#10b981", icon: "done-all" },
-            { label: "Rejected", value: requests.filter(r => r.status === "REJECTED").length, color: "#ef4444", icon: "cancel" },
-          ].map(({ label, value, color, icon }) => (
-            <View key={label} style={[styles.statCard, { backgroundColor: theme.card }]}>
-              <MaterialIcons name={icon as any} size={20} color={color} />
-              <Text style={[styles.statValue, { color }]}>{value}</Text>
-              <Text style={[styles.statLabel, { color: theme.textSecondary }]}>{label}</Text>
-            </View>
-          ))}
-        </View>
+        <StoreDateNavigator
+          selectedDate={selectedDate}
+          today={today}
+          textColor={theme.text}
+          onPrev={() => setSelectedDate((d) => shiftDate(d, -1))}
+          onNext={() => setSelectedDate((d) => shiftDate(d, 1))}
+        />
 
-        {/* Tabs */}
-        <View style={[styles.tabs, { backgroundColor: theme.card }]}>
-          {(["pending", "all"] as const).map((tab) => (
-            <TouchableOpacity
-              key={tab}
-              style={[
-                styles.tab,
-                activeTab === tab && { backgroundColor: theme.primary },
-              ]}
-              onPress={() => setActiveTab(tab)}
-            >
-              <Text style={[styles.tabText, {
-                color: activeTab === tab ? "#fff" : theme.textSecondary,
-              }]}>
-                {tab === "pending"
-                  ? `Pending & Approved (${pendingRequests.length + requests.filter(r => r.status === "APPROVED").length})`
-                  : `All Requests (${requests.filter((r) => r.requiredDate === selectedDate).length})`}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* ✅ Day navigator — only relevant for "All Requests", since
-            "Pending & Approved" is always the current actionable set
-            regardless of date. */}
-        {activeTab === "all" && (
-          <View style={[styles.dateNav, { backgroundColor: theme.card }]}>
-            <TouchableOpacity onPress={goToPrevDay} style={styles.dateNavArrow}>
-              <MaterialIcons name="chevron-left" size={20} color={theme.text} />
-            </TouchableOpacity>
-            <Text style={[styles.dateNavLabel, { color: theme.text }]}>
-              {isToday ? "Today — " : ""}{formatSelectedDate(selectedDate)}
-            </Text>
-            <TouchableOpacity onPress={goToNextDay} style={styles.dateNavArrow}>
-              <MaterialIcons name="chevron-right" size={20} color={theme.text} />
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Requests */}
         {loading ? (
           <ActivityIndicator color={theme.primary} style={{ marginTop: 20 }} />
         ) : displayRequests.length === 0 ? (
           <View style={[styles.emptyBox, { backgroundColor: theme.card }]}>
             <MaterialIcons name="inventory" size={40} color={theme.textSecondary} />
             <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-              {activeTab === "pending" ? "No pending requests" : `No requests for ${formatSelectedDate(selectedDate)}`}
+              No requests for this date
             </Text>
           </View>
         ) : (
-          displayRequests.map((req) => {
-            const statusColor = STATUS_COLORS[req.status];
-            const statusIcon = STATUS_ICONS[req.status];
-            return (
-              <View
-                key={req.id}
-                style={[
-                  styles.requestCard,
-                  { backgroundColor: theme.card },
-                  req.status === "PENDING" && { borderLeftWidth: 3, borderLeftColor: "#f59e0b" },
-                  req.status === "APPROVED" && { borderLeftWidth: 3, borderLeftColor: "#3b82f6" },
-                ]}
-              >
-                {/* Header */}
-                <View style={styles.cardHeader}>
-                  <View style={styles.cardHeaderLeft}>
-                    <Text style={[styles.itemName, { color: theme.text }]}>{req.itemName}</Text>
-                    <Text style={[styles.cardDate, { color: theme.textSecondary }]}>
-                      By: {req.requestedBy} · {formatDate(req.createdAt)}
-                    </Text>
-                    <Text style={[styles.cardDate, { color: theme.textSecondary }]}>
-                      Required: {req.requiredDate}
-                    </Text>
-                  </View>
-                  <View style={[styles.statusBadge, { backgroundColor: statusColor + "20" }]}>
-                    <MaterialIcons name={statusIcon as any} size={12} color={statusColor} />
-                    <Text style={[styles.statusText, { color: statusColor }]}>{req.status}</Text>
-                  </View>
-                </View>
-
-                {/* Details */}
-                <View style={[styles.detailsRow, { borderTopColor: theme.border }]}>
-                  <View style={styles.detailItem}>
-                    <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Closing</Text>
-                    <Text style={[styles.detailValue, { color: theme.text }]}>{req.closingStock} {req.unit}</Text>
-                  </View>
-                  <View style={styles.detailItem}>
-                    <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Min Level</Text>
-                    <Text style={[styles.detailValue, { color: theme.text }]}>{req.minimumLevel} {req.unit}</Text>
-                  </View>
-                  <View style={styles.detailItem}>
-                    <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Requested</Text>
-                    <Text style={[styles.detailValue, { color: "#f59e0b", fontWeight: "800" }]}>{req.orderQuantity} {req.unit}</Text>
-                  </View>
-                  {req.issuedQuantity !== undefined && (
-                    <View style={styles.detailItem}>
-                      <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>Issued</Text>
-                      <Text style={[styles.detailValue, { color: "#10b981", fontWeight: "800" }]}>{req.issuedQuantity} {req.unit}</Text>
-                    </View>
-                  )}
-                </View>
-
-                {req.note ? (
-                  <Text style={[styles.noteText, { color: theme.textSecondary }]}>
-                    Note: {req.note}
-                  </Text>
-                ) : null}
-
-                {/* Action Buttons */}
-                {req.status === "PENDING" && (
-                  <View style={styles.actionRow}>
-                    <TouchableOpacity
-                      style={[styles.actionBtn, { backgroundColor: "#3b82f6" }]}
-                      onPress={() => handleApprove(req)}
-                      disabled={processing}
-                    >
-                      <MaterialIcons name="check" size={15} color="#fff" />
-                      <Text style={styles.actionBtnText}>Approve</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.actionBtn, { backgroundColor: "#ef4444" }]}
-                      onPress={() => handleReject(req)}
-                      disabled={processing}
-                    >
-                      <MaterialIcons name="close" size={15} color="#fff" />
-                      <Text style={styles.actionBtnText}>Reject</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-
-                {req.status === "APPROVED" && (
-                  <TouchableOpacity
-                    style={[styles.issueBtn, { backgroundColor: "#10b981" }]}
-                    onPress={() => openIssueModal(req)}
-                    disabled={processing}
-                  >
-                    <MaterialIcons name="output" size={16} color="#fff" />
-                    <Text style={styles.issueBtnText}>Issue Stock → Auto Update Inventory</Text>
-                  </TouchableOpacity>
-                )}
-
-                {req.status === "ISSUED" && req.issuedBy && (
-                  <Text style={[styles.issuedByText, { color: theme.textSecondary }]}>
-                    ✅ Issued by {req.issuedBy} on {formatDate(req.issuedAt)}
-                  </Text>
-                )}
-              </View>
-            );
-          })
+          <KitchenRequestTable requests={displayRequests} onRowPress={handleRowPress} />
         )}
       </View>
 
-      {/* Issue Modal */}
-      <Modal visible={showIssueModal} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.issueModal, { backgroundColor: theme.surface }]}>
-            <Text style={[styles.modalTitle, { color: theme.text }]}>Issue Stock</Text>
-            {selectedRequest && (
-              <>
-                <Text style={[styles.modalItemName, { color: theme.text }]}>
-                  {selectedRequest.itemName}
-                </Text>
-                <Text style={[styles.modalSubText, { color: theme.textSecondary }]}>
-                  Requested: {selectedRequest.orderQuantity} {selectedRequest.unit}
-                </Text>
+      <PendingActionModal
+        visible={!!pendingTarget}
+        request={pendingTarget}
+        processing={processing}
+        theme={theme}
+        onApprove={handleApprove}
+        onReject={handleReject}
+        onCancel={() => setPendingTarget(null)}
+      />
 
-                {!selectedRequest.inventoryId && (
-                  <View style={styles.linkSection}>
-                    <View style={styles.linkWarningRow}>
-                      <MaterialIcons name="link-off" size={14} color="#d97706" />
-                      <Text style={styles.linkWarningText}>Inventory Item Not Linked</Text>
-                    </View>
+      <IssueKitchenRequestModal
+        visible={!!issueTarget}
+        request={issueTarget}
+        inventoryItems={inventoryItems}
+        processing={processing}
+        theme={theme}
+        onClose={() => setIssueTarget(null)}
+        onConfirm={handleIssueConfirm}
+      />
 
-                    {linkedItem ? (
-                      <View style={styles.suggestedMatchRow}>
-                        <View style={styles.suggestedMatchLeft}>
-                          <MaterialIcons name="check-circle" size={14} color="#059669" />
-                          <Text style={[styles.suggestedMatchText, { color: theme.text }]}>
-                            {linkItemQuery.trim() ? "Selected" : "Suggested match"}: {linkedItem.itemName}
-                          </Text>
-                        </View>
-                        <TouchableOpacity onPress={() => { setLinkedItem(undefined); setShowLinkPicker(true); }}>
-                          <Text style={styles.changeLinkText}>Change</Text>
-                        </TouchableOpacity>
-                      </View>
-                    ) : (
-                      <>
-                        <View style={[styles.inputWrapper, { backgroundColor: theme.bg, borderColor: theme.border }]}>
-                          <MaterialIcons name="search" size={14} color={theme.textSecondary} />
-                          <TextInput
-                            style={[styles.input, { color: theme.text }]}
-                            placeholder={`Search Inventory for "${selectedRequest.itemName}"...`}
-                            placeholderTextColor={theme.textSecondary}
-                            value={linkItemQuery}
-                            onChangeText={(text) => { setLinkItemQuery(text); setShowLinkPicker(true); }}
-                            onFocus={() => setShowLinkPicker(true)}
-                          />
-                        </View>
-                        {showLinkPicker && linkItemQuery.trim().length >= 2 && (
-                          <ScrollView style={[styles.itemPickerList, { backgroundColor: theme.bg, borderColor: theme.border }]} nestedScrollEnabled>
-                            {inventoryItems
-                              .filter((it) => it.itemName.toLowerCase().includes(linkItemQuery.trim().toLowerCase()))
-                              .slice(0, 8)
-                              .map((it) => (
-                                <TouchableOpacity
-                                  key={it.id}
-                                  style={styles.itemPickerRow}
-                                  onPress={() => { setLinkedItem(it); setShowLinkPicker(false); }}
-                                >
-                                  <Text style={[styles.itemPickerRowText, { color: theme.text }]}>{it.itemName}</Text>
-                                  <Text style={[styles.itemPickerRowSub, { color: theme.textSecondary }]}>
-                                    {it.currentStock} {it.unit} in stock
-                                  </Text>
-                                </TouchableOpacity>
-                              ))}
-                          </ScrollView>
-                        )}
-                      </>
-                    )}
-                  </View>
-                )}
-
-                <Text style={[styles.fieldLabel, { color: theme.textSecondary, marginTop: 14 }]}>
-                  ISSUE QUANTITY ({selectedRequest.unit})
-                </Text>
-                <View style={[styles.inputWrapper, { backgroundColor: theme.bg, borderColor: theme.border }]}>
-                  <TextInput
-                    style={[styles.input, { color: theme.text }]}
-                    value={issueQty}
-                    onChangeText={setIssueQty}
-                    keyboardType="decimal-pad"
-                    placeholder="0"
-                    placeholderTextColor={theme.textSecondary}
-                    autoFocus
-                  />
-                  <Text style={[styles.unitText, { color: theme.textSecondary }]}>
-                    {selectedRequest.unit}
-                  </Text>
-                </View>
-                <View style={[styles.infoBox, { backgroundColor: "#10b98115" }]}>
-                  <MaterialIcons name="info" size={14} color="#10b981" />
-                  <Text style={styles.infoText}>
-                    Inventory will auto-deduct {issueQty || "0"} {selectedRequest.unit} of {selectedRequest.itemName}
-                  </Text>
-                </View>
-
-                <Text style={[styles.fieldLabel, { color: theme.textSecondary }]}>
-                  NOTE (OPTIONAL)
-                </Text>
-                <TextInput
-                  style={[styles.noteInput, { backgroundColor: theme.bg, borderColor: theme.border, color: theme.text }]}
-                  placeholder="e.g. only 18kg in stock, issuing partial"
-                  placeholderTextColor={theme.textSecondary}
-                  value={issueNote}
-                  onChangeText={setIssueNote}
-                  multiline
-                />
-              </>
-            )}
-            <View style={styles.modalBtns}>
-              <TouchableOpacity
-                style={[
-                  styles.modalBtn, { backgroundColor: "#10b981" },
-                  (processing || (!selectedRequest?.inventoryId && !linkedItem)) && { opacity: 0.5 },
-                ]}
-                onPress={handleIssue}
-                disabled={processing || (!selectedRequest?.inventoryId && !linkedItem)}
-              >
-                {processing ? <ActivityIndicator color="#fff" size="small" /> : (
-                  <>
-                    <MaterialIcons name="done" size={16} color="#fff" />
-                    <Text style={styles.modalBtnText}>Confirm Issue</Text>
-                  </>
-                )}
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, { backgroundColor: theme.border }]}
-                onPress={() => setShowIssueModal(false)}
-              >
-                <Text style={[styles.modalBtnText, { color: theme.text }]}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      <RequestDetailModal
+        visible={!!detailTarget}
+        request={detailTarget}
+        theme={theme}
+        onClose={() => setDetailTarget(null)}
+      />
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  // ✅ New styles for the "link unlinked request to Inventory" UI
-  linkSection: { marginTop: 10 },
-  linkWarningRow: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 6 },
-  linkWarningText: { fontSize: 12, fontWeight: "700", color: "#d97706" },
-  suggestedMatchRow: {
-    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    backgroundColor: "#05966915", borderRadius: 8, padding: 10,
-  },
-  suggestedMatchLeft: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1 },
-  suggestedMatchText: { fontSize: 13, fontWeight: "600" },
-  changeLinkText: { fontSize: 12, fontWeight: "700", color: "#0369a1" },
-  itemPickerList: {
-    borderWidth: 1, borderRadius: 8,
-    marginTop: 4, maxHeight: 160, overflow: "hidden",
-  },
-  itemPickerRow: { paddingHorizontal: 12, paddingVertical: 10 },
-  itemPickerRowText: { fontSize: 14, fontWeight: "600" },
-  itemPickerRowSub: { fontSize: 11, marginTop: 2 },
-  header: {
-    paddingTop: Platform.OS === "web" ? 28 : 50,
-    paddingBottom: 24, paddingHorizontal: 20,
-  },
-  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  headerTitle: { color: "#FFD700", fontSize: 24, fontWeight: "900", letterSpacing: 1 },
-  headerSub: { color: "rgba(255,255,255,0.65)", fontSize: 12, marginTop: 3 },
-  notifBadge: {
-    backgroundColor: "#f59e0b", paddingHorizontal: 12,
-    paddingVertical: 6, borderRadius: 20,
-  },
-  notifText: { color: "#fff", fontSize: 12, fontWeight: "800" },
-  body: { padding: 14 },
-  statsRow: { flexDirection: "row", gap: 8, marginBottom: 14 },
-  statCard: { flex: 1, borderRadius: 12, padding: 10, alignItems: "center", gap: 3 },
-  statValue: { fontSize: 18, fontWeight: "900" },
-  statLabel: { fontSize: 9, fontWeight: "600" },
-  tabs: { flexDirection: "row", borderRadius: 12, padding: 4, marginBottom: 14, gap: 4 },
-  tab: { flex: 1, padding: 10, borderRadius: 8, alignItems: "center" },
-  tabText: { fontSize: 11, fontWeight: "700" },
-  dateNav: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center",
-    gap: 10, borderRadius: 10, paddingVertical: 8, marginBottom: 12,
-  },
-  dateNavArrow: { padding: 4 },
-  dateNavLabel: { fontSize: 13, fontWeight: "700" },
-  emptyBox: { borderRadius: 14, padding: 40, alignItems: "center", gap: 10 },
-  emptyText: { fontSize: 13 },
-  requestCard: {
-    borderRadius: 14, padding: 14, marginBottom: 10,
-  },
-  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 },
-  cardHeaderLeft: { flex: 1 },
-  itemName: { fontSize: 15, fontWeight: "700" },
-  cardDate: { fontSize: 11, marginTop: 2 },
-  statusBadge: {
-    flexDirection: "row", alignItems: "center", gap: 4,
-    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
-  },
-  statusText: { fontSize: 10, fontWeight: "800" },
-  detailsRow: {
-    flexDirection: "row", paddingTop: 10,
-    borderTopWidth: 1, marginBottom: 8,
-  },
-  detailItem: { flex: 1, alignItems: "center" },
-  detailLabel: { fontSize: 9, fontWeight: "600", marginBottom: 2 },
-  detailValue: { fontSize: 12, fontWeight: "700" },
-  noteText: { fontSize: 11, marginBottom: 8, fontStyle: "italic" },
-  actionRow: { flexDirection: "row", gap: 8, marginTop: 4 },
-  actionBtn: {
-    flex: 1, flexDirection: "row", alignItems: "center",
-    justifyContent: "center", gap: 6,
-    padding: 10, borderRadius: 10,
-  },
-  actionBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
-  issueBtn: {
-    flexDirection: "row", alignItems: "center",
-    justifyContent: "center", gap: 8,
-    padding: 12, borderRadius: 10, marginTop: 4,
-  },
-  issueBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
-  issuedByText: { fontSize: 11, marginTop: 6 },
-  modalOverlay: {
-    flex: 1, backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center", alignItems: "center", padding: 20,
-  },
-  issueModal: { width: "100%", maxWidth: 360, borderRadius: 20, padding: 24 },
-  modalTitle: { fontSize: 18, fontWeight: "800", marginBottom: 4 },
-  modalItemName: { fontSize: 15, fontWeight: "700", marginBottom: 2 },
-  modalSubText: { fontSize: 12, marginBottom: 4 },
-  fieldLabel: { fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 6 },
-  noteInput: {
-    borderWidth: 1.5, borderRadius: 10, padding: 10,
-    fontSize: 13, height: 60, textAlignVertical: "top", marginBottom: 10,
-  },
-  inputWrapper: {
-    flexDirection: "row", alignItems: "center", gap: 8,
-    borderWidth: 1.5, borderRadius: 10,
-    paddingHorizontal: 12, paddingVertical: 12, marginBottom: 10,
-  },
-  input: { flex: 1, fontSize: 16, padding: 0, fontWeight: "700" },
-  unitText: { fontSize: 13, fontWeight: "600" },
-  infoBox: {
-    flexDirection: "row", alignItems: "flex-start",
-    gap: 8, padding: 10, borderRadius: 8, marginBottom: 16,
-  },
-  infoText: { color: "#10b981", fontSize: 11, flex: 1 },
-  modalBtns: { flexDirection: "row", gap: 10 },
-  modalBtn: {
-    flex: 1, flexDirection: "row", alignItems: "center",
-    justifyContent: "center", gap: 6,
-    padding: 13, borderRadius: 10,
-  },
-  modalBtnText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  body: { padding: 12 },
+  emptyBox: { alignItems: "center", padding: 40, borderRadius: 10, gap: 8 },
+  emptyText: { fontSize: 13, fontWeight: "600" },
 });
