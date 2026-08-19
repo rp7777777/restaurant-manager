@@ -22,23 +22,24 @@
 // ✅ movementValue is pre-computed and stored (|quantityChanged| ×
 //    unitCostAtTime), so future valuation-method changes never
 //    retroactively alter historical movement values.
-// ✅ FIX — isLowStock calculation corrected to match the
-//    authoritative rule now used consistently across
-//    inventory-repository.ts and inventory-service.ts:
-//      isLowStock = quantity > 0 && quantity <= minStock
-//    Previously both beforeIsLowStock and isLowStock used
-//    `quantity <= minStock` alone — the same root-cause bug found
-//    elsewhere: a quantity of 0 (or, in principle, negative) was
-//    incorrectly flagged as "low stock" whenever minStock > 0,
-//    instead of being exclusively "out of stock". Since ADJUSTMENT
-//    (Increase/Decrease/Correction) commonly sets stock to exactly
-//    0 via this same function, this was a live, frequently-hit path
-//    for the bug, not just a batch-tracking edge case. Now this
-//    file's calculation matches the same formula everywhere else in
-//    the codebase, so isLowStock is correct regardless of which of
-//    the (now four+) write paths last touched an item's stock.
+// ✅ isLowStock calculation: quantity > 0 && quantity <= minStock —
+//    matches the authoritative rule used consistently across
+//    inventory-repository.ts and inventory-service.ts.
 // ✅ syncStoreSummaryForItemChange() is called after every
 //    successful movement.
+// ✅ NEW (additive) — getMovementsByReference(): a TARGETED lookup
+//    for all StockMovement documents tied to a specific
+//    referenceType + referenceId (e.g. every movement caused by one
+//    Kitchen Request). This is NOT a client-side filter over a
+//    recent-N window (subscribeRecentMovements()) — it queries
+//    Firestore directly on (referenceType, referenceId), so it
+//    never misses an older movement that a "recent 500" window
+//    could have excluded. Used by Store Module's KitchenRequestTable
+//    to show which batch(es) a Kitchen Issue actually drew from.
+//    ⚠️ May require a Firestore composite index on
+//    (referenceType ASC, referenceId ASC) — Firestore will surface
+//    a console error with a direct index-creation link the first
+//    time this query runs if one is needed.
 // FROZEN
 // ============================================
 
@@ -51,6 +52,7 @@ import { COL, RCOL } from "../../../constants/firestore-collections";
 import {
   StockMovement,
   StockMovementType,
+  StockMovementReferenceType,
   RecordStockMovementInput,
 } from "../types/stock-movement";
 import { syncStoreSummaryForItemChange } from "../../store-module/services/store-summary-service";
@@ -67,9 +69,6 @@ function stockMovementsCollection(restaurantId: string) {
 
 const INCREASING_TYPES: StockMovementType[] = ["PURCHASE", "RETURN", "TRANSFER_IN"];
 
-// ✅ FIX — single source of truth for isLowStock in THIS file,
-// matching inventory-repository.ts's/inventory-service.ts's
-// identical formula.
 function computeIsLowStock(quantity: number, minStock: number): boolean {
   return quantity > 0 && quantity <= minStock;
 }
@@ -152,12 +151,9 @@ export async function recordStockMovement(
     }
 
     const beforeTotalValue = calculateInventoryTotalValue(beforeQuantity, unitCostAtTime);
-    // ✅ FIX — > 0 required, matches computeIsLowStock() everywhere
-    // else in the codebase.
     const beforeIsLowStock = computeIsLowStock(beforeQuantity, minStock);
 
     const totalValue     = calculateInventoryTotalValue(afterQuantity, unitCostAtTime);
-    // ✅ FIX — > 0 required.
     const isLowStock      = computeIsLowStock(afterQuantity, minStock);
     const movementValue  = Math.round(Math.abs(quantityChanged) * unitCostAtTime * 100) / 100;
 
@@ -223,6 +219,23 @@ export async function getMovementsForItem(
       where("inventoryId", "==", inventoryId),
       orderBy("createdAt", "desc"),
       limit(limitCount),
+    )
+  );
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<StockMovement, "id">) }));
+}
+
+// ── NEW — targeted lookup by reference, see FROZEN header. ──
+export async function getMovementsByReference(
+  restaurantId: string,
+  referenceType: StockMovementReferenceType,
+  referenceId: string
+): Promise<StockMovement[]> {
+  if (!restaurantId || !referenceId) return [];
+  const snap = await getDocs(
+    query(
+      stockMovementsCollection(restaurantId),
+      where("referenceType", "==", referenceType),
+      where("referenceId", "==", referenceId),
     )
   );
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<StockMovement, "id">) }));

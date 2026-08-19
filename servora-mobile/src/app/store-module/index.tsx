@@ -1,28 +1,25 @@
 // ============================================
 // SERVORA ERP — Store Module (Kitchen Request Management)
-// ✅ FINAL ORCHESTRATOR — after the file-by-file split, this file
-//    contains ONLY: subscription/state wiring (via useStoreRequests),
-//    status-based routing decisions (which modal opens on row tap),
-//    and calls to kitchen-request-service.ts's workflow functions.
-//    All presentation lives in components/; all business logic lives
-//    in kitchen-module/services/kitchen-request-service.ts.
+// ✅ FINAL ORCHESTRATOR — subscription/state wiring (via
+//    useStoreRequests), status-based routing decisions (which modal
+//    opens on row tap), and calls to kitchen-request-service.ts's
+//    workflow functions. All presentation lives in components/; all
+//    business logic lives in kitchen-module/services/
+//    kitchen-request-service.ts.
 // ✅ Row-tap routing (via KitchenRequestTable's generic onRowPress):
 //      PENDING  → PendingActionModal (Approve/Reject/Cancel)
 //      APPROVED → IssueKitchenRequestModal (FEFO issue flow)
 //      ISSUED   → RequestDetailModal (read-only)
 //      REJECTED → RequestDetailModal (read-only)
 // ✅ Single-date model (StoreDateNavigator) — no tab system.
-// ✅ Stats (StoreStats) are ALWAYS restaurant-wide totals (from the
-//    full `requests` array), independent of the selected date —
-//    matches original behavior exactly.
-// ✅ FIX — removed dead `notify()` function (no callers) and the
-//    inline `require("react-native")` for Alert — Alert is now a
-//    proper top-level import alongside the rest of react-native's
-//    exports, used directly in showAlert().
+// ✅ Stats (StoreStats) are ALWAYS restaurant-wide totals.
+// ✅ NEW — batchAllocationsByRequestId (from useStoreRequests) is
+//    now passed through to KitchenRequestTable, so the table's
+//    Batch column can show which batch(es) each ISSUED request
+//    actually drew from.
 // 🔒 CONFIRMED BUSINESS RULE — Partial Issue: issuing less than
 //    orderQuantity still marks the request ISSUED (no
-//    PARTIALLY_ISSUED status, no remainder tracking). See
-//    kitchen-request-service.ts's own header for full rationale.
+//    PARTIALLY_ISSUED status, no remainder tracking).
 // FROZEN
 // ============================================
 
@@ -55,7 +52,7 @@ export default function StoreScreen() {
 
   const {
     requests, displayRequests, loading, refreshing, onRefresh,
-    today, selectedDate, setSelectedDate,
+    today, selectedDate, setSelectedDate, batchAllocationsByRequestId,
   } = useStoreRequests(restaurantId);
 
   const [processing, setProcessing] = useState(false);
@@ -170,7 +167,11 @@ export default function StoreScreen() {
             </Text>
           </View>
         ) : (
-          <KitchenRequestTable requests={displayRequests} onRowPress={handleRowPress} />
+          <KitchenRequestTable
+            requests={displayRequests}
+            batchAllocationsByRequestId={batchAllocationsByRequestId}
+            onRowPress={handleRowPress}
+          />
         )}
       </View>
 

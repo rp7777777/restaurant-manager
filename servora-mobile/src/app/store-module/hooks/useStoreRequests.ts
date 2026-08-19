@@ -1,42 +1,55 @@
 // ============================================
 // SERVORA ERP — useStoreRequests Hook
-// ✅ EVOLUTIONARY EXTRACTION — subscription/loading/refresh/date-
-//    navigation logic moved out of index.tsx as part of the
-//    file-by-file split. No Firestore query logic changed —
-//    subscribeKitchenRequests() (kitchen-module/repository) is
-//    still the single source of truth, unchanged.
-// ✅ Tab system REMOVED (per confirmed redesign) — single-date
-//    model matching MovementHistoryModal.tsx's UX: default to
-//    Today, `<`/`>` navigate to adjacent dates, ALL statuses shown
-//    together for whichever date is selected, filtered by
-//    requiredDate. Intentional consequence: an old PENDING request
-//    no longer appears on "Today" once its requiredDate has
-//    passed — the store keeper navigates back to find it.
-// ✅ FIX — explicit Dispatch/SetStateAction import instead of the
-//    React.Dispatch namespace reference, which relied on the
-//    ambient React namespace being globally resolvable rather than
-//    being an explicit import — cleaner and more portable.
-// ✅ subscriptionKey — bumping it forces unsubscribe/re-subscribe,
-//    giving pull-to-refresh a genuine effect.
-// ✅ Returns displayRequests already filtered to selectedDate — no
-//    filtering logic duplicated in consuming components.
+// ✅ Single-date model — default to Today, `<`/`>` navigate to
+//    adjacent dates, ALL statuses shown for the selected requiredDate.
+// ✅ batchAllocationsByRequestId: for each displayed request that
+//    has been ISSUED, fetches the associated StockMovement via the
+//    TARGETED getMovementsByReference() lookup (referenceType:
+//    "KITCHEN_REQUEST", referenceId: request.id) — NOT a client-side
+//    filter over a recent-N window, so an older request's batch
+//    allocation is never missed.
+// ✅ batchLookupKey encodes id:status:issuedQuantity for every
+//    ISSUED request — so an in-place APPROVED→ISSUED transition
+//    (same id, changed status/quantity) is detected and triggers a
+//    fresh lookup, not just a change in which request IDs exist.
+// ✅ subscriptionKey is part of the effect's dependency array, so
+//    pull-to-refresh always forces a fresh batch lookup too.
+// ✅ Each per-request getMovementsByReference() call has its own
+//    try/catch — one failed lookup never blocks every other
+//    request's successful lookup from populating the map.
+// ✅ cancelled guard — prevents a stale async response from a
+//    previous date/subscription cycle overwriting current state.
+// ✅ FIX — explicit Promise<readonly [string, BatchAllocationRecord[]]>
+//    return-type annotation on the map callback, and an explicit
+//    `[] as BatchAllocationRecord[]` in the catch branch. Without
+//    these, TypeScript inferred two DIFFERENT tuple types for the
+//    try-branch (`[string, BatchAllocationRecord[]]`) vs the
+//    catch-branch (`[string, readonly never[]]`), producing a union
+//    type that `new Map(entries)` couldn't accept — a compile error
+//    (ts(2769)), not a runtime bug. Both branches now return the
+//    exact same type, so Map's constructor overload resolves
+//    correctly.
 // FROZEN
 // ============================================
 
-import { useEffect, useState, useCallback, useMemo, Dispatch, SetStateAction } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
+import { Dispatch, SetStateAction } from "react";
 import { subscribeKitchenRequests } from "../../kitchen-module/repository/kitchen-repository";
 import { IngredientRequest } from "../../kitchen-module/types/kitchen-types";
+import { getMovementsByReference } from "../../../modules/stock-movement-module/services/stock-movement-service";
+import { BatchAllocationRecord } from "../../../modules/stock-movement-module/types/stock-movement";
 import { todayISO } from "../../../utils/date-utils";
 
 export interface UseStoreRequestsResult {
-  requests:          IngredientRequest[];
-  displayRequests:   IngredientRequest[];
-  loading:           boolean;
-  refreshing:        boolean;
-  onRefresh:         () => void;
-  today:             string;
-  selectedDate:      string;
-  setSelectedDate:   Dispatch<SetStateAction<string>>;
+  requests:                    IngredientRequest[];
+  displayRequests:             IngredientRequest[];
+  loading:                     boolean;
+  refreshing:                  boolean;
+  onRefresh:                   () => void;
+  today:                       string;
+  selectedDate:                string;
+  setSelectedDate:             Dispatch<SetStateAction<string>>;
+  batchAllocationsByRequestId: Map<string, BatchAllocationRecord[]>;
 }
 
 export function useStoreRequests(restaurantId: string | null | undefined): UseStoreRequestsResult {
@@ -73,6 +86,50 @@ export function useStoreRequests(restaurantId: string | null | undefined): UseSt
     [requests, selectedDate]
   );
 
+  const [batchAllocationsByRequestId, setBatchAllocationsByRequestId] =
+    useState<Map<string, BatchAllocationRecord[]>>(new Map());
+
+  const batchLookupKey = displayRequests
+    .filter((r) => r.status === "ISSUED")
+    .map((r) => `${r.id}:${r.status}:${r.issuedQuantity ?? ""}`)
+    .join("|");
+
+  useEffect(() => {
+    if (!restaurantId) return;
+
+    const issuedIds = displayRequests
+      .filter((r) => r.status === "ISSUED")
+      .map((r) => r.id);
+
+    if (issuedIds.length === 0) {
+      setBatchAllocationsByRequestId(new Map());
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      const entries = await Promise.all(
+        issuedIds.map(async (id): Promise<readonly [string, BatchAllocationRecord[]]> => {
+          try {
+            const movements = await getMovementsByReference(restaurantId, "KITCHEN_REQUEST", id);
+            const allocations = movements.flatMap((m) => m.batchAllocations ?? []);
+            return [id, allocations];
+          } catch (error) {
+            console.warn(`Failed to load batch allocations for request ${id}:`, error);
+            return [id, [] as BatchAllocationRecord[]];
+          }
+        })
+      );
+      if (!cancelled) {
+        setBatchAllocationsByRequestId(new Map(entries));
+      }
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restaurantId, subscriptionKey, batchLookupKey]);
+
   return {
     requests,
     displayRequests,
@@ -82,5 +139,6 @@ export function useStoreRequests(restaurantId: string | null | undefined): UseSt
     today,
     selectedDate,
     setSelectedDate,
+    batchAllocationsByRequestId,
   };
 }
