@@ -1,31 +1,12 @@
 // ============================================
 // SERVORA ERP — InventoryStats Component
 // ✅ Simple on-demand aggregation.
-// ✅ FIX — Low Stock and Out of Stock are now MUTUALLY EXCLUSIVE
-//    (changed from previously-independent counting). Previously an
-//    item with currentStock <= 0 AND isLowStock === true was counted
-//    in BOTH metrics, inflating Low Stock's number in a way that
-//    double-counted items already captured by Out of Stock —
-//    confusing for ERP reporting clarity. Now: currentStock <= 0 →
-//    Out of Stock ONLY; currentStock > 0 AND isLowStock → Low Stock
-//    ONLY; otherwise Normal. This gives a clean three-way
-//    classification with no overlap, matching standard ERP
-//    reporting conventions (an item is either critically out, low,
-//    or fine — never both "low" and "out" simultaneously in the
-//    displayed counts).
-// ✅ Every card is tappable, drives the parent's stock-status
-//    filter. NOTE: useInventoryFilters.ts's "lowStock" filter
-//    itself is unchanged by this fix — this only affects the STATS
-//    CARD COUNT shown here, not which items the tap-to-filter
-//    surfaces. If a fully consistent count-matches-filter guarantee
-//    is wanted later, useInventoryFilters.ts's lowStock predicate
-//    would need the same currentStock > 0 exclusion — deferred, not
-//    done here, since that touches filter logic beyond this
-//    component's own stats aggregation.
-// ✅ "Expiring Soon" counts ONLY classifyExpiry's "expiringSoon"
-//    status, excluding "expired".
-// ✅ Compact cards, Excel-row-height sized (~30px), single
-//    horizontal scrollable strip.
+// ✅ Low Stock/Out of Stock mutually exclusive.
+// ✅ FIX — added activeStockStatus prop so the currently-selected
+//    filter's card is visually highlighted (colored border +
+//    tinted background matching that stat's own color) — previously
+//    tapping a card applied the filter but gave no lasting visual
+//    feedback that it was active, only a brief press-opacity flash.
 // FROZEN
 // ============================================
 
@@ -46,6 +27,7 @@ interface InventoryStatsProps {
   todayISO:                         string;
   restaurantDefaultExpiryAlertDays?: number;
   fmt:                              (value: number) => string;
+  activeStockStatus:                InventoryStockStatus;
   onStatusPress:                    (status: InventoryStockStatus) => void;
 }
 
@@ -59,7 +41,7 @@ interface StatItem {
 }
 
 export function InventoryStats({
-  items, categoryMap, todayISO, restaurantDefaultExpiryAlertDays, fmt, onStatusPress,
+  items, categoryMap, todayISO, restaurantDefaultExpiryAlertDays, fmt, activeStockStatus, onStatusPress,
 }: InventoryStatsProps) {
   const stats = useMemo(() => {
     let totalValue   = 0;
@@ -70,8 +52,6 @@ export function InventoryStats({
     for (const item of items) {
       totalValue += item.totalValue ?? 0;
 
-      // ✅ FIX — mutually exclusive: an item is either Out of Stock
-      // OR Low Stock, never both, per confirmed ERP clarity design.
       if (item.currentStock <= 0) {
         outOfStock += 1;
       } else if (item.isLowStock) {
@@ -114,28 +94,37 @@ export function InventoryStats({
       style={styles.scroll}
       contentContainerStyle={styles.row}
     >
-      {statList.map((stat) => (
-        <TouchableOpacity
-          key={stat.key}
-          style={styles.card}
-          onPress={() => onStatusPress(stat.status)}
-          activeOpacity={0.7}
-        >
-          <MaterialIcons name={stat.icon} size={13} color={stat.color} />
-          <Text style={[styles.value, { color: stat.color }]}>{stat.value}</Text>
-          <Text style={styles.label}>{stat.label}</Text>
-        </TouchableOpacity>
-      ))}
+      {statList.map((stat) => {
+        // ✅ FIX — "all" status is shared by two cards (Total Items,
+        // Total Value) which are informational, not real filters —
+        // only genuinely filterable statuses (lowStock/outOfStock/
+        // expiringSoon) get the active-highlight treatment.
+        const isActive = stat.status !== "all" && activeStockStatus === stat.status;
+        return (
+          <TouchableOpacity
+            key={stat.key}
+            style={[
+              styles.card,
+              isActive && { borderColor: stat.color, borderWidth: 2, backgroundColor: `${stat.color}18` },
+            ]}
+            onPress={() => onStatusPress(stat.status)}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name={stat.icon} size={13} color={stat.color} />
+            <Text style={[styles.value, { color: stat.color }]}>{stat.value}</Text>
+            <Text style={styles.label}>{stat.label}</Text>
+          </TouchableOpacity>
+        );
+      })}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { marginTop: 8, maxHeight: 36 },
+  scroll: { maxHeight: 36 },
   row: {
     flexDirection: "row",
     gap: 6,
-    paddingHorizontal: 16,
     alignItems: "center",
   },
   card: {

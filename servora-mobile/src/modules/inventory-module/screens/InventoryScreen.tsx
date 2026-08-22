@@ -2,32 +2,25 @@
 // SERVORA ERP — InventoryScreen
 // ✅ COMPOSITION ONLY — this screen owns state and data-fetching
 //    (hooks) and wiring.
-// ✅ MAIN VIEW is InventoryTableView (live) — excludes archived
-//    items. UNCHANGED — this screen's existing live-mode wiring
-//    (stats, filters, table, all modals) is completely untouched.
-// ✅ NEW — date navigator (matching MovementHistoryModal.tsx's own
-//    "< Today >" convention) added above the live/historical
-//    content. selectedDate === today → renders the EXISTING,
-//    UNCHANGED live stats/filters/InventoryTableView exactly as
-//    before. selectedDate !== today → renders the NEW
-//    HistoricalInventoryTableView instead, with its own independent
-//    search/category filter state (historicalSearchQuery/
-//    historicalCategoryId) — deliberately NOT sharing state with the
-//    live InventoryFilters, since switching dates shouldn't carry
-//    over a search term typed while looking at live stock, or vice
-//    versa.
-// ✅ useHistoricalInventory()/HistoricalInventoryTableView() are only
-//    invoked when a past date is actually selected — no historical
-//    Firestore subscription runs while the user is on "Today"
-//    (avoids paying the cost of that unbounded movement subscription
-//    unless historical mode is actually in use).
+// ✅ Date navigator — "< Today >" — selectedDate === today → live
+//    stats/filters/InventoryTableView. Past date → 
+//    HistoricalInventoryTableView (own independent search/category
+//    state).
+// ✅ FIX — Search box moved OUT of InventoryFilters and rendered
+//    compactly inline alongside InventoryStats (same row), reclaiming
+//    vertical space for the table per confirmed request.
+// ✅ FIX — activeStockStatus wired through to InventoryStats so the
+//    currently-selected stat card (Low Stock/Out of Stock/Expiring
+//    Soon) is visually highlighted, not just applying the filter
+//    silently.
 // ✅ InventoryTableView, useInventory, useAllInventoryBatches are
-//    NOT modified.
+//    NOT modified beyond InventoryTableView's own separately-
+//    reviewed width/chevron changes.
 // FROZEN
 // ============================================
 
 import React, { useState, useMemo, useCallback, useEffect } from "react";
-import { View, Text, StyleSheet, Platform, Alert, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, Platform, Alert, TouchableOpacity, TextInput } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
 import { useApp } from "../../../context/AppContext";
@@ -61,8 +54,6 @@ import { MovementHistoryModal } from "../components/MovementHistoryModal";
 
 const isWeb = Platform.OS === "web";
 
-// ✅ NEW — shiftDate/formatDateLabel, matching MovementHistoryModal's
-// own convention (UTC-based calendar arithmetic).
 function shiftDate(dateISO: string, deltaDays: number): string {
   const [year, month, day] = dateISO.split("-").map(Number);
   const utcMs = Date.UTC(year, month - 1, day) + deltaDays * 86400000;
@@ -100,11 +91,9 @@ export default function InventoryScreen() {
 
   const today = useMemo(() => todayISO(), []);
 
-  // ✅ NEW — date navigator state.
   const [selectedDate, setSelectedDate] = useState(today);
   const isHistorical = selectedDate !== today;
 
-  // ✅ NEW — independent search/category state for historical mode.
   const [historicalSearchQuery, setHistoricalSearchQuery] = useState("");
   const [historicalCategoryId, setHistoricalCategoryId] = useState<string | null>(null);
 
@@ -294,7 +283,6 @@ export default function InventoryScreen() {
         onSeedStoreDefaults={handleSeedDefaults}
       />
 
-      {/* ✅ NEW — date navigator */}
       <View style={styles.dateNav}>
         <TouchableOpacity onPress={() => setSelectedDate((d) => shiftDate(d, -1))} style={styles.dateNavArrow}>
           <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
@@ -310,7 +298,6 @@ export default function InventoryScreen() {
       </View>
 
       {isHistorical ? (
-        // ✅ NEW — historical mode, own component, own filter state.
         <HistoricalInventoryTableView
           restaurantId={safeRestaurantId}
           selectedDate={selectedDate}
@@ -322,23 +309,33 @@ export default function InventoryScreen() {
           setCategoryId={setHistoricalCategoryId}
         />
       ) : (
-        // ── Live mode — completely unchanged from before. ──
         <>
           {!loading && (
-            <InventoryStats
-              items={items}
-              categoryMap={categoryMap}
-              todayISO={today}
-              restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
-              fmt={fmt}
-              onStatusPress={handleStatusPress}
-            />
+            <View style={styles.statsSearchRow}>
+              <InventoryStats
+                items={items}
+                categoryMap={categoryMap}
+                todayISO={today}
+                restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
+                fmt={fmt}
+                activeStockStatus={filters.stockStatus}
+                onStatusPress={handleStatusPress}
+              />
+              <View style={styles.compactSearchRow}>
+                <MaterialIcons name="search" size={16} color="#94a3b8" />
+                <TextInput
+                  style={styles.compactSearchInput}
+                  value={filters.searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="Search items..."
+                />
+              </View>
+            </View>
           )}
 
           <InventoryFilters
             filters={filters}
             categories={categories}
-            setSearchQuery={setSearchQuery}
             setCategoryId={setCategoryId}
             setSort={setSort}
           />
@@ -436,6 +433,13 @@ const styles = StyleSheet.create({
   },
   dateNavArrow: { padding: 4 },
   dateNavLabel: { fontSize: 14, fontWeight: "800", color: "#1e293b", minWidth: 160, textAlign: "center" },
+  statsSearchRow: { paddingHorizontal: 16, marginTop: 8, gap: 6 },
+  compactSearchRow: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: "#fff", paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 8, borderWidth: 1, borderColor: "#e2e8f0", height: 32,
+  },
+  compactSearchInput: { flex: 1, fontSize: 13, color: "#1e293b" },
   errorBanner: {
     backgroundColor: "#fef2f2", margin: 16, padding: 10, borderRadius: 8,
   },

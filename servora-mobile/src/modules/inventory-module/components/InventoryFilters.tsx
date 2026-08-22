@@ -1,17 +1,15 @@
 // ============================================
 // SERVORA ERP — InventoryFilters Component
-// ✅ Search box, category filter chips, and sort chips.
-// ✅ Pure presentation — all filter STATE lives in
-//    useInventoryFilters.ts, owned by InventoryScreen.tsx.
-// ✅ Category chip list conditionally rendered.
-// ✅ FIX — category chips are now COMPACT, Excel-row-height sized
-//    (~22px), matching the confirmed request — reduced vertical
-//    padding and font size from the previous larger pill style.
+// ✅ Category chips + sort chips. Search box MOVED OUT to be
+//    rendered inline alongside Stats (see InventoryScreen.tsx) —
+//    this component no longer renders its own search row, per the
+//    confirmed request to compact search into the Stats row and
+//    reclaim vertical space for the table.
 // FROZEN
 // ============================================
 
 import React from "react";
-import { View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import {
   InventoryFilters as InventoryFilterState,
@@ -28,26 +26,15 @@ const SORT_OPTIONS: { value: InventorySortOption; label: string; icon: keyof typ
 interface InventoryFiltersProps {
   filters:          InventoryFilterState;
   categories:       Category[];
-  setSearchQuery:   (query: string) => void;
   setCategoryId:    (categoryId: string | null) => void;
   setSort:          (sort: InventorySortOption) => void;
 }
 
 export function InventoryFilters({
-  filters, categories, setSearchQuery, setCategoryId, setSort,
+  filters, categories, setCategoryId, setSort,
 }: InventoryFiltersProps) {
   return (
     <>
-      <View style={styles.searchRow}>
-        <MaterialIcons name="search" size={18} color="#94a3b8" />
-        <TextInput
-          style={styles.searchInput}
-          value={filters.searchQuery}
-          onChangeText={setSearchQuery}
-          placeholder="Search items..."
-        />
-      </View>
-
       {categories.length > 0 && (
         <ScrollView
           horizontal
@@ -119,13 +106,6 @@ export function InventoryFilters({
 }
 
 const styles = StyleSheet.create({
-  searchRow: {
-    flexDirection: "row", alignItems: "center", gap: 8,
-    backgroundColor: "#fff", marginHorizontal: 16, paddingHorizontal: 12, paddingVertical: 8,
-    borderRadius: 10, borderWidth: 1, borderColor: "#e2e8f0",
-  },
-  searchInput: { flex: 1, fontSize: 14, color: "#1e293b" },
-  // ✅ FIX — compact category chips (~22px height)
   categoryScroll: { marginTop: 8, maxHeight: 30 },
   categoryScrollContent: { paddingHorizontal: 16, gap: 6, alignItems: "center" },
   categoryChip: {

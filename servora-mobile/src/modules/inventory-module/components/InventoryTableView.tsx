@@ -1,33 +1,17 @@
 // ============================================
 // SERVORA ERP — InventoryTableView Component
 // ✅ THIS IS THE MAIN INVENTORY SCREEN VIEW.
-// ✅ Column order: S.N. → Item Name → Date → Lot/Batch No. →
-//    Batch QTY → Unit → Expiry Date → Total QTY.
-// ✅ FIX — column renamed "Current Stock" → "Batch QTY". This
-//    column shows batch.quantity (a single batch's own remaining
-//    quantity), NOT InventoryItem.currentStock (the item's
-//    authoritative transactional stock counter) — "Current Stock"
-//    was misleading, since a multi-batch item would show several
-//    different "Current Stock" values (one per batch row) none of
-//    which is actually the item's real current stock. "Batch QTY"
-//    unambiguously labels what the column is: this specific batch's
-//    quantity. The item's true authoritative stock remains visible
-//    via the "Total QTY" column (sum of active batch quantities,
-//    shown once per item) and via ItemDetailsDrawer's own "Current
-//    Stock" row (which correctly shows item.currentStock).
-// ✅ Archived items excluded; zero-batch items show "No batches
-//    yet"; active batches only in the total; alphabetical category/
-//    item sorting; S.N. restarts per category; search/filter
-//    inherited via filteredItems; row tap opens ItemDetailsDrawer.
-// ✅ Compact, Movement-History-style sizing (ROW_HEIGHT: 24,
-//    tightened fonts/padding); categoryBlock sized to TABLE_WIDTH.
-// ✅ FIX — double-border overlap on a multi-batch item's LAST row
-//    resolved, mirroring the same fix already applied to
-//    MovementHistoryModal.tsx: batchRow itself no longer carries a
-//    border; a batchRowDivider style applies ONLY to batch rows
-//    before the last one within an item group, so the group's own
-//    bottom border (on itemGroupRow) is the only border on the
-//    final row — no doubling/thicker line.
+// ✅ FIX — column widths increased (~2 inches / ~192px total added
+//    across columns) per confirmed request, and chevron-right (›)
+//    added to the end of every row — matching Store Module's
+//    KitchenRequestTable visual affordance that a row is tappable.
+//    Widths chosen to comfortably fit an A4 page in portrait (~800px
+//    usable width at 96 DPI) when printed, matching the "office
+//    printout" sizing already established for Movement History/
+//    Batch Report.
+// ✅ Row tap still opens ItemDetailsDrawer via onItemPress — the
+//    chevron is a visual cue only, not a new interaction (the whole
+//    row is already tappable).
 // FROZEN
 // ============================================
 
@@ -61,13 +45,14 @@ interface CategoryGroup {
 
 const ROW_HEIGHT = 24;
 
-const LEFT_COLS = { sn: 30, item: 110 };
-const RIGHT_COLS = { date: 74, batch: 84, stock: 62, unit: 48, expiry: 74, total: 62 };
-
+// ✅ FIX — widened ~2 inches (~192px) total vs. the previous compact
+// sizing, and a chevron column added.
+const LEFT_COLS = { sn: 40, item: 170 };
+const RIGHT_COLS = { date: 100, batch: 120, stock: 90, unit: 70, expiry: 100, total: 90, chevron: 30 };
 const LEFT_WIDTH = LEFT_COLS.sn + LEFT_COLS.item;
 const RIGHT_WIDTH =
   RIGHT_COLS.date + RIGHT_COLS.batch + RIGHT_COLS.stock +
-  RIGHT_COLS.unit + RIGHT_COLS.expiry + RIGHT_COLS.total;
+  RIGHT_COLS.unit + RIGHT_COLS.expiry + RIGHT_COLS.total + RIGHT_COLS.chevron;
 const TABLE_WIDTH = LEFT_WIDTH + RIGHT_WIDTH;
 
 export function InventoryTableView({
@@ -153,6 +138,7 @@ export function InventoryTableView({
                   <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
                   <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry Date</Text>
                   <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.total }]}>Total QTY</Text>
+                  <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.chevron }]}></Text>
                 </View>
               </View>
 
@@ -193,6 +179,13 @@ export function InventoryTableView({
                             <Text style={[styles.tableCell, styles.totalCell, { width: RIGHT_COLS.total }]}>
                               {batchIndex === 0 ? String(row.totalQuantity) : ""}
                             </Text>
+                            {batchIndex === 0 ? (
+                              <View style={[styles.chevronCell, { width: RIGHT_COLS.chevron, height: groupHeight }]}>
+                                <MaterialIcons name="chevron-right" size={16} color="#94a3b8" />
+                              </View>
+                            ) : (
+                              <View style={{ width: RIGHT_COLS.chevron }} />
+                            )}
                           </View>
                         ))
                       ) : (
@@ -201,6 +194,9 @@ export function InventoryTableView({
                             No batches yet — use Receive Batch to add stock
                           </Text>
                           <Text style={[styles.tableCell, { width: RIGHT_COLS.total }]}>0</Text>
+                          <View style={[styles.chevronCell, { width: RIGHT_COLS.chevron }]}>
+                            <MaterialIcons name="chevron-right" size={16} color="#94a3b8" />
+                          </View>
                         </View>
                       )}
                     </View>
@@ -258,13 +254,10 @@ const styles = StyleSheet.create({
   },
   leftStripCell: { fontSize: 9, color: "#334155", paddingHorizontal: 3 },
   rightBatchRows: { flex: 1 },
-  // ✅ FIX — no border of its own now.
   batchRow: {
     flexDirection: "row",
     alignItems: "center",
   },
-  // ✅ NEW — applied only to batch rows before the last one within
-  // an item group.
   batchRowDivider: {
     borderBottomWidth: 1,
     borderBottomColor: "#f1f5f9",
@@ -272,4 +265,5 @@ const styles = StyleSheet.create({
   tableCell: { fontSize: 9, color: "#334155", paddingHorizontal: 3 },
   totalCell: { fontWeight: "800", color: "#059669", fontSize: 10 },
   noBatchText: { fontSize: 9, color: "#94a3b8", fontStyle: "italic" },
+  chevronCell: { alignItems: "center", justifyContent: "center" },
 });

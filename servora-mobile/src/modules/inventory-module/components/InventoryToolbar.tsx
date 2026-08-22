@@ -4,11 +4,14 @@
 //    Defaults" banner, originally inline in InventoryScreen.tsx.
 // ✅ Pure presentation — no state, no Firestore calls.
 // ✅ "Batch Report" and "Archived" buttons alongside "Add Item".
-// ✅ NEW — "Movement History" button, opening MovementHistoryModal.
-//    Placed as a top-level toolbar button for now, per confirmed
-//    decision — if the toolbar grows further with more report-style
-//    buttons, a dropdown/menu consolidation is a natural future
-//    refactor, not needed yet at 4 buttons.
+// ✅ "Movement History" button, opening MovementHistoryModal.
+// ✅ FIX — "History" button now has its own distinct highlight color
+//    (indigo, #4f46e5) instead of the same plain grey as "Archived"
+//    — previously the two buttons were visually indistinguishable
+//    at a glance, making it harder to spot History quickly. The
+//    indigo tint ties it visually to MovementHistoryModal's own
+//    "history" iconography without needing to touch that FROZEN
+//    file.
 // FROZEN
 // ============================================
 
@@ -38,9 +41,9 @@ export function InventoryToolbar({
       </View>
 
       <View style={styles.actionRow}>
-        <TouchableOpacity style={styles.secondaryBtn} onPress={onOpenMovementHistory}>
-          <MaterialIcons name="history" size={16} color="#64748b" />
-          <Text style={styles.secondaryBtnText}>History</Text>
+        <TouchableOpacity style={styles.historyBtn} onPress={onOpenMovementHistory}>
+          <MaterialIcons name="history" size={16} color="#4f46e5" />
+          <Text style={styles.historyBtnText}>History</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.secondaryBtn} onPress={onOpenArchivedItems}>
           <MaterialIcons name="archive" size={16} color="#64748b" />
@@ -88,6 +91,12 @@ const styles = StyleSheet.create({
     flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8,
     paddingHorizontal: 16, paddingTop: 8,
   },
+  historyBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: "#eef2ff", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
+    borderWidth: 1, borderColor: "#c7d2fe",
+  },
+  historyBtnText: { color: "#4f46e5", fontWeight: "700", fontSize: 13 },
   secondaryBtn: {
     flexDirection: "row", alignItems: "center", gap: 6,
     backgroundColor: "#f1f5f9", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
