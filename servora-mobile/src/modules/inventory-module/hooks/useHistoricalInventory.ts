@@ -6,49 +6,49 @@
 //    this hook only fetches data and hands it to that service.
 // ✅ Batches — reuses useAllInventoryBatches() UNCHANGED (live
 //    subscription, restaurant-wide).
+// ✅ FIX — categoryId metadata cross-reference. HistoricalItemStock
+//    now carries categoryId, sourced from the CALLER-SUPPLIED
+//    inventoryItems list (already loaded by InventoryScreen via its
+//    own useInventory() call) via an inventoryId join — NOT a new,
+//    duplicate Firestore subscription. Historical QUANTITY remains
+//    derived exclusively from batches+movements (the pure replay);
+//    categoryId is purely UI-filtering metadata layered on top,
+//    joined by inventoryId. This keeps the historical quantity's
+//    source of truth exactly where it belongs while letting the UI
+//    filter historical results by category.
+// ✅ FIX — archived items are NEVER excluded from historical results.
+//    isActive === false is a LIVE-inventory concept (used by
+//    useItemSearch.ts to keep Kitchen from requesting a discontinued
+//    item going forward) — it has no bearing on whether that item
+//    genuinely HAD stock on some past date. If an item is archived
+//    today but had visible batches on August 20th, the August 20th
+//    historical view still shows it. This hook does not read or
+//    filter on isActive at all — it simply doesn't have an opinion
+//    on it, by design.
+// ✅ Items with no matching metadata (e.g. the inventoryId no longer
+//    exists in the caller's inventoryItems list at all — a rare
+//    edge case, such as a fully deleted item that still has old
+//    batch/movement history) fall back to categoryId: null rather
+//    than being silently dropped from the historical results —
+//    historical stock visibility should never depend on whether the
+//    live item document still exists.
 // ✅ CONFIRMED ARCHITECTURE — Option A: full movement history is
-//    loaded ONCE via a single live subscription (onSnapshot, no
-//    limit()/range query), then kept in memory. Date navigation
-//    NEVER triggers a new Firestore query — it only re-runs the pure
-//    replay function against the already-loaded movements. This is
-//    a deliberate simplicity choice for the project's current scale
-//    (hundreds to low-thousands of movements per restaurant) —
-//    NOT the final architecture at unbounded scale.
-// ⚠️ KNOWN SCALING LIMIT (intentionally not solved here — see
-//    review discussion): this hook downloads and holds ALL
-//    historical movements for the restaurant, unbounded, for as
-//    long as it's mounted. At much higher movement volumes (tens of
-//    thousands+), this becomes a real memory/bandwidth concern. The
-//    architecture is deliberately layered so a future migration to
-//    incremental, coverage-range-based caching (fetch only the
-//    missing date range when navigating further back, track
-//    cachedFrom/cachedTo) can replace ONLY the movement-fetching
-//    useEffect below, without touching
-//    historical-batch-replay-service.ts (the pure replay function)
-//    or this hook's public return shape at all. Do not treat the
-//    "load everything" approach here as a permanent architectural
-//    decision — it's an explicitly deferred tradeoff, revisit once
-//    real movement-volume data justifies the added complexity.
-// ✅ CORRECTED CLAIM — for selectedDate === today, this hook's
-//    replayed result is EXPECTED to match InventoryItem.currentStock
-//    under normal conditions (both are derived from the same
-//    movement/batch history), but this is NOT a strictly GUARANTEED
-//    invariant enforced anywhere — currentStock is a denormalized,
-//    separately-written field (see inventory-repository.ts/
-//    inventory-service.ts), and a data-consistency drift between it
-//    and the batch/movement history (however rare) would surface as
-//    a real difference here. This hook does not special-case "today"
-//    to force-match currentStock — it always replays honestly from
-//    batches+movements, which is precisely what makes it useful for
-//    catching such drift if it ever occurs, rather than papering
-//    over it.
-// ✅ Replay runs via useMemo, recomputing ONLY when batches,
+//    loaded ONCE via a single live subscription, then kept in
+//    memory. Date navigation never triggers a new Firestore query.
+// ⚠️ KNOWN SCALING LIMIT (intentionally deferred): this hook
+//    downloads and holds ALL historical movements for the
+//    restaurant, unbounded. A future migration to incremental,
+//    coverage-range-based caching can replace only the movement-
+//    fetching useEffect below without touching the pure replay
+//    service or this hook's public return shape.
+// ✅ For selectedDate === today, this hook's replayed result is
+//    EXPECTED (not strictly guaranteed) to match
+//    InventoryItem.currentStock — both derive from the same
+//    movement/batch history, but currentStock is a separately-
+//    written denormalized field, so this hook always replays
+//    honestly rather than special-casing "today" to force a match.
+// ✅ Replay runs via useMemo, recomputing only when batches,
 //    movements, or selectedDate actually change.
-// ✅ Item-level aggregation: for each InventoryItem, historicalStock
-//    = sum of quantity across all VISIBLE HistoricalBatchState
-//    entries whose batch belongs to that item. An item with zero
-//    visible batches as of selectedDate is excluded from
-//    itemsWithHistoricalStock entirely.
 // FROZEN
 // ============================================
 
@@ -58,6 +58,7 @@ import { db } from "../../../firebase";
 import { COL, RCOL } from "../../../constants/firestore-collections";
 import { StockMovement } from "../../stock-movement-module/types/stock-movement";
 import { InventoryBatch } from "../types/inventory-batch";
+import { InventoryItem } from "../types/inventory";
 import { useAllInventoryBatches } from "./useAllInventoryBatches";
 import { replayBatchesAsOfDate, HistoricalBatchState } from "../services/historical-batch-replay-service";
 
@@ -68,6 +69,7 @@ function movementsCollection(restaurantId: string) {
 export interface HistoricalItemStock {
   inventoryId:      string;
   itemName:         string;
+  categoryId:       string | null;
   unit:             string;
   historicalStock:  number;
   batches:          HistoricalBatchState[];
@@ -83,7 +85,8 @@ export interface UseHistoricalInventoryResult {
 
 export function useHistoricalInventory(
   restaurantId: string | null | undefined,
-  selectedDate: string
+  selectedDate: string,
+  inventoryItems: InventoryItem[]
 ): UseHistoricalInventoryResult {
   const { batches, loading: batchesLoading, error: batchesError } = useAllInventoryBatches(restaurantId);
 
@@ -127,6 +130,11 @@ export function useHistoricalInventory(
     const batchByInventoryId = new Map<string, InventoryBatch>();
     for (const b of batches) batchByInventoryId.set(b.id, b);
 
+    // ✅ FIX — categoryId metadata join, by inventoryId, from the
+    // caller-supplied inventoryItems list (no new subscription).
+    const itemMetaByInventoryId = new Map<string, InventoryItem>();
+    for (const item of inventoryItems) itemMetaByInventoryId.set(item.id, item);
+
     const byItem = new Map<string, HistoricalItemStock>();
 
     for (const state of batchStates) {
@@ -134,9 +142,16 @@ export function useHistoricalInventory(
       if (!batch) continue;
 
       const existing = byItem.get(batch.inventoryId);
+      const meta = itemMetaByInventoryId.get(batch.inventoryId);
+
       const entry: HistoricalItemStock = existing ?? {
         inventoryId:      batch.inventoryId,
         itemName:         state.itemName,
+        // ✅ Never excludes archived items — categoryId is looked up
+        // regardless of meta.isActive; if meta is missing entirely
+        // (e.g. item fully deleted), falls back to null rather than
+        // dropping this item's historical stock.
+        categoryId:       meta?.categoryId ?? null,
         unit:             state.unit,
         historicalStock:  0,
         batches:          [],
@@ -154,7 +169,7 @@ export function useHistoricalInventory(
     }
 
     return Array.from(byItem.values()).filter((item) => item.batches.length > 0);
-  }, [batchStates, batches]);
+  }, [batchStates, batches, inventoryItems]);
 
   return {
     batchStates,

@@ -2,25 +2,33 @@
 // SERVORA ERP — InventoryScreen
 // ✅ COMPOSITION ONLY — this screen owns state and data-fetching
 //    (hooks) and wiring.
-// ✅ MAIN VIEW is InventoryTableView — excludes archived items.
-// ✅ useAllInventoryBatches(restaurantId) called here.
-// ✅ Add Item creates a real initial batch via
-//    createInventoryItemWithInitialBatch(), with the user-entered
-//    batchNo correctly passed through.
-// ✅ Archived Items wiring via ArchivedItemsModal.
-// ✅ Movement History wiring via MovementHistoryModal.
-// ✅ NEW — MovementHistoryModal now receives `items`/`categories`
-//    (both already loaded by this screen via useInventory()/
-//    useCategoriesForPicker()) so it can group movements by the
-//    moved item's category — no new Firestore subscription was
-//    created for this, the data was already here.
-// ✅ Row tap opens ItemDetailsDrawer. Search/Filter/Sort and Stats
-//    tap-to-filter continue to drive filteredItems.
+// ✅ MAIN VIEW is InventoryTableView (live) — excludes archived
+//    items. UNCHANGED — this screen's existing live-mode wiring
+//    (stats, filters, table, all modals) is completely untouched.
+// ✅ NEW — date navigator (matching MovementHistoryModal.tsx's own
+//    "< Today >" convention) added above the live/historical
+//    content. selectedDate === today → renders the EXISTING,
+//    UNCHANGED live stats/filters/InventoryTableView exactly as
+//    before. selectedDate !== today → renders the NEW
+//    HistoricalInventoryTableView instead, with its own independent
+//    search/category filter state (historicalSearchQuery/
+//    historicalCategoryId) — deliberately NOT sharing state with the
+//    live InventoryFilters, since switching dates shouldn't carry
+//    over a search term typed while looking at live stock, or vice
+//    versa.
+// ✅ useHistoricalInventory()/HistoricalInventoryTableView() are only
+//    invoked when a past date is actually selected — no historical
+//    Firestore subscription runs while the user is on "Today"
+//    (avoids paying the cost of that unbounded movement subscription
+//    unless historical mode is actually in use).
+// ✅ InventoryTableView, useInventory, useAllInventoryBatches are
+//    NOT modified.
 // FROZEN
 // ============================================
 
 import React, { useState, useMemo, useCallback, useEffect } from "react";
-import { View, Text, StyleSheet, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, Platform, Alert, TouchableOpacity } from "react-native";
+import { MaterialIcons } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
 import { useApp } from "../../../context/AppContext";
 import { usePermission } from "../../../hooks/usePermission";
@@ -42,6 +50,7 @@ import { InventoryToolbar } from "../components/InventoryToolbar";
 import { InventoryStats } from "../components/InventoryStats";
 import { InventoryFilters } from "../components/InventoryFilters";
 import { InventoryTableView } from "../components/InventoryTableView";
+import { HistoricalInventoryTableView } from "../components/HistoricalInventoryTableView";
 import { InventoryModal } from "../components/InventoryModal";
 import { StockAdjustmentModal } from "../components/StockAdjustmentModal";
 import { ItemDetailsDrawer } from "../components/ItemDetailsDrawer";
@@ -51,6 +60,27 @@ import { ArchivedItemsModal } from "../components/ArchivedItemsModal";
 import { MovementHistoryModal } from "../components/MovementHistoryModal";
 
 const isWeb = Platform.OS === "web";
+
+// ✅ NEW — shiftDate/formatDateLabel, matching MovementHistoryModal's
+// own convention (UTC-based calendar arithmetic).
+function shiftDate(dateISO: string, deltaDays: number): string {
+  const [year, month, day] = dateISO.split("-").map(Number);
+  const utcMs = Date.UTC(year, month - 1, day) + deltaDays * 86400000;
+  const result = new Date(utcMs);
+  const yyyy = result.getUTCFullYear();
+  const mm = String(result.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(result.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatDateLabel(dateISO: string, today: string): string {
+  if (dateISO === today) return "Today";
+  const [year, month, day] = dateISO.split("-").map(Number);
+  const d = new Date(Date.UTC(year, month - 1, day));
+  return d.toLocaleDateString(undefined, {
+    weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
+  });
+}
 
 export default function InventoryScreen() {
   const { restaurant, restaurantId, fmt } = useApp();
@@ -69,6 +99,14 @@ export default function InventoryScreen() {
   }, [categories]);
 
   const today = useMemo(() => todayISO(), []);
+
+  // ✅ NEW — date navigator state.
+  const [selectedDate, setSelectedDate] = useState(today);
+  const isHistorical = selectedDate !== today;
+
+  // ✅ NEW — independent search/category state for historical mode.
+  const [historicalSearchQuery, setHistoricalSearchQuery] = useState("");
+  const [historicalCategoryId, setHistoricalCategoryId] = useState<string | null>(null);
 
   const {
     filters, filteredItems,
@@ -256,39 +294,71 @@ export default function InventoryScreen() {
         onSeedStoreDefaults={handleSeedDefaults}
       />
 
-      {!loading && (
-        <InventoryStats
-          items={items}
-          categoryMap={categoryMap}
-          todayISO={today}
-          restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
-          fmt={fmt}
-          onStatusPress={handleStatusPress}
+      {/* ✅ NEW — date navigator */}
+      <View style={styles.dateNav}>
+        <TouchableOpacity onPress={() => setSelectedDate((d) => shiftDate(d, -1))} style={styles.dateNavArrow}>
+          <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
+        </TouchableOpacity>
+        <Text style={styles.dateNavLabel}>{formatDateLabel(selectedDate, today)}</Text>
+        <TouchableOpacity
+          onPress={() => setSelectedDate((d) => shiftDate(d, 1))}
+          style={styles.dateNavArrow}
+          disabled={selectedDate >= today}
+        >
+          <MaterialIcons name="chevron-right" size={22} color={selectedDate >= today ? "#cbd5e1" : "#1e293b"} />
+        </TouchableOpacity>
+      </View>
+
+      {isHistorical ? (
+        // ✅ NEW — historical mode, own component, own filter state.
+        <HistoricalInventoryTableView
+          restaurantId={safeRestaurantId}
+          selectedDate={selectedDate}
+          categories={categories}
+          inventoryItems={items}
+          searchQuery={historicalSearchQuery}
+          setSearchQuery={setHistoricalSearchQuery}
+          categoryId={historicalCategoryId}
+          setCategoryId={setHistoricalCategoryId}
         />
+      ) : (
+        // ── Live mode — completely unchanged from before. ──
+        <>
+          {!loading && (
+            <InventoryStats
+              items={items}
+              categoryMap={categoryMap}
+              todayISO={today}
+              restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
+              fmt={fmt}
+              onStatusPress={handleStatusPress}
+            />
+          )}
+
+          <InventoryFilters
+            filters={filters}
+            categories={categories}
+            setSearchQuery={setSearchQuery}
+            setCategoryId={setCategoryId}
+            setSort={setSort}
+          />
+
+          {itemsError && (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorBannerText}>{itemsError}</Text>
+            </View>
+          )}
+
+          <InventoryTableView
+            filteredItems={filteredItems}
+            allItemsCount={items.length}
+            categories={categories}
+            batches={allBatches}
+            loading={loading}
+            onItemPress={openDrawer}
+          />
+        </>
       )}
-
-      <InventoryFilters
-        filters={filters}
-        categories={categories}
-        setSearchQuery={setSearchQuery}
-        setCategoryId={setCategoryId}
-        setSort={setSort}
-      />
-
-      {itemsError && (
-        <View style={styles.errorBanner}>
-          <Text style={styles.errorBannerText}>{itemsError}</Text>
-        </View>
-      )}
-
-      <InventoryTableView
-        filteredItems={filteredItems}
-        allItemsCount={items.length}
-        categories={categories}
-        batches={allBatches}
-        loading={loading}
-        onItemPress={openDrawer}
-      />
 
       <ItemDetailsDrawer
         visible={!!drawerItem}
@@ -360,6 +430,12 @@ export default function InventoryScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f8fafc" },
+  dateNav: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12,
+    paddingVertical: 8, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
+  },
+  dateNavArrow: { padding: 4 },
+  dateNavLabel: { fontSize: 14, fontWeight: "800", color: "#1e293b", minWidth: 160, textAlign: "center" },
   errorBanner: {
     backgroundColor: "#fef2f2", margin: 16, padding: 10, borderRadius: 8,
   },
