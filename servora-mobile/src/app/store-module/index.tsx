@@ -13,10 +13,16 @@
 //      REJECTED → RequestDetailModal (read-only)
 // ✅ Single-date model (StoreDateNavigator) — no tab system.
 // ✅ Stats (StoreStats) are ALWAYS restaurant-wide totals.
-// ✅ NEW — batchAllocationsByRequestId (from useStoreRequests) is
-//    now passed through to KitchenRequestTable, so the table's
-//    Batch column can show which batch(es) each ISSUED request
-//    actually drew from.
+// ✅ batchAllocationsByRequestId (from useStoreRequests) passed
+//    through to KitchenRequestTable for the Lot/Batch No. column.
+// ✅ FIX — actorName fallback changed from `??` to `.trim() || ...`.
+//    Root cause: a real user's Firestore document was found to have
+//    name: "" (an empty string, not null/undefined) — `??` treats
+//    "" as a valid value and never falls through to email/"Store",
+//    so Approve/Reject/Issue actions were silently recording an
+//    EMPTY actor name. `.trim() || ...` treats any empty-or-
+//    whitespace-only name as falsy, correctly falling back to email,
+//    then "Store" if even that's unavailable.
 // 🔒 CONFIRMED BUSINESS RULE — Partial Issue: issuing less than
 //    orderQuantity still marks the request ISSUED (no
 //    PARTIALLY_ISSUED status, no remainder tracking).
@@ -61,7 +67,8 @@ export default function StoreScreen() {
   const [issueTarget, setIssueTarget] = useState<IngredientRequest | null>(null);
   const [detailTarget, setDetailTarget] = useState<IngredientRequest | null>(null);
 
-  const actorName = userProfile?.name ?? auth.currentUser?.email ?? "Store";
+  // ✅ FIX — .trim() || ... instead of ?? — see FROZEN header.
+  const actorName = userProfile?.name?.trim() || auth.currentUser?.email || "Store";
 
   const showAlert = (title: string, msg: string) => {
     if (Platform.OS === "web") {

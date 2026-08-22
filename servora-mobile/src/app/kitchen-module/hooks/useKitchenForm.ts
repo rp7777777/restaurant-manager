@@ -1,5 +1,17 @@
 // ============================================
 // SERVORA ERP — useKitchenForm Hook
+// ✅ FIX — requestedBy fallback changed from `??` (nullish
+//    coalescing) to `.trim() || ...` (logical OR with trim). Root
+//    cause: a real user's Firestore document was found to have
+//    name: "" (an empty string, not null/undefined) — `??` treats
+//    "" as a valid value and never falls through to the email/
+//    "Chef" fallback, so the request silently saved with an EMPTY
+//    requestedBy, which then showed as "Requested by: Unknown" in
+//    Store Module's KitchenRequestTable. `.trim() || ...` treats any
+//    empty-or-whitespace-only name as falsy, so it now correctly
+//    falls back to the user's email, then finally to "Chef" if even
+//    that's unavailable — regardless of whether userProfile.name is
+//    undefined, null, "", or just whitespace.
 // ============================================
 
 import { useState } from "react";
@@ -111,10 +123,11 @@ export function useKitchenForm(
         unit: item.unit,
       }));
 
+      // ✅ FIX — .trim() || ... instead of ?? — see FROZEN header.
       await sendKitchenRequest({
         items,
         requiredDate,
-        requestedBy: userProfile?.name ?? auth.currentUser?.email ?? "Chef",
+        requestedBy: userProfile?.name?.trim() || auth.currentUser?.email || "Chef",
         note: note.trim(),
         restaurantId,
         userId,
