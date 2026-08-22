@@ -95,11 +95,14 @@ export function InventoryStats({
       contentContainerStyle={styles.row}
     >
       {statList.map((stat) => {
-        // ✅ FIX — "all" status is shared by two cards (Total Items,
-        // Total Value) which are informational, not real filters —
-        // only genuinely filterable statuses (lowStock/outOfStock/
-        // expiringSoon) get the active-highlight treatment.
-        const isActive = stat.status !== "all" && activeStockStatus === stat.status;
+        // ✅ FIX — "all" status cards (Total Items, Total Value) now
+        // also highlight when active, matching the confirmed request
+        // that every card give visual feedback when tapped —
+        // previously these two were deliberately excluded since "all"
+        // isn't a "real" filter in the same sense as
+        // lowStock/outOfStock/expiringSoon, but visual consistency
+        // across all 5 cards was confirmed to matter more here.
+        const isActive = activeStockStatus === stat.status;
         return (
           <TouchableOpacity
             key={stat.key}
