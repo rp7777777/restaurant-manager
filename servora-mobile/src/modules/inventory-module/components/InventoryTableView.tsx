@@ -134,7 +134,7 @@ export function InventoryTableView({
                 <View style={styles.rightHeaderGroup}>
                   <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.date }]}>Date</Text>
                   <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
-                  <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.stock }]}>Batch QTY</Text>
+                  <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.stock }]}>Lot/Batch QTY</Text>
                   <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
                   <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry Date</Text>
                   <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.total }]}>Total QTY</Text>

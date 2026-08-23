@@ -1,28 +1,32 @@
 // ============================================
 // SERVORA ERP — InventoryScreen
-// ✅ COMPOSITION ONLY — this screen owns state and data-fetching
-//    (hooks) and wiring.
-// ✅ Date navigator — "< Today >" — selectedDate === today → live
-//    stats/filters/InventoryTableView. Past date → 
-//    HistoricalInventoryTableView (own independent search/category
-//    state).
-// ✅ FIX — Search box moved OUT of InventoryFilters and rendered
-//    compactly inline alongside InventoryStats (same row), reclaiming
-//    vertical space for the table per confirmed request.
-// ✅ FIX — activeStockStatus wired through to InventoryStats so the
-//    currently-selected stat card (Low Stock/Out of Stock/Expiring
-//    Soon) is visually highlighted, not just applying the filter
-//    silently.
-// ✅ InventoryTableView, useInventory, useAllInventoryBatches are
-//    NOT modified beyond InventoryTableView's own separately-
-//    reviewed width/chevron changes.
+// ✅ COMPOSITION ONLY — owns state and data-fetching (hooks), wiring.
+// ✅ Date navigator — Today (live) vs Past date (historical).
+// ✅ MAJOR — handleSubmit branches on InventoryFormSubmitPayload's
+//    discriminated union:
+//      newItem      → createInventoryItemWithInitialBatch()
+//      existingItem → receiveBatch() (FROZEN, unmodified)
+//      edit         → updateInventoryItem() (unchanged)
+// ✅ handleAddSupplier navigates to /suppliers (Supplier module's own
+//    creation UI — this form never duplicates it).
+// ✅ ARCHITECTURE NOTE — purchaseDate is currently set equal to
+//    receivedDate for the "existingItem" (Receive Batch) path, since
+//    this Add Item form has no separate Purchase Date field and no
+//    Purchase Order integration exists yet. This is an ACCEPTED,
+//    DOCUMENTED assumption for now — revisit when Purchase Order
+//    module integration is built, since purchaseDate (when the
+//    invoice/purchase actually happened) and receivedDate (when
+//    stock physically arrived) are conceptually different dates that
+//    should NOT be permanently conflated.
+// ✅ InventoryTableView, useInventory, useAllInventoryBatches are NOT
+//    modified.
 // FROZEN
 // ============================================
 
 import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { View, Text, StyleSheet, Platform, Alert, TouchableOpacity, TextInput } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useLocalSearchParams } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { useApp } from "../../../context/AppContext";
 import { usePermission } from "../../../hooks/usePermission";
 import { useInventory } from "../hooks/useInventory";
@@ -33,10 +37,9 @@ import { useAllInventoryBatches } from "../hooks/useAllInventoryBatches";
 import {
   updateInventoryItem, deleteInventoryItem,
 } from "../repository/inventory-repository";
-import { createInventoryItemWithInitialBatch } from "../services/inventory-service";
-import {
-  InventoryItem, CreateInventoryItemInput, UpdateInventoryItemInput,
-} from "../types/inventory";
+import { createInventoryItemWithInitialBatch, receiveBatch } from "../services/inventory-service";
+import { InventoryItem } from "../types/inventory";
+import { InventoryFormSubmitPayload } from "../hooks/useInventoryForm";
 import { seedDefaultStoreTaxonomy } from "../../store-module/services/seed-store-defaults-service";
 import { todayISO } from "../../../utils/date-utils";
 import { InventoryToolbar } from "../components/InventoryToolbar";
@@ -76,6 +79,7 @@ function formatDateLabel(dateISO: string, today: string): string {
 export default function InventoryScreen() {
   const { restaurant, restaurantId, fmt } = useApp();
   const canEditInventory = usePermission("edit_inventory");
+  const router = useRouter();
 
   const { items, loading: itemsLoading, error: itemsError } = useInventory(restaurantId);
 
@@ -199,21 +203,37 @@ export default function InventoryScreen() {
     setShowMovementHistory(false);
   }, []);
 
-  const handleSubmit = useCallback(async (
-    input: CreateInventoryItemInput | UpdateInventoryItemInput,
-    receivedDate?: string
-  ) => {
+  const handleAddSupplier = useCallback(() => {
+    router.push("/suppliers");
+  }, [router]);
+
+  // ✅ Branches on InventoryFormSubmitPayload's discriminated union —
+  // see FROZEN header.
+  const handleSubmit = useCallback(async (payload: InventoryFormSubmitPayload) => {
     if (!restaurantId || saving) return;
     setSaving(true);
     try {
-      if (editingItem) {
-        await updateInventoryItem(restaurantId, editingItem.id, editingItem, input);
+      if (payload.mode === "edit") {
+        if (!editingItem) throw new Error("No item selected for editing");
+        await updateInventoryItem(restaurantId, editingItem.id, editingItem, payload.input);
+      } else if (payload.mode === "existingItem") {
+        await receiveBatch(restaurantId, payload.existingItem, {
+          inventoryId:  payload.existingItem.id,
+          itemName:     payload.existingItem.itemName,
+          batchNo:      payload.batch.batchNo,
+          quantity:     payload.batch.quantity,
+          unit:         payload.batch.unit,
+          unitCost:     payload.batch.unitCost,
+          purchaseDate: payload.batch.receivedDate ?? today,
+          receivedDate: payload.batch.receivedDate ?? today,
+          expiryDate:   payload.batch.expiryDate,
+          supplierId:   payload.batch.supplierId,
+        });
       } else {
-        const createInput = input as CreateInventoryItemInput;
         await createInventoryItemWithInitialBatch(restaurantId, {
-          itemInput: createInput,
-          batchNo: createInput.batchNo,
-          receivedDate,
+          itemInput: payload.input,
+          batchNo: payload.input.batchNo,
+          receivedDate: payload.receivedDate,
         });
       }
       closeForm();
@@ -224,7 +244,7 @@ export default function InventoryScreen() {
     } finally {
       setSaving(false);
     }
-  }, [restaurantId, saving, editingItem, closeForm]);
+  }, [restaurantId, saving, editingItem, closeForm, today]);
 
   const handleDelete = useCallback((item: InventoryItem) => {
     if (!restaurantId) return;
@@ -379,9 +399,11 @@ export default function InventoryScreen() {
         canEditInventory={canEditInventory}
         categoryGroups={categoryGroups}
         suppliers={suppliers}
+        allItems={items}
         onSubmit={handleSubmit}
         onCancel={closeForm}
         onDelete={handleDelete}
+        onAddSupplier={handleAddSupplier}
       />
 
       <StockAdjustmentModal

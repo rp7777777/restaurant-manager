@@ -1,21 +1,19 @@
 // ============================================
 // SERVORA ERP — InventoryModal Component
-// ✅ EVOLUTIONARY EXTRACTION — this is the exact Modal + header
-//    (close icon, delete icon in edit mode) + InventoryForm JSX
-//    that previously lived inline inside InventoryScreen.tsx's
-//    render body. Behavior/styling unchanged; only the layer moved.
 // ✅ Pure presentation/composition — no state, no Firestore calls.
-//    All data (visibility, editing item, category/supplier lists)
-//    and handlers (submit, cancel, delete) are passed in as props
-//    from InventoryScreen.tsx.
+//    All data and handlers are passed in as props from
+//    InventoryScreen.tsx.
 // ✅ Delete icon only shown when editingItem exists AND
 //    canEditInventory is true.
-// ✅ NEW — onSubmit signature extended with an optional second
-//    parameter (receivedDate) — a pure pass-through change. This
-//    component still does nothing with it itself; it only forwards
-//    whatever InventoryForm.tsx calls onSubmit with, straight to
-//    the parent (InventoryScreen.tsx), unchanged from how it always
-//    forwarded the first argument.
+// ✅ FIX — onSubmit signature updated to InventoryFormSubmitPayload
+//    (the discriminated union: newItem/existingItem/edit) matching
+//    InventoryForm.tsx's redesigned submit contract. This modal
+//    still does nothing with the payload itself — pure pass-through
+//    to InventoryScreen.tsx, which now branches on payload.mode.
+// ✅ NEW — allItems and onAddSupplier props added, both pure pass-
+//    through to InventoryForm.tsx: allItems powers the new Supplier
+//    → Category → Search-Existing-Item flow (useExistingItemSearch),
+//    onAddSupplier is the "+ New Supplier" navigation callback.
 // FROZEN
 // ============================================
 
@@ -23,7 +21,8 @@ import React from "react";
 import { View, Modal, TouchableOpacity, StyleSheet, Platform } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { InventoryForm } from "./InventoryForm";
-import { InventoryItem, CreateInventoryItemInput, UpdateInventoryItemInput } from "../types/inventory";
+import { InventoryItem } from "../types/inventory";
+import { InventoryFormSubmitPayload } from "../hooks/useInventoryForm";
 import { CategoryPickerGroup } from "../hooks/useCategoriesForPicker";
 import { Supplier } from "../../supplier-module/types/supplier";
 
@@ -33,14 +32,16 @@ interface InventoryModalProps {
   canEditInventory: boolean;
   categoryGroups:   CategoryPickerGroup[];
   suppliers:        Supplier[];
-  onSubmit:         (input: CreateInventoryItemInput | UpdateInventoryItemInput, receivedDate?: string) => void | Promise<void>;
+  allItems:         InventoryItem[];
+  onSubmit:         (payload: InventoryFormSubmitPayload) => void | Promise<void>;
   onCancel:         () => void;
   onDelete:         (item: InventoryItem) => void;
+  onAddSupplier:    () => void;
 }
 
 export function InventoryModal({
-  visible, editingItem, canEditInventory, categoryGroups, suppliers,
-  onSubmit, onCancel, onDelete,
+  visible, editingItem, canEditInventory, categoryGroups, suppliers, allItems,
+  onSubmit, onCancel, onDelete, onAddSupplier,
 }: InventoryModalProps) {
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onCancel}>
@@ -60,8 +61,10 @@ export function InventoryModal({
           initial={editingItem}
           categoryGroups={categoryGroups}
           suppliers={suppliers}
+          allItems={allItems}
           onSubmit={onSubmit}
           onCancel={onCancel}
+          onAddSupplier={onAddSupplier}
         />
       </View>
     </Modal>
