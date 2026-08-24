@@ -3,16 +3,24 @@
 // ✅ Real Firestore data via useSuppliers (FROZEN hook).
 // ✅ Simple client-side name search.
 // ✅ Tapping a card opens the SAME SupplierForm in edit mode.
-// ✅ NEW — auto-opens the Create form when navigated to with
-//    ?autoOpen=create (used by InventoryForm.tsx's "+ New Supplier"
-//    button — tapping it now lands directly on the Add Supplier
-//    form instead of just the Suppliers list). Guarded by a ref so
-//    it only triggers once per navigation — closing the form
-//    afterward and staying on this screen never re-triggers it.
+// ✅ FIX — auto-open-on-navigation (?autoOpen=create) now runs via
+//    an EMPTY-dependency-array useEffect (fires exactly once, on
+//    this component instance's initial mount), reading params
+//    directly rather than depending on params.autoOpen across
+//    re-renders. The previous version depended on [params.autoOpen]
+//    with a separate useRef guard — this caused a real bug: opening
+//    the form bumps formKey, which some navigation/re-render paths
+//    on web caused to interact badly with the ref-based guard,
+//    producing a "blink" (form opens then immediately closes) rather
+//    than a stable open form. An empty-dependency effect has no such
+//    interaction — it simply cannot re-fire after mount, regardless
+//    of how many times this component re-renders afterward, making
+//    the ref guard unnecessary and removing the failure mode
+//    entirely.
 // PHASE 8.3
 // ============================================
 
-import React, { useMemo, useState, useCallback, useEffect, useRef } from "react";
+import React, { useMemo, useState, useCallback, useEffect } from "react";
 import {
   View, Text, TextInput, FlatList, TouchableOpacity,
   StyleSheet, Platform, ActivityIndicator,
@@ -40,16 +48,18 @@ export default function SuppliersScreen() {
   const [formState, setFormState] = useState<FormMode>({ mode: "closed" });
   const [formKey, setFormKey] = useState(0);
 
-  // ✅ NEW — auto-open on ?autoOpen=create, see FROZEN header.
   const params = useLocalSearchParams<{ autoOpen?: string }>();
-  const autoOpenHandled = useRef(false);
+
+  // ✅ FIX — empty dependency array: fires exactly once, on mount.
+  // See FROZEN header for why the previous [params.autoOpen] +
+  // useRef guard version could "blink."
   useEffect(() => {
-    if (params.autoOpen === "create" && !autoOpenHandled.current) {
-      autoOpenHandled.current = true;
+    if (params.autoOpen === "create") {
       setFormKey((k) => k + 1);
       setFormState({ mode: "create" });
     }
-  }, [params.autoOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filteredSuppliers = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();

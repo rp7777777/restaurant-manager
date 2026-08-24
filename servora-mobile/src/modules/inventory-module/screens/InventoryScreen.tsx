@@ -203,9 +203,25 @@ export default function InventoryScreen() {
     setShowMovementHistory(false);
   }, []);
 
+  // ✅ FIX — closes the Add Item modal BEFORE navigating to Suppliers.
+  // Previously the Inventory Modal (a React Native <Modal
+  // visible={showForm}>) stayed mounted/open while navigating — on
+  // web, the still-visible modal overlay interfered with the
+  // Suppliers screen's own render, causing the Add Supplier form to
+  // appear to open then immediately vanish ("blink"). Confirmed via
+  // direct testing: navigating to Suppliers from the Sidebar (no
+  // Inventory Modal open) worked correctly every time, isolating the
+  // bug to the competing-modal scenario specifically. Closing the
+  // modal first (closeForm()) ensures a clean navigation with no
+  // overlay left behind.
+  // ⚠️ ACCEPTED TRADE-OFF — any unsaved Add Item form data (fields
+  // typed before tapping "New Supplier") is discarded when the modal
+  // closes. Deliberately not preserved as a draft — that would need
+  // separate draft/navigation-state architecture, out of scope here.
   const handleAddSupplier = useCallback(() => {
+    closeForm();
     router.push("/suppliers?autoOpen=create");
-  }, [router]);
+  }, [router, closeForm]);
 
   // ✅ Branches on InventoryFormSubmitPayload's discriminated union —
   // see FROZEN header.
