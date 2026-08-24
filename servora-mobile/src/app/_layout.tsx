@@ -8,6 +8,14 @@
 // ✅ Avatar — user initials from AppContext
 // ✅ Stack animation — fade + gesture
 // ✅ New translation system — 14 languages
+// ✅ NEW — InventoryFormDraftProvider mounted here (app root, inside
+//    AppProvider), NOT scoped to the Inventory module alone. This is
+//    required because the "New Supplier" detour crosses ROUTES
+//    (Inventory ↔ Suppliers) — a Provider scoped only inside
+//    Inventory's own screen tree would be unmounted the moment the
+//    user navigates to /suppliers, losing the draft entirely.
+//    Mounting it here means the draft survives the full Inventory →
+//    Suppliers → back round-trip.
 // FROZEN
 // ============================================
 
@@ -20,6 +28,7 @@ import {
 import { SafeAreaView, SafeAreaProvider } from "react-native-safe-area-context";
 import { MaterialIcons }                  from "@expo/vector-icons";
 import { AppProvider, useApp }            from "../context/AppContext";
+import { InventoryFormDraftProvider }     from "../modules/inventory-module/context/InventoryFormDraftContext";
 import Sidebar                            from "../components/Sidebar";
 import { THEMES, ThemeName }              from "../constants/theme";
 import { LANGUAGES, LANGUAGE_LIST }       from "../constants/languages";
@@ -265,7 +274,9 @@ export default function Layout() {
     <SafeAreaProvider>
       <SafeAreaView style={styles.safeArea} edges={["top"]}>
         <AppProvider>
-          <InnerLayout />
+          <InventoryFormDraftProvider>
+            <InnerLayout />
+          </InventoryFormDraftProvider>
         </AppProvider>
       </SafeAreaView>
     </SafeAreaProvider>

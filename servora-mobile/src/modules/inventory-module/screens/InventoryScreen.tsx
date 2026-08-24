@@ -2,22 +2,30 @@
 // SERVORA ERP — InventoryScreen
 // ✅ COMPOSITION ONLY — owns state and data-fetching (hooks), wiring.
 // ✅ Date navigator — Today (live) vs Past date (historical).
-// ✅ MAJOR — handleSubmit branches on InventoryFormSubmitPayload's
-//    discriminated union:
-//      newItem      → createInventoryItemWithInitialBatch()
-//      existingItem → receiveBatch() (FROZEN, unmodified)
-//      edit         → updateInventoryItem() (unchanged)
-// ✅ handleAddSupplier navigates to /suppliers (Supplier module's own
-//    creation UI — this form never duplicates it).
+// ✅ handleSubmit branches on InventoryFormSubmitPayload's
+//    discriminated union: newItem/existingItem/edit.
+// ✅ handleAddSupplier navigates to /suppliers?autoOpen=create after
+//    closing the Add Item modal (removes the competing-overlay race
+//    that previously caused a "blink" on the Suppliers form).
+// ✅ FIX — draft auto-reopen now uses useFocusEffect instead of a
+//    mount-only useEffect([]). A plain useEffect([]) only fires on
+//    this component's initial mount — if Expo Router's navigation
+//    stack keeps InventoryScreen mounted (rather than unmounting/
+//    remounting it) across the Inventory → Suppliers →
+//    router.back() round-trip, the mount-only effect would never
+//    re-fire, silently leaving a pending draft unconsumed and the
+//    modal never reopening. useFocusEffect fires every time this
+//    screen regains focus — including returning via router.back()
+//    from Suppliers — which is exactly when a pending draft needs
+//    to be detected and acted on. This screen only ever PEEKS at the
+//    draft (hasPendingDraft(), non-consuming) — the actual read+
+//    clear (consumeDraft()) happens once, inside InventoryForm.tsx's
+//    own mount effect, after this screen has reopened the modal.
 // ✅ ARCHITECTURE NOTE — purchaseDate is currently set equal to
 //    receivedDate for the "existingItem" (Receive Batch) path, since
-//    this Add Item form has no separate Purchase Date field and no
-//    Purchase Order integration exists yet. This is an ACCEPTED,
-//    DOCUMENTED assumption for now — revisit when Purchase Order
-//    module integration is built, since purchaseDate (when the
-//    invoice/purchase actually happened) and receivedDate (when
-//    stock physically arrived) are conceptually different dates that
-//    should NOT be permanently conflated.
+//    this form has no separate Purchase Date field yet. Accepted,
+//    documented assumption — revisit when Purchase Order module
+//    integration is built.
 // ✅ InventoryTableView, useInventory, useAllInventoryBatches are NOT
 //    modified.
 // FROZEN
@@ -26,7 +34,7 @@
 import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { View, Text, StyleSheet, Platform, Alert, TouchableOpacity, TextInput } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { useRouter, useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useApp } from "../../../context/AppContext";
 import { usePermission } from "../../../hooks/usePermission";
 import { useInventory } from "../hooks/useInventory";
@@ -40,6 +48,7 @@ import {
 import { createInventoryItemWithInitialBatch, receiveBatch } from "../services/inventory-service";
 import { InventoryItem } from "../types/inventory";
 import { InventoryFormSubmitPayload } from "../hooks/useInventoryForm";
+import { useInventoryFormDraft } from "../context/InventoryFormDraftContext";
 import { seedDefaultStoreTaxonomy } from "../../store-module/services/seed-store-defaults-service";
 import { todayISO } from "../../../utils/date-utils";
 import { InventoryToolbar } from "../components/InventoryToolbar";
@@ -80,6 +89,7 @@ export default function InventoryScreen() {
   const { restaurant, restaurantId, fmt } = useApp();
   const canEditInventory = usePermission("edit_inventory");
   const router = useRouter();
+  const { hasPendingDraft } = useInventoryFormDraft();
 
   const { items, loading: itemsLoading, error: itemsError } = useInventory(restaurantId);
 
@@ -138,6 +148,17 @@ export default function InventoryScreen() {
   const [showMovementHistory,   setShowMovementHistory]   = useState(false);
 
   const safeRestaurantId = restaurantId ?? "";
+
+  // ✅ FIX — useFocusEffect, not mount-only useEffect. See FROZEN
+  // header for the navigation-stack-persistence bug this fixes.
+  useFocusEffect(
+    useCallback(() => {
+      if (hasPendingDraft() && !showForm) {
+        setEditingItem(undefined);
+        setShowForm(true);
+      }
+    }, [hasPendingDraft, showForm])
+  );
 
   const openCreate = useCallback(() => {
     setEditingItem(undefined);
@@ -203,28 +224,11 @@ export default function InventoryScreen() {
     setShowMovementHistory(false);
   }, []);
 
-  // ✅ FIX — closes the Add Item modal BEFORE navigating to Suppliers.
-  // Previously the Inventory Modal (a React Native <Modal
-  // visible={showForm}>) stayed mounted/open while navigating — on
-  // web, the still-visible modal overlay interfered with the
-  // Suppliers screen's own render, causing the Add Supplier form to
-  // appear to open then immediately vanish ("blink"). Confirmed via
-  // direct testing: navigating to Suppliers from the Sidebar (no
-  // Inventory Modal open) worked correctly every time, isolating the
-  // bug to the competing-modal scenario specifically. Closing the
-  // modal first (closeForm()) ensures a clean navigation with no
-  // overlay left behind.
-  // ⚠️ ACCEPTED TRADE-OFF — any unsaved Add Item form data (fields
-  // typed before tapping "New Supplier") is discarded when the modal
-  // closes. Deliberately not preserved as a draft — that would need
-  // separate draft/navigation-state architecture, out of scope here.
   const handleAddSupplier = useCallback(() => {
     closeForm();
     router.push("/suppliers?autoOpen=create");
   }, [router, closeForm]);
 
-  // ✅ Branches on InventoryFormSubmitPayload's discriminated union —
-  // see FROZEN header.
   const handleSubmit = useCallback(async (payload: InventoryFormSubmitPayload) => {
     if (!restaurantId || saving) return;
     setSaving(true);

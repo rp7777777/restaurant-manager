@@ -1,18 +1,24 @@
 // ============================================
 // SERVORA ERP — useSupplierForm Hook
 // ✅ Handles BOTH create and edit — if `existing` is passed, submit
-//    calls updateSupplier(); otherwise createSupplier(). Kept as
-//    its own hook rather than split into two, since Supplier has
-//    no item-row complexity to justify a separate screen-level
-//    split (unlike PurchaseOrder's Create vs Receive stages).
-// ✅ Only `name` is required — matches the FROZEN repository, which
-//    is the only field it validates.
-// ✅ supplierCode is NOT part of this form at all — it's server-
-//    generated at creation and immutable, so there's nothing here
-//    for the user to set or edit.
-// ✅ status defaults to "ACTIVE" for new suppliers (existing?.status
-//    ?? "ACTIVE") — a brand-new supplier should be usable
-//    immediately unless the user explicitly marks it inactive.
+//    calls updateSupplier(); otherwise createSupplier().
+// ✅ Only `name` is required — matches the FROZEN repository.
+// ✅ supplierCode is NOT part of this form — server-generated,
+//    immutable.
+// ✅ status defaults to "ACTIVE" for new suppliers.
+// ✅ FIX — submit() now returns { ok: boolean; supplierId?: string }
+//    instead of a bare boolean. createSupplier() (the FROZEN
+//    repository function) already returns the new supplier's id —
+//    previously that return value was silently discarded
+//    (`await createSupplier(...)`, result unused). Now it's captured
+//    and surfaced to the caller, enabling the Inventory "New
+//    Supplier" detour to know exactly which supplier was just
+//    created (to auto-select it when the Add Item draft is
+//    restored) without needing a separate lookup. `ok` is kept as
+//    the primary success/failure signal (unchanged meaning) so this
+//    is a low-risk, additive change — callers that only checked
+//    `.ok` continue to work identically; only callers that also want
+//    the id need to read the new field.
 // PHASE 8.3
 // ============================================
 
@@ -22,6 +28,11 @@ import {
   updateSupplier,
 } from "../repository/supplier-repository";
 import { Supplier, SupplierStatus, CreateSupplierInput } from "../types/supplier";
+
+export interface SupplierSubmitResult {
+  ok:          boolean;
+  supplierId?: string; // only set on a successful CREATE (not update)
+}
 
 export interface UseSupplierFormResult {
   name:             string;
@@ -50,7 +61,7 @@ export interface UseSupplierFormResult {
   setNotes:         (v: string) => void;
   saving:           boolean;
   error:            string | null;
-  submit:           (restaurantId: string) => Promise<boolean>;
+  submit:           (restaurantId: string) => Promise<SupplierSubmitResult>;
 }
 
 export function useSupplierForm(existing?: Supplier): UseSupplierFormResult {
@@ -70,12 +81,12 @@ export function useSupplierForm(existing?: Supplier): UseSupplierFormResult {
   const [error, setError]                 = useState<string | null>(null);
 
   const submit = useCallback(
-    async (restaurantId: string): Promise<boolean> => {
+    async (restaurantId: string): Promise<SupplierSubmitResult> => {
       setError(null);
 
       if (!name.trim()) {
         setError("Supplier name is required");
-        return false;
+        return { ok: false };
       }
 
       const input: CreateSupplierInput = {
@@ -97,13 +108,14 @@ export function useSupplierForm(existing?: Supplier): UseSupplierFormResult {
       try {
         if (existing) {
           await updateSupplier(restaurantId, existing.id, input);
+          return { ok: true };
         } else {
-          await createSupplier(restaurantId, input);
+          const newId = await createSupplier(restaurantId, input);
+          return { ok: true, supplierId: newId };
         }
-        return true;
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to save supplier");
-        return false;
+        return { ok: false };
       } finally {
         setSaving(false);
       }

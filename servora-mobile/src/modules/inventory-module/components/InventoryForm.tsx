@@ -1,40 +1,41 @@
 // ============================================
 // SERVORA ERP — InventoryForm Component
-// ✅ MAJOR REDESIGN — Supplier → Category → Search Existing Item →
-//    (Existing Item OR Create New Item) → Batch Details → Submit.
-// ✅ isCreatingNew — explicit UI state, purely presentational. The
-//    real submit-path decision (existingItem vs newItem) is made
-//    entirely by useInventoryForm.ts based on selectedExistingItem's
-//    presence/absence — this component never bypasses that.
-// ✅ searchQuery (from useExistingItemSearch) is fully separate from
-//    form.itemName — search input never conflated with the eventual
-//    new-item name.
-// ✅ FIX — "Change" (existing item) now clears searchQuery too, so a
-//    fresh search always starts empty rather than carrying over
-//    whatever was typed before the item was selected.
-// ✅ FIX — "Create New Item" is disabled (and relabeled to prompt for
-//    input) when searchQuery is empty — prevents accidentally
-//    activating new-item mode with a blank name that would only
-//    surface as a late "Item name is required" validation error.
-// ✅ FIX — explicit "New Item:" label added next to the editable name
-//    field in new-item mode, so it's visually unambiguous from the
-//    search box (same field position, different mode).
-// ✅ Category change resets ALL of: selectedExistingItem,
-//    isCreatingNew, searchQuery, showItemSearch — no carry-over
-//    between categories.
-// ✅ Supplier at the TOP of the form — represents THIS BATCH's
-//    supplier. "+ New Supplier" navigates to Supplier module's own
-//    creation UI (onAddSupplier prop) — never duplicated here.
+// ✅ Supplier → Category → Search Existing Item → (Existing Item OR
+//    Create New Item) → Batch Details → Submit.
+// ✅ isCreatingNew — explicit UI state, purely presentational.
+// ✅ searchQuery is fully separate from form.itemName.
+// ✅ "Change"/"Create New Item" reset flows tested and confirmed.
+// ✅ NEW — draft save/restore around the "New Supplier" detour.
+//    handleAddSupplierWithDraft() captures every current field value
+//    into InventoryFormDraftContext BEFORE calling onAddSupplier()
+//    (which closes this modal and navigates to Suppliers) — so
+//    nothing the user already entered (category, item search/
+//    selection, quantity, batch fields, etc.) is lost. On mount, a
+//    one-time effect calls consumeDraft() and, if a draft is
+//    pending, restores every field — preferring
+//    draft.newlyCreatedSupplierId (the supplier that was JUST
+//    created via the detour) over draft.supplierId (whatever was
+//    selected, if anything, before the detour). If the draft had an
+//    existing item selected (selectedExistingItemId), it's
+//    re-resolved against the live allItems list (never trusted as a
+//    stale object) before being restored via
+//    form.setSelectedExistingItem().
+// ✅ Edit mode NEVER saves or restores drafts — this whole mechanism
+//    is create-mode-only, matching the confirmed scope (the
+//    duplicate-prevention flow only exists in create mode).
+// ✅ Supplier moved to the TOP of the form. "+ New Supplier" now goes
+//    through handleAddSupplierWithDraft (draft-saving), not directly
+//    to the raw onAddSupplier prop.
 // ✅ Field label adapts by mode: "Current Stock" (newItem) vs
-//    "Quantity" (existingItem) — same underlying form state.
+//    "Quantity" (existingItem).
 // ✅ Received Date is a plain YYYY-MM-DD text field (calendar picker
 //    deliberately DEFERRED to a separate DatePickerField.tsx task).
-// ✅ Edit mode is COMPLETELY UNCHANGED.
+// ✅ Edit mode is otherwise COMPLETELY UNCHANGED.
 // ✅ Minimum Stock field only shown for "newItem" mode.
 // FROZEN
 // ============================================
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, ScrollView, Platform, Switch,
@@ -46,6 +47,7 @@ import {
 import { CategoryPickerGroup } from "../hooks/useCategoriesForPicker";
 import { useInventoryForm, InventoryFormSubmitPayload } from "../hooks/useInventoryForm";
 import { useExistingItemSearch } from "../hooks/useExistingItemSearch";
+import { useInventoryFormDraft } from "../context/InventoryFormDraftContext";
 import { Supplier } from "../../supplier-module/types/supplier";
 
 const UNITS: InventoryUnit[] = ["kg", "g", "L", "ml", "pcs", "box", "bag", "bottle", "pac"];
@@ -71,6 +73,8 @@ export function InventoryForm({
   const [showItemSearch,     setShowItemSearch]     = useState(false);
   const [isCreatingNew,      setIsCreatingNew]      = useState(false);
 
+  const { saveDraft, consumeDraft } = useInventoryFormDraft();
+
   const isCreateMode = mode === "create";
   const isExistingItemMode = isCreateMode && !!form.selectedExistingItem;
 
@@ -81,6 +85,38 @@ export function InventoryForm({
     .find((c) => c.id === form.categoryId);
   const selectedSupplier = suppliers.find((s) => s.id === form.supplierId);
 
+  // ✅ NEW — restore a pending draft on mount (create mode only).
+  useEffect(() => {
+    if (mode !== "create") return;
+    const draft = consumeDraft();
+    if (!draft) return;
+
+    form.setCategoryId(draft.categoryId);
+    form.setItemName(draft.itemName);
+    form.setCurrentStock(draft.currentStock);
+    form.setUnit(draft.unit);
+    form.setUnitCost(draft.unitCost);
+    form.setMinStock(draft.minStock);
+    form.setBatchNo(draft.batchNo);
+    form.setReceivedDate(draft.receivedDate);
+    form.setExpiryDate(draft.expiryDate);
+    form.setStorageLocation(draft.storageLocation);
+    form.setSku(draft.sku);
+    form.setBarcode(draft.barcode);
+    form.setNotes(draft.notes);
+
+    const restoredSupplierId = draft.newlyCreatedSupplierId ?? draft.supplierId;
+    if (restoredSupplierId) form.setSupplierId(restoredSupplierId);
+
+    if (draft.isCreatingNew) {
+      setIsCreatingNew(true);
+    } else if (draft.selectedExistingItemId) {
+      const matchedItem = allItems.find((it) => it.id === draft.selectedExistingItemId);
+      if (matchedItem) form.setSelectedExistingItem(matchedItem);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleSave = () => {
     form.handleSubmit((payload) => onSubmit(payload));
   };
@@ -90,6 +126,30 @@ export function InventoryForm({
     setIsCreatingNew(false);
     setSearchQuery("");
     setShowItemSearch(false);
+  };
+
+  // ✅ NEW — saves the current form state as a draft, then triggers
+  // the actual navigation (via the parent's onAddSupplier).
+  const handleAddSupplierWithDraft = () => {
+    saveDraft({
+      supplierId:              form.supplierId,
+      categoryId:              form.categoryId,
+      isCreatingNew,
+      selectedExistingItemId:  form.selectedExistingItem?.id,
+      itemName:                form.itemName,
+      currentStock:            form.currentStock,
+      unit:                    form.unit,
+      unitCost:                form.unitCost,
+      minStock:                form.minStock,
+      batchNo:                 form.batchNo,
+      receivedDate:            form.receivedDate,
+      expiryDate:              form.expiryDate,
+      storageLocation:         form.storageLocation,
+      sku:                     form.sku,
+      barcode:                 form.barcode,
+      notes:                   form.notes,
+    });
+    onAddSupplier();
   };
 
   if (mode === "edit") {
@@ -264,7 +324,7 @@ export function InventoryForm({
             </ScrollView>
           )}
         </View>
-        <TouchableOpacity style={styles.newSupplierBtn} onPress={onAddSupplier}>
+        <TouchableOpacity style={styles.newSupplierBtn} onPress={handleAddSupplierWithDraft}>
           <MaterialIcons name="add" size={16} color="#0369a1" />
           <Text style={styles.newSupplierBtnText}>New Supplier</Text>
         </TouchableOpacity>

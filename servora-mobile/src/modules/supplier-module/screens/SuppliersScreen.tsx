@@ -3,36 +3,41 @@
 // ✅ Real Firestore data via useSuppliers (FROZEN hook).
 // ✅ Simple client-side name search.
 // ✅ Tapping a card opens the SAME SupplierForm in edit mode.
-// ✅ FIX — auto-open-on-navigation (?autoOpen=create) now runs via
-//    an EMPTY-dependency-array useEffect (fires exactly once, on
-//    this component instance's initial mount), reading params
-//    directly rather than depending on params.autoOpen across
-//    re-renders. The previous version depended on [params.autoOpen]
-//    with a separate useRef guard — this caused a real bug: opening
-//    the form bumps formKey, which some navigation/re-render paths
-//    on web caused to interact badly with the ref-based guard,
-//    producing a "blink" (form opens then immediately closes) rather
-//    than a stable open form. An empty-dependency effect has no such
-//    interaction — it simply cannot re-fire after mount, regardless
-//    of how many times this component re-renders afterward, making
-//    the ref guard unnecessary and removing the failure mode
-//    entirely.
+// ✅ Auto-open-on-navigation (?autoOpen=create) — empty-dependency
+//    useEffect (fires exactly once, on mount).
+// ✅ When the Create form was auto-opened via ?autoOpen=create (i.e.
+//    reached from Inventory's "+ New Supplier" button), saving
+//    navigates BACK (router.back()) instead of staying on the
+//    Suppliers list.
+// ✅ handleSaved now receives the optional supplierId from
+//    SupplierForm's updated onSaved signature. When this was an
+//    auto-opened create (wasAutoOpened.current) AND a new supplier
+//    was actually created (supplierId present — never set on an
+//    edit-save), records it via markSupplierCreated() from
+//    InventoryFormDraftContext BEFORE navigating back, so
+//    InventoryForm.tsx's draft restoration can auto-select the
+//    newly-created supplier.
+// ⚠️ REQUIRES InventoryFormDraftProvider mounted at app root
+//    (_layout.tsx) — since this screen (Suppliers) and InventoryForm
+//    (Inventory) are on DIFFERENT routes, the Provider must wrap the
+//    whole app, not just Inventory's own screen tree.
 // PHASE 8.3
 // ============================================
 
-import React, { useMemo, useState, useCallback, useEffect } from "react";
+import React, { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import {
   View, Text, TextInput, FlatList, TouchableOpacity,
   StyleSheet, Platform, ActivityIndicator,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useApp } from "../../../context/AppContext";
 import { usePermission } from "../../../hooks/usePermission";
 import { useSuppliers } from "../hooks/useSuppliers";
 import { Supplier } from "../types/supplier";
 import SupplierCard from "../../../components/suppliers/SupplierCard";
 import SupplierForm from "./SupplierForm";
+import { useInventoryFormDraft } from "../../inventory-module/context/InventoryFormDraftContext";
 
 type FormMode =
   | { mode: "closed" }
@@ -42,6 +47,8 @@ type FormMode =
 export default function SuppliersScreen() {
   const { restaurantId } = useApp();
   const canEditPurchaseOrders = usePermission("edit_purchase_orders");
+  const router = useRouter();
+  const { markSupplierCreated } = useInventoryFormDraft();
 
   const { suppliers, loading, error } = useSuppliers(restaurantId);
   const [searchQuery, setSearchQuery] = useState("");
@@ -50,11 +57,11 @@ export default function SuppliersScreen() {
 
   const params = useLocalSearchParams<{ autoOpen?: string }>();
 
-  // ✅ FIX — empty dependency array: fires exactly once, on mount.
-  // See FROZEN header for why the previous [params.autoOpen] +
-  // useRef guard version could "blink."
-  useEffect(() => {
+  const wasAutoOpened = useRef(false);
+
+ useEffect(() => {
     if (params.autoOpen === "create") {
+      wasAutoOpened.current = true;
       setFormKey((k) => k + 1);
       setFormState({ mode: "create" });
     }
@@ -73,16 +80,31 @@ export default function SuppliersScreen() {
   }, [suppliers, searchQuery]);
 
   const openCreate = useCallback(() => {
+    wasAutoOpened.current = false;
     setFormKey((k) => k + 1);
     setFormState({ mode: "create" });
   }, []);
 
   const openEdit = useCallback((supplier: Supplier) => {
+    wasAutoOpened.current = false;
     setFormKey((k) => k + 1);
     setFormState({ mode: "edit", supplier });
   }, []);
 
+  const handleSaved = useCallback((supplierId?: string) => {
+    const shouldGoBack = wasAutoOpened.current;
+    wasAutoOpened.current = false;
+    if (shouldGoBack && supplierId) {
+      markSupplierCreated(supplierId);
+    }
+    setFormState({ mode: "closed" });
+    if (shouldGoBack) {
+      router.back();
+    }
+  }, [router, markSupplierCreated]);
+
   const closeForm = useCallback(() => {
+    wasAutoOpened.current = false;
     setFormState({ mode: "closed" });
   }, []);
 
@@ -91,7 +113,7 @@ export default function SuppliersScreen() {
       <SupplierForm
         key={formKey}
         existing={formState.mode === "edit" ? formState.supplier : undefined}
-        onSaved={closeForm}
+        onSaved={handleSaved}
         onCancel={closeForm}
       />
     );

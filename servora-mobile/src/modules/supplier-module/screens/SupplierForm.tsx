@@ -29,7 +29,13 @@ import { Supplier } from "../types/supplier";
 
 interface SupplierFormProps {
   existing?: Supplier;  // pass to edit; omit to create
-  onSaved:   () => void;
+  // ✅ FIX — onSaved now optionally receives the created supplier's
+  // ID (undefined on edit-save, since updateSupplier() has no new ID
+  // to report). Existing callers that don't need the ID (e.g. the
+  // normal "stay on Suppliers list" flow) can keep their () => void
+  // signature working unchanged, since a callback that ignores its
+  // argument is still a valid match for this type.
+  onSaved:   (supplierId?: string) => void;
   onCancel:  () => void;
 }
 
@@ -55,8 +61,8 @@ export default function SupplierForm({ existing, onSaved, onCancel }: SupplierFo
 
   const handleSave = async () => {
     if (!restaurantId) return;
-    const ok = await submit(restaurantId);
-    if (ok) onSaved();
+    const result = await submit(restaurantId);
+    if (result.ok) onSaved(result.supplierId);
   };
 
   return (
