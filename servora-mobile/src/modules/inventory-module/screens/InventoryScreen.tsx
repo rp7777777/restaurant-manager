@@ -204,7 +204,7 @@ export default function InventoryScreen() {
   }, []);
 
   const handleAddSupplier = useCallback(() => {
-    router.push("/suppliers");
+    router.push("/suppliers?autoOpen=create");
   }, [router]);
 
   // ✅ Branches on InventoryFormSubmitPayload's discriminated union —

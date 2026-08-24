@@ -1,24 +1,24 @@
 // ============================================
 // SERVORA ERP — SuppliersScreen
-// ✅ Real Firestore data via useSuppliers (FROZEN hook) — replaces
-//    the old app/suppliers.tsx implementation, which used a plain
-//    local useState<any[]>([]) array with no Firestore connection
-//    at all (data was lost on refresh and never reached the PO
-//    form's supplier picker, which reads from this same hook).
-// ✅ Simple client-side name search — no separate filters hook,
-//    since Supplier has far fewer fields/states than Purchase
-//    Orders or Inventory to filter by.
-// ✅ Tapping a card opens the SAME SupplierForm in edit mode
-//    (existing prop set) — Create and Edit share one form/hook.
+// ✅ Real Firestore data via useSuppliers (FROZEN hook).
+// ✅ Simple client-side name search.
+// ✅ Tapping a card opens the SAME SupplierForm in edit mode.
+// ✅ NEW — auto-opens the Create form when navigated to with
+//    ?autoOpen=create (used by InventoryForm.tsx's "+ New Supplier"
+//    button — tapping it now lands directly on the Add Supplier
+//    form instead of just the Suppliers list). Guarded by a ref so
+//    it only triggers once per navigation — closing the form
+//    afterward and staying on this screen never re-triggers it.
 // PHASE 8.3
 // ============================================
 
-import React, { useMemo, useState, useCallback } from "react";
+import React, { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import {
   View, Text, TextInput, FlatList, TouchableOpacity,
   StyleSheet, Platform, ActivityIndicator,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
+import { useLocalSearchParams } from "expo-router";
 import { useApp } from "../../../context/AppContext";
 import { usePermission } from "../../../hooks/usePermission";
 import { useSuppliers } from "../hooks/useSuppliers";
@@ -33,16 +33,23 @@ type FormMode =
 
 export default function SuppliersScreen() {
   const { restaurantId } = useApp();
-  // ✅ RBAC Phase 1 — Suppliers pairs with Purchase Orders
   const canEditPurchaseOrders = usePermission("edit_purchase_orders");
 
   const { suppliers, loading, error } = useSuppliers(restaurantId);
   const [searchQuery, setSearchQuery] = useState("");
   const [formState, setFormState] = useState<FormMode>({ mode: "closed" });
-  // ✅ Same remount-for-fresh-state trick as PurchaseOrdersScreen —
-  // bumped every time the form opens so leftover text from a
-  // previous Add/Edit never lingers into the next one.
   const [formKey, setFormKey] = useState(0);
+
+  // ✅ NEW — auto-open on ?autoOpen=create, see FROZEN header.
+  const params = useLocalSearchParams<{ autoOpen?: string }>();
+  const autoOpenHandled = useRef(false);
+  useEffect(() => {
+    if (params.autoOpen === "create" && !autoOpenHandled.current) {
+      autoOpenHandled.current = true;
+      setFormKey((k) => k + 1);
+      setFormState({ mode: "create" });
+    }
+  }, [params.autoOpen]);
 
   const filteredSuppliers = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
