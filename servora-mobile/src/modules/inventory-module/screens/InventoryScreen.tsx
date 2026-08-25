@@ -1,19 +1,30 @@
 // ============================================
 // SERVORA ERP — InventoryScreen
-// ✅ COMPOSITION ONLY — after the file-by-file split, this screen
-//    contains only: data-fetching hooks, filtering logic,
-//    permissions, business-logic handlers (handleSubmit,
-//    handleDelete, handleSeedDefaults), and top-level JSX wiring.
-// ✅ UI/modal state and open/close handlers → useInventoryScreenState.
+// ✅ COMPOSITION ONLY — data-fetching hooks, filtering logic,
+//    permissions, business-logic handlers, top-level JSX wiring.
+// ✅ UI/modal state → useInventoryScreenState.
 // ✅ Date navigation → useInventoryDateNavigation.
 // ✅ "New Supplier" detour timing/return → useSupplierDetourNavigation.
 // ✅ All modal/drawer rendering → InventoryModalsGroup.
+// ✅ FIX — useFocusEffect now checks BOTH
+//    checkForReturnAndReopen() (the normal focus-driven path) AND,
+//    independently, consumeAutoOpenSupplierForm() (a second signal
+//    set by SuppliersScreen right before router.replace()). Root
+//    cause this fixes: router.replace() to a route already mounted
+//    doesn't always re-trigger a fresh focus event this screen's
+//    useFocusEffect can react to on web — so relying on focus alone
+//    could silently fail to reopen the Add Item modal after a
+//    supplier was created and the draft was otherwise fully intact.
+//    consumeAutoOpenSupplierForm() is called EXACTLY ONCE per
+//    useFocusEffect invocation (its return value is captured in a
+//    single local variable, never called a second time) — since it's
+//    write-once-read-once, calling it twice would silently discard
+//    the flag on the first call and always see false on the second,
+//    which was a real bug in an earlier draft of this fix.
 // ✅ handleSubmit branches on InventoryFormSubmitPayload's
 //    discriminated union: newItem/existingItem/edit — UNCHANGED.
 // ✅ ARCHITECTURE NOTE — purchaseDate is currently set equal to
 //    receivedDate for the "existingItem" (Receive Batch) path.
-//    Accepted, documented assumption — revisit when Purchase Order
-//    module integration is built.
 // ✅ InventoryTableView, useInventory, useAllInventoryBatches,
 //    HistoricalInventoryTableView are NOT modified.
 // FROZEN
@@ -33,6 +44,7 @@ import { useAllInventoryBatches } from "../hooks/useAllInventoryBatches";
 import { useInventoryDateNavigation } from "../hooks/useInventoryDateNavigation";
 import { useInventoryScreenState } from "../hooks/useInventoryScreenState";
 import { useSupplierDetourNavigation } from "../hooks/useSupplierDetourNavigation";
+import { useInventoryFormDraft } from "../context/InventoryFormDraftContext";
 import {
   updateInventoryItem, deleteInventoryItem,
 } from "../repository/inventory-repository";
@@ -53,6 +65,7 @@ const isWeb = Platform.OS === "web";
 export default function InventoryScreen() {
   const { restaurant, restaurantId, fmt } = useApp();
   const canEditInventory = usePermission("edit_inventory");
+  const { consumeAutoOpenSupplierForm } = useInventoryFormDraft();
 
   const { items, loading: itemsLoading, error: itemsError } = useInventory(restaurantId);
   const { groups: categoryGroups, categories, loading: categoriesLoading } = useCategoriesForPicker(restaurantId);
@@ -115,10 +128,19 @@ export default function InventoryScreen() {
     onReopen: openCreate,
   });
 
+  // ✅ FIX — two independent reopen signals. checkForReturnAndReopen()
+  // covers the normal focus-driven path; consumeAutoOpenSupplierForm()
+  // (called exactly once here) is the fallback for when
+  // router.replace() to an already-mounted route doesn't produce a
+  // fresh focus event on web.
   useFocusEffect(
     useCallback(() => {
       checkForReturnAndReopen();
-    }, [checkForReturnAndReopen])
+      const shouldReopenViaFlag = consumeAutoOpenSupplierForm();
+      if (shouldReopenViaFlag && !showForm) {
+        openCreate();
+      }
+    }, [checkForReturnAndReopen, consumeAutoOpenSupplierForm, showForm, openCreate])
   );
 
   const safeRestaurantId = restaurantId ?? "";

@@ -3,29 +3,40 @@
 // ✅ Enables the "+ New Supplier" detour from Add Item to preserve
 //    the user's in-progress form state across the navigation to
 //    Suppliers and back.
-// ✅ IN-MEMORY ONLY (React Context state) — deliberate choice, see
-//    original design notes.
+// ✅ IN-MEMORY ONLY (React Context state).
 // ✅ consumeDraft() is WRITE-ONCE-READ-ONCE.
-// ✅ Provider mounted at app root (_layout.tsx), since this crosses
-//    routes (Inventory ↔ Suppliers).
-// ✅ NEW — shouldAutoOpenSupplierForm flag, read directly (via
-//    consumeAutoOpenSupplierForm()) by SuppliersScreen on its own
-//    render body — NOT gated behind useEffect/useFocusEffect. This
-//    replaces the previous ?autoOpen=create URL-query-parameter
-//    approach, which proved genuinely unreliable: Expo Router's
-//    mount/focus lifecycle on web meant the param wasn't always
-//    observed at the moment SuppliersScreen actually needed to react
-//    to it (a mount-only effect could run before the param existed
-//    on the URL; even useFocusEffect could still miss the intended
-//    render window depending on exactly how navigation was
-//    triggered). A ref read directly during render has no such
-//    lifecycle-timing dependency — by the time SuppliersScreen's
-//    function body executes, this flag is simply already set or not,
-//    with no window for a missed effect firing.
-// ✅ consumeAutoOpenSupplierForm() is also write-once-read-once, same
-//    rationale as consumeDraft() — guarantees the auto-open only
-//    ever fires once per detour, never lingering to affect an
-//    unrelated later visit to Suppliers.
+// ✅ Provider mounted at app root (_layout.tsx).
+// ✅ shouldAutoOpenSupplierForm flag — Context-level, checked
+//    synchronously in SuppliersScreen's render body via lazy
+//    useState initializer.
+// ✅ NEW — isDetourActive flag. Fixes a real, confirmed bug (via
+//    console logging): InventoryScreen's useFocusEffect →
+//    checkForReturnAndReopen() was previously guarded by a
+//    COMPONENT-LOCAL ref (isDetourInProgress in
+//    useSupplierDetourNavigation.ts) that only lived inside ONE
+//    InventoryScreen instance. On web, Expo Router does not always
+//    unmount the previous screen synchronously with navigation —
+//    InventoryScreen could still be mounted (and its
+//    useFocusEffect still firing) even AFTER router.push("/suppliers")
+//    had successfully navigated and SuppliersScreen had begun
+//    rendering. At that moment, hasPendingDraft() was still true
+//    (the draft is only consumed later, by InventoryForm.tsx's OWN
+//    mount effect, which hasn't happened yet), so
+//    checkForReturnAndReopen() would reopen the Add Item modal —
+//    ON TOP of the Suppliers screen — because the component-local
+//    guard had already been cleared (it's released right when
+//    router.push() fires, not when the ENTIRE detour, including
+//    eventual draft consumption, actually completes).
+//    Moving this flag into the Context makes it a single source of
+//    truth reachable by ANY component instance, and — critically —
+//    it now stays true for the FULL lifetime of the detour: from
+//    the moment "New Supplier" is tapped, all the way through until
+//    InventoryForm.tsx's mount effect actually calls consumeDraft()
+//    and restores the form. Only consumeDraft() clears it. This
+//    means checkForReturnAndReopen() can never reopen the modal
+//    while a detour's draft is still legitimately "in flight" and
+//    not yet consumed — regardless of which InventoryScreen
+//    instance's focus effect is asking, or how many times it asks.
 // FROZEN
 // ============================================
 
@@ -57,9 +68,10 @@ interface InventoryFormDraftContextValue {
   consumeDraft:                  () => InventoryFormDraft | null;
   hasPendingDraft:               () => boolean;
   markSupplierCreated:           (supplierId: string) => void;
-  // ✅ NEW
   requestAutoOpenSupplierForm:   () => void;
   consumeAutoOpenSupplierForm:   () => boolean;
+  // ✅ NEW
+  isDetourActive:                () => boolean;
 }
 
 const InventoryFormDraftContext = createContext<InventoryFormDraftContextValue | null>(null);
@@ -67,14 +79,20 @@ const InventoryFormDraftContext = createContext<InventoryFormDraftContextValue |
 export function InventoryFormDraftProvider({ children }: { children: React.ReactNode }) {
   const draftRef = useRef<InventoryFormDraft | null>(null);
   const autoOpenSupplierFormRef = useRef(false);
+  // ✅ NEW — set true the instant "New Supplier" is tapped; cleared
+  // ONLY when consumeDraft() actually runs (inside InventoryForm.tsx's
+  // mount effect, after returning from Suppliers).
+  const detourActiveRef = useRef(false);
 
   const saveDraft = useCallback((draft: InventoryFormDraft) => {
     draftRef.current = draft;
+    detourActiveRef.current = true;
   }, []);
 
   const consumeDraft = useCallback((): InventoryFormDraft | null => {
     const draft = draftRef.current;
     draftRef.current = null;
+    detourActiveRef.current = false;
     return draft;
   }, []);
 
@@ -86,8 +104,6 @@ export function InventoryFormDraftProvider({ children }: { children: React.React
     }
   }, []);
 
-  // ✅ NEW — set the instant "New Supplier" is tapped, BEFORE
-  // navigation. Read (and cleared) directly by SuppliersScreen.
   const requestAutoOpenSupplierForm = useCallback(() => {
     autoOpenSupplierFormRef.current = true;
   }, []);
@@ -98,11 +114,14 @@ export function InventoryFormDraftProvider({ children }: { children: React.React
     return value;
   }, []);
 
+  const isDetourActive = useCallback(() => detourActiveRef.current, []);
+
   return (
     <InventoryFormDraftContext.Provider
       value={{
         saveDraft, consumeDraft, hasPendingDraft, markSupplierCreated,
         requestAutoOpenSupplierForm, consumeAutoOpenSupplierForm,
+        isDetourActive,
       }}
     >
       {children}

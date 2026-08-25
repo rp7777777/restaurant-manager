@@ -3,26 +3,27 @@
 // ✅ Real Firestore data via useSuppliers (FROZEN hook).
 // ✅ Simple client-side name search.
 // ✅ Tapping a card opens the SAME SupplierForm in edit mode.
-// ✅ MAJOR FIX — auto-open detection moved from a URL query param
-//    (?autoOpen=create, read via useEffect/useFocusEffect) to a
-//    Context-level flag (InventoryFormDraftContext's
-//    requestAutoOpenSupplierForm/consumeAutoOpenSupplierForm),
-//    checked DIRECTLY during this component's render body — not
-//    inside any effect. Root cause of the real bug this replaces:
-//    on web, Expo Router's mount/focus lifecycle meant neither a
-//    mount-only useEffect([]) nor a useFocusEffect reliably observed
-//    the query param at the exact moment this screen needed to react
-//    to it — sometimes the effect had already run before the param
-//    existed, sometimes focus fired before the param was attached,
-//    producing a real "first tap does nothing, second tap works"
-//    bug. A Context ref read synchronously during render has no such
-//    timing dependency: by the time this function body executes,
-//    requestAutoOpenSupplierForm() (called by InventoryForm.tsx
-//    BEFORE navigating) has unconditionally already run, so the flag
-//    is simply present, no race possible.
+// ✅ Auto-open-on-navigation uses a Context-level flag
+//    (requestAutoOpenSupplierForm/consumeAutoOpenSupplierForm),
+//    checked synchronously in this screen's render body via a lazy
+//    useState initializer.
 // ✅ handleSaved receives the optional supplierId from SupplierForm's
 //    onSaved signature; records it via markSupplierCreated() before
 //    navigating away when this was an auto-opened create.
+// ✅ FIX — handleSaved now ALSO calls requestAutoOpenSupplierForm()
+//    again (a second, independent signal) right before
+//    router.replace("/inventory-module"). Root cause this fixes: on
+//    web, router.replace() to the SAME route InventoryScreen was
+//    already showing did not reliably trigger a fresh
+//    useFocusEffect firing — the previous instance could be reused
+//    rather than re-focused, so InventoryScreen's own
+//    checkForReturnAndReopen() (which depends on a focus event) had
+//    no reliable trigger to run again after the supplier was saved.
+//    InventoryScreen.tsx now ALSO checks
+//    consumeAutoOpenSupplierForm() directly inside its
+//    useFocusEffect (see that file), giving it two independent paths
+//    to detect "I should reopen the Add Item modal" instead of
+//    relying solely on the focus-effect's own draft check.
 // ✅ router.replace("/inventory-module") instead of router.back().
 // PHASE 8.3
 // ============================================
@@ -51,18 +52,13 @@ export default function SuppliersScreen() {
   const { restaurantId } = useApp();
   const canEditPurchaseOrders = usePermission("edit_purchase_orders");
   const router = useRouter();
-  const { markSupplierCreated, consumeAutoOpenSupplierForm } = useInventoryFormDraft();
+  const {
+    markSupplierCreated, consumeAutoOpenSupplierForm, requestAutoOpenSupplierForm,
+  } = useInventoryFormDraft();
 
   const { suppliers, loading, error } = useSuppliers(restaurantId);
   const [searchQuery, setSearchQuery] = useState("");
 
-  // ✅ FIX — checked ONCE, directly in render body, via lazy useState
-  // initializer. This runs synchronously on this component's FIRST
-  // render — no effect, no lifecycle timing dependency. If
-  // InventoryForm.tsx called requestAutoOpenSupplierForm() before
-  // navigating here (which it always does, synchronously, before
-  // router.push()), that flag is unconditionally already true by the
-  // time this initializer runs.
   const [formState, setFormState] = useState<FormMode>(() => {
     return consumeAutoOpenSupplierForm() ? { mode: "create" } : { mode: "closed" };
   });
@@ -93,6 +89,9 @@ export default function SuppliersScreen() {
     setFormState({ mode: "edit", supplier });
   }, []);
 
+  // ✅ FIX — calls requestAutoOpenSupplierForm() again before
+  // navigating back, as a second independent signal for
+  // InventoryScreen to reopen the modal. See FROZEN header.
   const handleSaved = useCallback((supplierId?: string) => {
     const shouldGoBack = wasAutoOpened.current;
     wasAutoOpened.current = false;
@@ -101,9 +100,10 @@ export default function SuppliersScreen() {
     }
     setFormState({ mode: "closed" });
     if (shouldGoBack) {
+      requestAutoOpenSupplierForm();
       router.replace("/inventory-module");
     }
-  }, [router, markSupplierCreated]);
+  }, [router, markSupplierCreated, requestAutoOpenSupplierForm]);
 
   const closeForm = useCallback(() => {
     wasAutoOpened.current = false;
