@@ -65,7 +65,7 @@ const isWeb = Platform.OS === "web";
 export default function InventoryScreen() {
   const { restaurant, restaurantId, fmt } = useApp();
   const canEditInventory = usePermission("edit_inventory");
-  const { consumeAutoOpenSupplierForm } = useInventoryFormDraft();
+  const { consumeAutoOpenSupplierForm, isDetourActive } = useInventoryFormDraft();
 
   const { items, loading: itemsLoading, error: itemsError } = useInventory(restaurantId);
   const { groups: categoryGroups, categories, loading: categoriesLoading } = useCategoriesForPicker(restaurantId);
@@ -136,11 +136,20 @@ export default function InventoryScreen() {
   useFocusEffect(
     useCallback(() => {
       checkForReturnAndReopen();
-      const shouldReopenViaFlag = consumeAutoOpenSupplierForm();
-      if (shouldReopenViaFlag && !showForm) {
-        openCreate();
+      // ✅ FIX — only consume the auto-open flag when a detour is
+      // actually in flight (isDetourActive) — never on a routine
+      // focus event unrelated to the "New Supplier" flow. Prevents
+      // this effect from prematurely consuming/discarding a flag
+      // meant for a LATER "New Supplier" tap, which caused the
+      // first click on that button to silently do nothing (the flag
+      // was already gone by the time it was actually needed).
+      if (isDetourActive()) {
+        const shouldReopenViaFlag = consumeAutoOpenSupplierForm();
+        if (shouldReopenViaFlag && !showForm) {
+          openCreate();
+        }
       }
-    }, [checkForReturnAndReopen, consumeAutoOpenSupplierForm, showForm, openCreate])
+    }, [checkForReturnAndReopen, consumeAutoOpenSupplierForm, isDetourActive, showForm, openCreate])
   );
 
   const safeRestaurantId = restaurantId ?? "";
