@@ -65,7 +65,7 @@ const isWeb = Platform.OS === "web";
 export default function InventoryScreen() {
   const { restaurant, restaurantId, fmt } = useApp();
   const canEditInventory = usePermission("edit_inventory");
-  const { consumeAutoOpenSupplierForm, isDetourActive } = useInventoryFormDraft();
+  const { consumeAutoOpenSupplierForm } = useInventoryFormDraft();
 
   const { items, loading: itemsLoading, error: itemsError } = useInventory(restaurantId);
   const { groups: categoryGroups, categories, loading: categoriesLoading } = useCategoriesForPicker(restaurantId);
@@ -136,20 +136,19 @@ export default function InventoryScreen() {
   useFocusEffect(
     useCallback(() => {
       checkForReturnAndReopen();
-      // ✅ FIX — only consume the auto-open flag when a detour is
-      // actually in flight (isDetourActive) — never on a routine
-      // focus event unrelated to the "New Supplier" flow. Prevents
-      // this effect from prematurely consuming/discarding a flag
-      // meant for a LATER "New Supplier" tap, which caused the
-      // first click on that button to silently do nothing (the flag
-      // was already gone by the time it was actually needed).
-      if (isDetourActive()) {
-        const shouldReopenViaFlag = consumeAutoOpenSupplierForm();
-        if (shouldReopenViaFlag && !showForm) {
-          openCreate();
-        }
+      // ✅ Unconditional check — consumeAutoOpenSupplierForm() is
+      // write-once-read-once, so checking it on every focus is safe:
+      // it returns false (no-op) unless a "New Supplier" detour
+      // genuinely just requested a reopen. No isDetourActive() guard
+      // — that guard was itself introducing a race (relying on
+      // detourActiveRef's clear-timing relative to this effect's own
+      // fire order), which caused the flag to sometimes be skipped
+      // rather than consumed.
+      const shouldReopenViaFlag = consumeAutoOpenSupplierForm();
+      if (shouldReopenViaFlag && !showForm) {
+        openCreate();
       }
-    }, [checkForReturnAndReopen, consumeAutoOpenSupplierForm, isDetourActive, showForm, openCreate])
+    }, [checkForReturnAndReopen, consumeAutoOpenSupplierForm, showForm, openCreate])
   );
 
   const safeRestaurantId = restaurantId ?? "";
