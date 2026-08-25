@@ -4,23 +4,25 @@
 // ✅ Simple client-side name search.
 // ✅ Tapping a card opens the SAME SupplierForm in edit mode.
 // ✅ Auto-open-on-navigation (?autoOpen=create) — empty-dependency
-//    useEffect (fires exactly once, on mount).
-// ✅ When the Create form was auto-opened via ?autoOpen=create (i.e.
-//    reached from Inventory's "+ New Supplier" button), saving
-//    navigates BACK (router.back()) instead of staying on the
-//    Suppliers list.
-// ✅ handleSaved now receives the optional supplierId from
-//    SupplierForm's updated onSaved signature. When this was an
-//    auto-opened create (wasAutoOpened.current) AND a new supplier
-//    was actually created (supplierId present — never set on an
-//    edit-save), records it via markSupplierCreated() from
-//    InventoryFormDraftContext BEFORE navigating back, so
-//    InventoryForm.tsx's draft restoration can auto-select the
-//    newly-created supplier.
-// ⚠️ REQUIRES InventoryFormDraftProvider mounted at app root
-//    (_layout.tsx) — since this screen (Suppliers) and InventoryForm
-//    (Inventory) are on DIFFERENT routes, the Provider must wrap the
-//    whole app, not just Inventory's own screen tree.
+//    useEffect (fires exactly once, on mount), with formKey bumped
+//    to guarantee a fresh SupplierForm instance.
+// ✅ handleSaved receives the optional supplierId from SupplierForm's
+//    onSaved signature. When this was an auto-opened create AND a
+//    new supplier was actually created (supplierId present — never
+//    set on an edit-save), records it via markSupplierCreated()
+//    from InventoryFormDraftContext BEFORE navigating away.
+// ✅ FIX — router.replace("/inventory-module") instead of
+//    router.back(). On web, router.back() proved unreliable after
+//    navigating via router.push("/suppliers?autoOpen=create") — it
+//    sometimes stayed on the Suppliers screen after save, or
+//    required an extra manual navigation (e.g. clicking Inventory in
+//    the sidebar) before InventoryScreen's useFocusEffect would
+//    fire and reopen the Add Item modal. router.replace() navigates
+//    to an EXPLICIT destination rather than depending on
+//    browser/Expo Router history-stack state — this screen always
+//    knows exactly where the New Supplier detour came from
+//    (Inventory), so there's no need to rely on "back" navigation
+//    semantics at all.
 // PHASE 8.3
 // ============================================
 
@@ -59,7 +61,7 @@ export default function SuppliersScreen() {
 
   const wasAutoOpened = useRef(false);
 
- useEffect(() => {
+  useEffect(() => {
     if (params.autoOpen === "create") {
       wasAutoOpened.current = true;
       setFormKey((k) => k + 1);
@@ -91,6 +93,7 @@ export default function SuppliersScreen() {
     setFormState({ mode: "edit", supplier });
   }, []);
 
+  // ✅ FIX — router.replace(), not router.back(). See FROZEN header.
   const handleSaved = useCallback((supplierId?: string) => {
     const shouldGoBack = wasAutoOpened.current;
     wasAutoOpened.current = false;
@@ -99,7 +102,7 @@ export default function SuppliersScreen() {
     }
     setFormState({ mode: "closed" });
     if (shouldGoBack) {
-      router.back();
+      router.replace("/inventory-module");
     }
   }, [router, markSupplierCreated]);
 
