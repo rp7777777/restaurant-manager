@@ -6,21 +6,22 @@
 // ✅ Date navigation → useInventoryDateNavigation.
 // ✅ "New Supplier" detour timing/return → useSupplierDetourNavigation.
 // ✅ All modal/drawer rendering → InventoryModalsGroup.
-// ✅ FIX — useFocusEffect now checks BOTH
-//    checkForReturnAndReopen() (the normal focus-driven path) AND,
-//    independently, consumeAutoOpenSupplierForm() (a second signal
-//    set by SuppliersScreen right before router.replace()). Root
-//    cause this fixes: router.replace() to a route already mounted
-//    doesn't always re-trigger a fresh focus event this screen's
-//    useFocusEffect can react to on web — so relying on focus alone
-//    could silently fail to reopen the Add Item modal after a
-//    supplier was created and the draft was otherwise fully intact.
-//    consumeAutoOpenSupplierForm() is called EXACTLY ONCE per
-//    useFocusEffect invocation (its return value is captured in a
-//    single local variable, never called a second time) — since it's
-//    write-once-read-once, calling it twice would silently discard
-//    the flag on the first call and always see false on the second,
-//    which was a real bug in an earlier draft of this fix.
+// ✅ FIX — useFocusEffect relies SOLELY on checkForReturnAndReopen(),
+//    which already correctly guards via
+//    InventoryFormDraftContext's isDetourActive(). A previous attempt
+//    added a second, independent consumeAutoOpenSupplierForm() check
+//    directly in this screen's useFocusEffect — that was itself a
+//    bug: requestAutoOpenSupplierForm() is called by
+//    InventoryForm.tsx the INSTANT "New Supplier" is tapped, before
+//    navigation to Suppliers has even started — but this screen's
+//    own useFocusEffect could still fire in that same window (before
+//    the route had actually changed), and consuming the flag right
+//    there reopened the Add Item modal instantly, on top of itself,
+//    before the user ever reached Suppliers. requestAutoOpenSupplierForm/
+//    consumeAutoOpenSupplierForm are used ONLY by SuppliersScreen.tsx
+//    now (both its initial auto-open on arrival, and the second call
+//    in handleSaved() before router.replace()) — InventoryScreen
+//    never reads that flag itself.
 // ✅ handleSubmit branches on InventoryFormSubmitPayload's
 //    discriminated union: newItem/existingItem/edit — UNCHANGED.
 // ✅ ARCHITECTURE NOTE — purchaseDate is currently set equal to
@@ -44,7 +45,6 @@ import { useAllInventoryBatches } from "../hooks/useAllInventoryBatches";
 import { useInventoryDateNavigation } from "../hooks/useInventoryDateNavigation";
 import { useInventoryScreenState } from "../hooks/useInventoryScreenState";
 import { useSupplierDetourNavigation } from "../hooks/useSupplierDetourNavigation";
-import { useInventoryFormDraft } from "../context/InventoryFormDraftContext";
 import {
   updateInventoryItem, deleteInventoryItem,
 } from "../repository/inventory-repository";
@@ -65,7 +65,6 @@ const isWeb = Platform.OS === "web";
 export default function InventoryScreen() {
   const { restaurant, restaurantId, fmt } = useApp();
   const canEditInventory = usePermission("edit_inventory");
-  const { consumeAutoOpenSupplierForm } = useInventoryFormDraft();
 
   const { items, loading: itemsLoading, error: itemsError } = useInventory(restaurantId);
   const { groups: categoryGroups, categories, loading: categoriesLoading } = useCategoriesForPicker(restaurantId);
@@ -128,27 +127,12 @@ export default function InventoryScreen() {
     onReopen: openCreate,
   });
 
-  // ✅ FIX — two independent reopen signals. checkForReturnAndReopen()
-  // covers the normal focus-driven path; consumeAutoOpenSupplierForm()
-  // (called exactly once here) is the fallback for when
-  // router.replace() to an already-mounted route doesn't produce a
-  // fresh focus event on web.
+  // ✅ FIX — relies solely on checkForReturnAndReopen(). See FROZEN
+  // header.
   useFocusEffect(
     useCallback(() => {
       checkForReturnAndReopen();
-      // ✅ Unconditional check — consumeAutoOpenSupplierForm() is
-      // write-once-read-once, so checking it on every focus is safe:
-      // it returns false (no-op) unless a "New Supplier" detour
-      // genuinely just requested a reopen. No isDetourActive() guard
-      // — that guard was itself introducing a race (relying on
-      // detourActiveRef's clear-timing relative to this effect's own
-      // fire order), which caused the flag to sometimes be skipped
-      // rather than consumed.
-      const shouldReopenViaFlag = consumeAutoOpenSupplierForm();
-      if (shouldReopenViaFlag && !showForm) {
-        openCreate();
-      }
-    }, [checkForReturnAndReopen, consumeAutoOpenSupplierForm, showForm, openCreate])
+    }, [checkForReturnAndReopen])
   );
 
   const safeRestaurantId = restaurantId ?? "";
