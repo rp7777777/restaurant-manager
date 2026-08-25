@@ -1,40 +1,28 @@
 // ============================================
 // SERVORA ERP — InventoryScreen
-// ✅ COMPOSITION ONLY — owns state and data-fetching (hooks), wiring.
-// ✅ Date navigator — Today (live) vs Past date (historical).
+// ✅ COMPOSITION ONLY — after the file-by-file split, this screen
+//    contains only: data-fetching hooks, filtering logic,
+//    permissions, business-logic handlers (handleSubmit,
+//    handleDelete, handleSeedDefaults), and top-level JSX wiring.
+// ✅ UI/modal state and open/close handlers → useInventoryScreenState.
+// ✅ Date navigation → useInventoryDateNavigation.
+// ✅ "New Supplier" detour timing/return → useSupplierDetourNavigation.
+// ✅ All modal/drawer rendering → InventoryModalsGroup.
 // ✅ handleSubmit branches on InventoryFormSubmitPayload's
-//    discriminated union: newItem/existingItem/edit.
-// ✅ handleAddSupplier navigates to /suppliers?autoOpen=create after
-//    closing the Add Item modal (removes the competing-overlay race
-//    that previously caused a "blink" on the Suppliers form).
-// ✅ FIX — draft auto-reopen now uses useFocusEffect instead of a
-//    mount-only useEffect([]). A plain useEffect([]) only fires on
-//    this component's initial mount — if Expo Router's navigation
-//    stack keeps InventoryScreen mounted (rather than unmounting/
-//    remounting it) across the Inventory → Suppliers →
-//    router.back() round-trip, the mount-only effect would never
-//    re-fire, silently leaving a pending draft unconsumed and the
-//    modal never reopening. useFocusEffect fires every time this
-//    screen regains focus — including returning via router.back()
-//    from Suppliers — which is exactly when a pending draft needs
-//    to be detected and acted on. This screen only ever PEEKS at the
-//    draft (hasPendingDraft(), non-consuming) — the actual read+
-//    clear (consumeDraft()) happens once, inside InventoryForm.tsx's
-//    own mount effect, after this screen has reopened the modal.
+//    discriminated union: newItem/existingItem/edit — UNCHANGED.
 // ✅ ARCHITECTURE NOTE — purchaseDate is currently set equal to
-//    receivedDate for the "existingItem" (Receive Batch) path, since
-//    this form has no separate Purchase Date field yet. Accepted,
-//    documented assumption — revisit when Purchase Order module
-//    integration is built.
-// ✅ InventoryTableView, useInventory, useAllInventoryBatches are NOT
-//    modified.
+//    receivedDate for the "existingItem" (Receive Batch) path.
+//    Accepted, documented assumption — revisit when Purchase Order
+//    module integration is built.
+// ✅ InventoryTableView, useInventory, useAllInventoryBatches,
+//    HistoricalInventoryTableView are NOT modified.
 // FROZEN
 // ============================================
 
-import React, { useState, useMemo, useCallback, useEffect } from "react";
+import React, { useMemo, useCallback, useEffect } from "react";
 import { View, Text, StyleSheet, Platform, Alert, TouchableOpacity, TextInput } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useRouter, useLocalSearchParams, useFocusEffect } from "expo-router";
+import { useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useApp } from "../../../context/AppContext";
 import { usePermission } from "../../../hooks/usePermission";
 import { useInventory } from "../hooks/useInventory";
@@ -42,13 +30,15 @@ import { useInventoryFilters } from "../hooks/useInventoryFilters";
 import { useCategoriesForPicker } from "../hooks/useCategoriesForPicker";
 import { useSuppliers } from "../../supplier-module/hooks/useSuppliers";
 import { useAllInventoryBatches } from "../hooks/useAllInventoryBatches";
+import { useInventoryDateNavigation } from "../hooks/useInventoryDateNavigation";
+import { useInventoryScreenState } from "../hooks/useInventoryScreenState";
+import { useSupplierDetourNavigation } from "../hooks/useSupplierDetourNavigation";
 import {
   updateInventoryItem, deleteInventoryItem,
 } from "../repository/inventory-repository";
 import { createInventoryItemWithInitialBatch, receiveBatch } from "../services/inventory-service";
 import { InventoryItem } from "../types/inventory";
 import { InventoryFormSubmitPayload } from "../hooks/useInventoryForm";
-import { useInventoryFormDraft } from "../context/InventoryFormDraftContext";
 import { seedDefaultStoreTaxonomy } from "../../store-module/services/seed-store-defaults-service";
 import { todayISO } from "../../../utils/date-utils";
 import { InventoryToolbar } from "../components/InventoryToolbar";
@@ -56,60 +46,29 @@ import { InventoryStats } from "../components/InventoryStats";
 import { InventoryFilters } from "../components/InventoryFilters";
 import { InventoryTableView } from "../components/InventoryTableView";
 import { HistoricalInventoryTableView } from "../components/HistoricalInventoryTableView";
-import { InventoryModal } from "../components/InventoryModal";
-import { StockAdjustmentModal } from "../components/StockAdjustmentModal";
-import { ItemDetailsDrawer } from "../components/ItemDetailsDrawer";
-import { InventoryBatchReport } from "../components/InventoryBatchReport";
-import { ReceiveBatchModal } from "../components/ReceiveBatchModal";
-import { ArchivedItemsModal } from "../components/ArchivedItemsModal";
-import { MovementHistoryModal } from "../components/MovementHistoryModal";
+import { InventoryModalsGroup } from "../components/InventoryModalsGroup";
 
 const isWeb = Platform.OS === "web";
-
-function shiftDate(dateISO: string, deltaDays: number): string {
-  const [year, month, day] = dateISO.split("-").map(Number);
-  const utcMs = Date.UTC(year, month - 1, day) + deltaDays * 86400000;
-  const result = new Date(utcMs);
-  const yyyy = result.getUTCFullYear();
-  const mm = String(result.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(result.getUTCDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function formatDateLabel(dateISO: string, today: string): string {
-  if (dateISO === today) return "Today";
-  const [year, month, day] = dateISO.split("-").map(Number);
-  const d = new Date(Date.UTC(year, month - 1, day));
-  return d.toLocaleDateString(undefined, {
-    weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
-  });
-}
 
 export default function InventoryScreen() {
   const { restaurant, restaurantId, fmt } = useApp();
   const canEditInventory = usePermission("edit_inventory");
-  const router = useRouter();
-  const { hasPendingDraft } = useInventoryFormDraft();
 
   const { items, loading: itemsLoading, error: itemsError } = useInventory(restaurantId);
-
-  const { groups: categoryGroups, categories, loading: categoriesLoading } =
-    useCategoriesForPicker(restaurantId);
+  const { groups: categoryGroups, categories, loading: categoriesLoading } = useCategoriesForPicker(restaurantId);
   const { suppliers } = useSuppliers(restaurantId);
-
   const { batches: allBatches, loading: batchesLoading } = useAllInventoryBatches(restaurantId);
 
-  const categoryMap = useMemo(() => {
-    return new Map(categories.map((c) => [c.id, c]));
-  }, [categories]);
-
+  const categoryMap = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
   const today = useMemo(() => todayISO(), []);
 
-  const [selectedDate, setSelectedDate] = useState(today);
-  const isHistorical = selectedDate !== today;
+  const {
+    selectedDate, isHistorical, dateLabel,
+    goToPreviousDay, goToNextDay, isNextDisabled,
+  } = useInventoryDateNavigation(today);
 
-  const [historicalSearchQuery, setHistoricalSearchQuery] = useState("");
-  const [historicalCategoryId, setHistoricalCategoryId] = useState<string | null>(null);
+  const [historicalSearchQuery, setHistoricalSearchQuery] = React.useState("");
+  const [historicalCategoryId, setHistoricalCategoryId] = React.useState<string | null>(null);
 
   const {
     filters, filteredItems,
@@ -136,98 +95,33 @@ export default function InventoryScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [showForm,             setShowForm]             = useState(false);
-  const [editingItem,          setEditingItem]          = useState<InventoryItem | undefined>(undefined);
-  const [saving,                setSaving]                = useState(false);
-  const [seeding,               setSeeding]               = useState(false);
-  const [adjustingItem,         setAdjustingItem]         = useState<InventoryItem | undefined>(undefined);
-  const [drawerItem,            setDrawerItem]            = useState<InventoryItem | undefined>(undefined);
-  const [showBatchReport,       setShowBatchReport]       = useState(false);
-  const [receiveBatchItem,      setReceiveBatchItem]      = useState<InventoryItem | undefined>(undefined);
-  const [showArchivedItems,     setShowArchivedItems]     = useState(false);
-  const [showMovementHistory,   setShowMovementHistory]   = useState(false);
+  const screenState = useInventoryScreenState();
+  const {
+    showForm, editingItem, saving, setSaving, seeding, setSeeding,
+    adjustingItem, drawerItem, showBatchReport, receiveBatchItem,
+    showArchivedItems, showMovementHistory,
+    openCreate, openEdit, closeForm,
+    openAdjustStock, closeAdjustStock,
+    openDrawer, closeDrawer,
+    openBatchReport, closeBatchReport,
+    openReceiveBatch, closeReceiveBatch,
+    openArchivedItems, closeArchivedItems,
+    openMovementHistory, closeMovementHistory,
+  } = screenState;
 
-  const safeRestaurantId = restaurantId ?? "";
+  const { triggerSupplierDetour, checkForReturnAndReopen } = useSupplierDetourNavigation({
+    showForm,
+    closeForm,
+    onReopen: openCreate,
+  });
 
-  // ✅ FIX — useFocusEffect, not mount-only useEffect. See FROZEN
-  // header for the navigation-stack-persistence bug this fixes.
   useFocusEffect(
     useCallback(() => {
-      if (hasPendingDraft() && !showForm) {
-        setEditingItem(undefined);
-        setShowForm(true);
-      }
-    }, [hasPendingDraft, showForm])
+      checkForReturnAndReopen();
+    }, [checkForReturnAndReopen])
   );
 
-  const openCreate = useCallback(() => {
-    setEditingItem(undefined);
-    setShowForm(true);
-  }, []);
-
-  const openEdit = useCallback((item: InventoryItem) => {
-    setEditingItem(item);
-    setShowForm(true);
-  }, []);
-
-  const closeForm = useCallback(() => {
-    setShowForm(false);
-    setEditingItem(undefined);
-  }, []);
-
-  const openAdjustStock = useCallback((item: InventoryItem) => {
-    setAdjustingItem(item);
-  }, []);
-
-  const closeAdjustStock = useCallback(() => {
-    setAdjustingItem(undefined);
-  }, []);
-
-  const openDrawer = useCallback((item: InventoryItem) => {
-    setDrawerItem(item);
-  }, []);
-
-  const closeDrawer = useCallback(() => {
-    setDrawerItem(undefined);
-  }, []);
-
-  const openBatchReport = useCallback(() => {
-    setShowBatchReport(true);
-  }, []);
-
-  const closeBatchReport = useCallback(() => {
-    setShowBatchReport(false);
-  }, []);
-
-  const openReceiveBatch = useCallback((item: InventoryItem) => {
-    setDrawerItem(undefined);
-    setReceiveBatchItem(item);
-  }, []);
-
-  const closeReceiveBatch = useCallback(() => {
-    setReceiveBatchItem(undefined);
-  }, []);
-
-  const openArchivedItems = useCallback(() => {
-    setShowArchivedItems(true);
-  }, []);
-
-  const closeArchivedItems = useCallback(() => {
-    setShowArchivedItems(false);
-  }, []);
-
-  const openMovementHistory = useCallback(() => {
-    setShowMovementHistory(true);
-  }, []);
-
-  const closeMovementHistory = useCallback(() => {
-    setShowMovementHistory(false);
-  }, []);
-
-  const handleAddSupplier = useCallback(() => {
-    closeForm();
-    router.push("/suppliers?autoOpen=create");
-  }, [router, closeForm]);
+  const safeRestaurantId = restaurantId ?? "";
 
   const handleSubmit = useCallback(async (payload: InventoryFormSubmitPayload) => {
     if (!restaurantId || saving) return;
@@ -264,7 +158,7 @@ export default function InventoryScreen() {
     } finally {
       setSaving(false);
     }
-  }, [restaurantId, saving, editingItem, closeForm, today]);
+  }, [restaurantId, saving, editingItem, closeForm, today, setSaving]);
 
   const handleDelete = useCallback((item: InventoryItem) => {
     if (!restaurantId) return;
@@ -305,7 +199,7 @@ export default function InventoryScreen() {
     } finally {
       setSeeding(false);
     }
-  }, [restaurantId, seeding]);
+  }, [restaurantId, seeding, setSeeding]);
 
   const loading = itemsLoading || categoriesLoading || batchesLoading;
   const shouldShowSeedBanner = !categoriesLoading && categories.length === 0 && canEditInventory;
@@ -324,16 +218,12 @@ export default function InventoryScreen() {
       />
 
       <View style={styles.dateNav}>
-        <TouchableOpacity onPress={() => setSelectedDate((d) => shiftDate(d, -1))} style={styles.dateNavArrow}>
+        <TouchableOpacity onPress={goToPreviousDay} style={styles.dateNavArrow}>
           <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
         </TouchableOpacity>
-        <Text style={styles.dateNavLabel}>{formatDateLabel(selectedDate, today)}</Text>
-        <TouchableOpacity
-          onPress={() => setSelectedDate((d) => shiftDate(d, 1))}
-          style={styles.dateNavArrow}
-          disabled={selectedDate >= today}
-        >
-          <MaterialIcons name="chevron-right" size={22} color={selectedDate >= today ? "#cbd5e1" : "#1e293b"} />
+        <Text style={styles.dateNavLabel}>{dateLabel}</Text>
+        <TouchableOpacity onPress={goToNextDay} style={styles.dateNavArrow} disabled={isNextDisabled}>
+          <MaterialIcons name="chevron-right" size={22} color={isNextDisabled ? "#cbd5e1" : "#1e293b"} />
         </TouchableOpacity>
       </View>
 
@@ -397,71 +287,39 @@ export default function InventoryScreen() {
         </>
       )}
 
-      <ItemDetailsDrawer
-        visible={!!drawerItem}
-        item={drawerItem}
-        category={drawerItem ? categoryMap.get(drawerItem.categoryId) : undefined}
+      <InventoryModalsGroup
+        drawerItem={drawerItem}
+        categoryMap={categoryMap}
         restaurantId={safeRestaurantId}
         todayISO={today}
         restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
         fmt={fmt}
         canEditInventory={canEditInventory}
-        onClose={closeDrawer}
-        onEdit={openEdit}
+        onCloseDrawer={closeDrawer}
+        onEditItem={openEdit}
         onAdjustStock={openAdjustStock}
         onReceiveBatch={openReceiveBatch}
-        duplicateNameSuffix="(Copy)"
-      />
-
-      <InventoryModal
-        visible={showForm}
+        showForm={showForm}
         editingItem={editingItem}
-        canEditInventory={canEditInventory}
         categoryGroups={categoryGroups}
         suppliers={suppliers}
         allItems={items}
         onSubmit={handleSubmit}
-        onCancel={closeForm}
-        onDelete={handleDelete}
-        onAddSupplier={handleAddSupplier}
-      />
-
-      <StockAdjustmentModal
-        visible={!!adjustingItem}
-        item={adjustingItem}
-        restaurantId={safeRestaurantId}
-        onClose={closeAdjustStock}
-      />
-
-      <InventoryBatchReport
-        visible={showBatchReport}
-        restaurantId={safeRestaurantId}
-        onClose={closeBatchReport}
-      />
-
-      <ReceiveBatchModal
-        visible={!!receiveBatchItem}
-        item={receiveBatchItem}
-        restaurantId={safeRestaurantId}
-        suppliers={suppliers}
-        onClose={closeReceiveBatch}
-      />
-
-      <ArchivedItemsModal
-        visible={showArchivedItems}
+        onCancelForm={closeForm}
+        onDeleteItem={handleDelete}
+        onAddSupplier={triggerSupplierDetour}
+        adjustingItem={adjustingItem}
+        onCloseAdjustStock={closeAdjustStock}
+        showBatchReport={showBatchReport}
+        onCloseBatchReport={closeBatchReport}
+        receiveBatchItem={receiveBatchItem}
+        onCloseReceiveBatch={closeReceiveBatch}
         items={items}
-        categoryMap={categoryMap}
-        restaurantId={safeRestaurantId}
-        fmt={fmt}
-        onClose={closeArchivedItems}
-      />
-
-      <MovementHistoryModal
-        visible={showMovementHistory}
-        restaurantId={safeRestaurantId}
-        items={items}
+        showArchivedItems={showArchivedItems}
+        onCloseArchivedItems={closeArchivedItems}
         categories={categories}
-        onClose={closeMovementHistory}
+        showMovementHistory={showMovementHistory}
+        onCloseMovementHistory={closeMovementHistory}
       />
     </View>
   );
