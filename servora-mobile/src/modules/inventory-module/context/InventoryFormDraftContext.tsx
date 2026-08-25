@@ -1,26 +1,31 @@
 // ============================================
 // SERVORA ERP — InventoryFormDraftContext
-// ✅ NEW — enables the "+ New Supplier" detour from Add Item to
-//    preserve the user's in-progress form state (category, item
-//    search/selection, quantity, batch fields, etc.) across the
-//    navigation to Suppliers and back — professional UX: the user
-//    never loses their work just because they needed to create a
-//    supplier mid-flow.
-// ✅ IN-MEMORY ONLY (React Context state, not AsyncStorage/
-//    localStorage) — deliberate choice. This draft only needs to
-//    survive a same-session navigation (Inventory → Suppliers →
-//    back), not a page refresh or app restart. Keeping it in-memory
-//    avoids persistence-layer complexity (serialization, storage
-//    quotas, stale-draft cleanup) for a need that's purely
-//    navigation-scoped.
-// ✅ consumeDraft() is WRITE-ONCE-READ-ONCE by design: reading it
-//    clears it immediately. This guarantees a draft is only ever
-//    applied ONE time — if the user later opens Add Item fresh
-//    (unrelated to the supplier-creation detour), no stale draft
-//    from a previous session could accidentally reappear.
-// ✅ Provider is mounted at the Inventory module level (not app
-//    root) — this draft concept has no meaning outside Inventory's
-//    Add Item flow, so it doesn't need to be a global concern.
+// ✅ Enables the "+ New Supplier" detour from Add Item to preserve
+//    the user's in-progress form state across the navigation to
+//    Suppliers and back.
+// ✅ IN-MEMORY ONLY (React Context state) — deliberate choice, see
+//    original design notes.
+// ✅ consumeDraft() is WRITE-ONCE-READ-ONCE.
+// ✅ Provider mounted at app root (_layout.tsx), since this crosses
+//    routes (Inventory ↔ Suppliers).
+// ✅ NEW — shouldAutoOpenSupplierForm flag, read directly (via
+//    consumeAutoOpenSupplierForm()) by SuppliersScreen on its own
+//    render body — NOT gated behind useEffect/useFocusEffect. This
+//    replaces the previous ?autoOpen=create URL-query-parameter
+//    approach, which proved genuinely unreliable: Expo Router's
+//    mount/focus lifecycle on web meant the param wasn't always
+//    observed at the moment SuppliersScreen actually needed to react
+//    to it (a mount-only effect could run before the param existed
+//    on the URL; even useFocusEffect could still miss the intended
+//    render window depending on exactly how navigation was
+//    triggered). A ref read directly during render has no such
+//    lifecycle-timing dependency — by the time SuppliersScreen's
+//    function body executes, this flag is simply already set or not,
+//    with no window for a missed effect firing.
+// ✅ consumeAutoOpenSupplierForm() is also write-once-read-once, same
+//    rationale as consumeDraft() — guarantees the auto-open only
+//    ever fires once per detour, never lingering to affect an
+//    unrelated later visit to Suppliers.
 // FROZEN
 // ============================================
 
@@ -31,7 +36,7 @@ export interface InventoryFormDraft {
   supplierId?:      string;
   categoryId:       string;
   isCreatingNew:    boolean;
-  selectedExistingItemId?: string; // re-resolved against live items on restore
+  selectedExistingItemId?: string;
   itemName:         string;
   currentStock:     string;
   unit:             InventoryUnit;
@@ -44,24 +49,24 @@ export interface InventoryFormDraft {
   sku:              string;
   barcode:          string;
   notes:            string;
-  // ✅ The supplier that was just created — restore logic should
-  // prefer THIS over the draft's original supplierId (which may be
-  // empty, since the whole point of the detour was "I don't have a
-  // supplier yet").
   newlyCreatedSupplierId?: string;
 }
 
 interface InventoryFormDraftContextValue {
-  saveDraft:    (draft: InventoryFormDraft) => void;
-  consumeDraft: () => InventoryFormDraft | null;
-  hasPendingDraft: () => boolean;
-  markSupplierCreated: (supplierId: string) => void;
+  saveDraft:                     (draft: InventoryFormDraft) => void;
+  consumeDraft:                  () => InventoryFormDraft | null;
+  hasPendingDraft:               () => boolean;
+  markSupplierCreated:           (supplierId: string) => void;
+  // ✅ NEW
+  requestAutoOpenSupplierForm:   () => void;
+  consumeAutoOpenSupplierForm:   () => boolean;
 }
 
 const InventoryFormDraftContext = createContext<InventoryFormDraftContextValue | null>(null);
 
 export function InventoryFormDraftProvider({ children }: { children: React.ReactNode }) {
   const draftRef = useRef<InventoryFormDraft | null>(null);
+  const autoOpenSupplierFormRef = useRef(false);
 
   const saveDraft = useCallback((draft: InventoryFormDraft) => {
     draftRef.current = draft;
@@ -69,7 +74,7 @@ export function InventoryFormDraftProvider({ children }: { children: React.React
 
   const consumeDraft = useCallback((): InventoryFormDraft | null => {
     const draft = draftRef.current;
-    draftRef.current = null; // write-once-read-once
+    draftRef.current = null;
     return draft;
   }, []);
 
@@ -81,8 +86,25 @@ export function InventoryFormDraftProvider({ children }: { children: React.React
     }
   }, []);
 
+  // ✅ NEW — set the instant "New Supplier" is tapped, BEFORE
+  // navigation. Read (and cleared) directly by SuppliersScreen.
+  const requestAutoOpenSupplierForm = useCallback(() => {
+    autoOpenSupplierFormRef.current = true;
+  }, []);
+
+  const consumeAutoOpenSupplierForm = useCallback((): boolean => {
+    const value = autoOpenSupplierFormRef.current;
+    autoOpenSupplierFormRef.current = false;
+    return value;
+  }, []);
+
   return (
-    <InventoryFormDraftContext.Provider value={{ saveDraft, consumeDraft, hasPendingDraft, markSupplierCreated }}>
+    <InventoryFormDraftContext.Provider
+      value={{
+        saveDraft, consumeDraft, hasPendingDraft, markSupplierCreated,
+        requestAutoOpenSupplierForm, consumeAutoOpenSupplierForm,
+      }}
+    >
       {children}
     </InventoryFormDraftContext.Provider>
   );

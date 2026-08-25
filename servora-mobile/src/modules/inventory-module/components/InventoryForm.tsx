@@ -4,28 +4,21 @@
 //    Create New Item) → Batch Details → Submit.
 // ✅ isCreatingNew — explicit UI state, purely presentational.
 // ✅ searchQuery is fully separate from form.itemName.
-// ✅ "Change"/"Create New Item" reset flows tested and confirmed.
-// ✅ NEW — draft save/restore around the "New Supplier" detour.
+// ✅ Draft save/restore around the "New Supplier" detour.
 //    handleAddSupplierWithDraft() captures every current field value
-//    into InventoryFormDraftContext BEFORE calling onAddSupplier()
-//    (which closes this modal and navigates to Suppliers) — so
-//    nothing the user already entered (category, item search/
-//    selection, quantity, batch fields, etc.) is lost. On mount, a
-//    one-time effect calls consumeDraft() and, if a draft is
-//    pending, restores every field — preferring
-//    draft.newlyCreatedSupplierId (the supplier that was JUST
-//    created via the detour) over draft.supplierId (whatever was
-//    selected, if anything, before the detour). If the draft had an
-//    existing item selected (selectedExistingItemId), it's
-//    re-resolved against the live allItems list (never trusted as a
-//    stale object) before being restored via
-//    form.setSelectedExistingItem().
-// ✅ Edit mode NEVER saves or restores drafts — this whole mechanism
-//    is create-mode-only, matching the confirmed scope (the
-//    duplicate-prevention flow only exists in create mode).
-// ✅ Supplier moved to the TOP of the form. "+ New Supplier" now goes
-//    through handleAddSupplierWithDraft (draft-saving), not directly
-//    to the raw onAddSupplier prop.
+//    into InventoryFormDraftContext, calls
+//    requestAutoOpenSupplierForm() (a Context-level flag consumed
+//    synchronously by SuppliersScreen's render body — replaces the
+//    previous, unreliable ?autoOpen=create URL query param approach),
+//    then calls onAddSupplier() to actually navigate.
+// ✅ On mount, a one-time effect calls consumeDraft() and restores
+//    every field if a draft is pending — preferring
+//    draft.newlyCreatedSupplierId over draft.supplierId, and
+//    re-resolving selectedExistingItemId against the live allItems
+//    list.
+// ✅ Edit mode NEVER saves or restores drafts — create-mode-only.
+// ✅ Supplier at the TOP of the form. "+ New Supplier" goes through
+//    handleAddSupplierWithDraft, not directly to onAddSupplier.
 // ✅ Field label adapts by mode: "Current Stock" (newItem) vs
 //    "Quantity" (existingItem).
 // ✅ Received Date is a plain YYYY-MM-DD text field (calendar picker
@@ -73,7 +66,8 @@ export function InventoryForm({
   const [showItemSearch,     setShowItemSearch]     = useState(false);
   const [isCreatingNew,      setIsCreatingNew]      = useState(false);
 
-  const { saveDraft, consumeDraft } = useInventoryFormDraft();
+  // ✅ SINGLE declaration — includes requestAutoOpenSupplierForm.
+  const { saveDraft, consumeDraft, requestAutoOpenSupplierForm } = useInventoryFormDraft();
 
   const isCreateMode = mode === "create";
   const isExistingItemMode = isCreateMode && !!form.selectedExistingItem;
@@ -85,7 +79,7 @@ export function InventoryForm({
     .find((c) => c.id === form.categoryId);
   const selectedSupplier = suppliers.find((s) => s.id === form.supplierId);
 
-  // ✅ NEW — restore a pending draft on mount (create mode only).
+  // ✅ Restore a pending draft on mount (create mode only).
   useEffect(() => {
     if (mode !== "create") return;
     const draft = consumeDraft();
@@ -128,8 +122,8 @@ export function InventoryForm({
     setShowItemSearch(false);
   };
 
-  // ✅ NEW — saves the current form state as a draft, then triggers
-  // the actual navigation (via the parent's onAddSupplier).
+  // ✅ Saves the current form state as a draft, requests the
+  // Context-level auto-open flag, then triggers actual navigation.
   const handleAddSupplierWithDraft = () => {
     saveDraft({
       supplierId:              form.supplierId,
@@ -149,6 +143,7 @@ export function InventoryForm({
       barcode:                 form.barcode,
       notes:                   form.notes,
     });
+    requestAutoOpenSupplierForm();
     onAddSupplier();
   };
 

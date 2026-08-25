@@ -3,36 +3,37 @@
 // ✅ Real Firestore data via useSuppliers (FROZEN hook).
 // ✅ Simple client-side name search.
 // ✅ Tapping a card opens the SAME SupplierForm in edit mode.
-// ✅ Auto-open-on-navigation (?autoOpen=create) — empty-dependency
-//    useEffect (fires exactly once, on mount), with formKey bumped
-//    to guarantee a fresh SupplierForm instance.
+// ✅ MAJOR FIX — auto-open detection moved from a URL query param
+//    (?autoOpen=create, read via useEffect/useFocusEffect) to a
+//    Context-level flag (InventoryFormDraftContext's
+//    requestAutoOpenSupplierForm/consumeAutoOpenSupplierForm),
+//    checked DIRECTLY during this component's render body — not
+//    inside any effect. Root cause of the real bug this replaces:
+//    on web, Expo Router's mount/focus lifecycle meant neither a
+//    mount-only useEffect([]) nor a useFocusEffect reliably observed
+//    the query param at the exact moment this screen needed to react
+//    to it — sometimes the effect had already run before the param
+//    existed, sometimes focus fired before the param was attached,
+//    producing a real "first tap does nothing, second tap works"
+//    bug. A Context ref read synchronously during render has no such
+//    timing dependency: by the time this function body executes,
+//    requestAutoOpenSupplierForm() (called by InventoryForm.tsx
+//    BEFORE navigating) has unconditionally already run, so the flag
+//    is simply present, no race possible.
 // ✅ handleSaved receives the optional supplierId from SupplierForm's
-//    onSaved signature. When this was an auto-opened create AND a
-//    new supplier was actually created (supplierId present — never
-//    set on an edit-save), records it via markSupplierCreated()
-//    from InventoryFormDraftContext BEFORE navigating away.
-// ✅ FIX — router.replace("/inventory-module") instead of
-//    router.back(). On web, router.back() proved unreliable after
-//    navigating via router.push("/suppliers?autoOpen=create") — it
-//    sometimes stayed on the Suppliers screen after save, or
-//    required an extra manual navigation (e.g. clicking Inventory in
-//    the sidebar) before InventoryScreen's useFocusEffect would
-//    fire and reopen the Add Item modal. router.replace() navigates
-//    to an EXPLICIT destination rather than depending on
-//    browser/Expo Router history-stack state — this screen always
-//    knows exactly where the New Supplier detour came from
-//    (Inventory), so there's no need to rely on "back" navigation
-//    semantics at all.
+//    onSaved signature; records it via markSupplierCreated() before
+//    navigating away when this was an auto-opened create.
+// ✅ router.replace("/inventory-module") instead of router.back().
 // PHASE 8.3
 // ============================================
 
-import React, { useMemo, useState, useCallback, useEffect, useRef } from "react";
+import React, { useMemo, useState, useCallback, useRef } from "react";
 import {
   View, Text, TextInput, FlatList, TouchableOpacity,
   StyleSheet, Platform, ActivityIndicator,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { useApp } from "../../../context/AppContext";
 import { usePermission } from "../../../hooks/usePermission";
 import { useSuppliers } from "../hooks/useSuppliers";
@@ -50,25 +51,24 @@ export default function SuppliersScreen() {
   const { restaurantId } = useApp();
   const canEditPurchaseOrders = usePermission("edit_purchase_orders");
   const router = useRouter();
-  const { markSupplierCreated } = useInventoryFormDraft();
+  const { markSupplierCreated, consumeAutoOpenSupplierForm } = useInventoryFormDraft();
 
   const { suppliers, loading, error } = useSuppliers(restaurantId);
   const [searchQuery, setSearchQuery] = useState("");
-  const [formState, setFormState] = useState<FormMode>({ mode: "closed" });
+
+  // ✅ FIX — checked ONCE, directly in render body, via lazy useState
+  // initializer. This runs synchronously on this component's FIRST
+  // render — no effect, no lifecycle timing dependency. If
+  // InventoryForm.tsx called requestAutoOpenSupplierForm() before
+  // navigating here (which it always does, synchronously, before
+  // router.push()), that flag is unconditionally already true by the
+  // time this initializer runs.
+  const [formState, setFormState] = useState<FormMode>(() => {
+    return consumeAutoOpenSupplierForm() ? { mode: "create" } : { mode: "closed" };
+  });
   const [formKey, setFormKey] = useState(0);
 
-  const params = useLocalSearchParams<{ autoOpen?: string }>();
-
-  const wasAutoOpened = useRef(false);
-
-  useEffect(() => {
-    if (params.autoOpen === "create") {
-      wasAutoOpened.current = true;
-      setFormKey((k) => k + 1);
-      setFormState({ mode: "create" });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const wasAutoOpened = useRef(formState.mode === "create");
 
   const filteredSuppliers = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -93,7 +93,6 @@ export default function SuppliersScreen() {
     setFormState({ mode: "edit", supplier });
   }, []);
 
-  // ✅ FIX — router.replace(), not router.back(). See FROZEN header.
   const handleSaved = useCallback((supplierId?: string) => {
     const shouldGoBack = wasAutoOpened.current;
     wasAutoOpened.current = false;
