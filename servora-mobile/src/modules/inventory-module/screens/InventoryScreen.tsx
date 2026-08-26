@@ -6,22 +6,24 @@
 // ✅ Date navigation → useInventoryDateNavigation.
 // ✅ "New Supplier" detour timing/return → useSupplierDetourNavigation.
 // ✅ All modal/drawer rendering → InventoryModalsGroup.
-// ✅ FIX — useFocusEffect relies SOLELY on checkForReturnAndReopen(),
-//    which already correctly guards via
-//    InventoryFormDraftContext's isDetourActive(). A previous attempt
-//    added a second, independent consumeAutoOpenSupplierForm() check
-//    directly in this screen's useFocusEffect — that was itself a
-//    bug: requestAutoOpenSupplierForm() is called by
-//    InventoryForm.tsx the INSTANT "New Supplier" is tapped, before
-//    navigation to Suppliers has even started — but this screen's
-//    own useFocusEffect could still fire in that same window (before
-//    the route had actually changed), and consuming the flag right
-//    there reopened the Add Item modal instantly, on top of itself,
-//    before the user ever reached Suppliers. requestAutoOpenSupplierForm/
-//    consumeAutoOpenSupplierForm are used ONLY by SuppliersScreen.tsx
-//    now (both its initial auto-open on arrival, and the second call
-//    in handleSaved() before router.replace()) — InventoryScreen
-//    never reads that flag itself.
+// ✅ FIX — useFocusEffect now checks consumeAutoOpenInventoryForm()
+//    FIRST — a DEDICATED, separate signal (from
+//    InventoryFormDraftContext) meaning "a supplier was just
+//    successfully saved via the New Supplier detour, reopen the Add
+//    Item modal now." This is distinct from
+//    requestAutoOpenSupplierForm/consumeAutoOpenSupplierForm, which
+//    is exclusively for the OPPOSITE direction (Inventory →
+//    Suppliers, opening SupplierForm). Previously both directions
+//    shared one flag that InventoryScreen deliberately never read
+//    (to avoid an earlier bug where reading it caused the modal to
+//    reopen on itself the instant "New Supplier" was tapped, before
+//    navigation even happened) — meaning the "reopen after supplier
+//    save" signal was set but silently never consumed by anyone.
+//    Two fully independent flags removes all ambiguity: this screen
+//    now safely reads consumeAutoOpenInventoryForm() on every focus
+//    (it's a no-op unless a supplier was genuinely just saved),
+//    falling through to the existing checkForReturnAndReopen() path
+//    (still guarded by isDetourActive()) for all other cases.
 // ✅ handleSubmit branches on InventoryFormSubmitPayload's
 //    discriminated union: newItem/existingItem/edit — UNCHANGED.
 // ✅ ARCHITECTURE NOTE — purchaseDate is currently set equal to
@@ -45,6 +47,7 @@ import { useAllInventoryBatches } from "../hooks/useAllInventoryBatches";
 import { useInventoryDateNavigation } from "../hooks/useInventoryDateNavigation";
 import { useInventoryScreenState } from "../hooks/useInventoryScreenState";
 import { useSupplierDetourNavigation } from "../hooks/useSupplierDetourNavigation";
+import { useInventoryFormDraft } from "../context/InventoryFormDraftContext";
 import {
   updateInventoryItem, deleteInventoryItem,
 } from "../repository/inventory-repository";
@@ -65,6 +68,7 @@ const isWeb = Platform.OS === "web";
 export default function InventoryScreen() {
   const { restaurant, restaurantId, fmt } = useApp();
   const canEditInventory = usePermission("edit_inventory");
+  const { consumeAutoOpenInventoryForm } = useInventoryFormDraft();
 
   const { items, loading: itemsLoading, error: itemsError } = useInventory(restaurantId);
   const { groups: categoryGroups, categories, loading: categoriesLoading } = useCategoriesForPicker(restaurantId);
@@ -127,12 +131,16 @@ export default function InventoryScreen() {
     onReopen: openCreate,
   });
 
-  // ✅ FIX — relies solely on checkForReturnAndReopen(). See FROZEN
+  // ✅ FIX — checks consumeAutoOpenInventoryForm() first. See FROZEN
   // header.
   useFocusEffect(
     useCallback(() => {
+      if (consumeAutoOpenInventoryForm()) {
+        openCreate();
+        return;
+      }
       checkForReturnAndReopen();
-    }, [checkForReturnAndReopen])
+    }, [consumeAutoOpenInventoryForm, checkForReturnAndReopen, openCreate])
   );
 
   const safeRestaurantId = restaurantId ?? "";

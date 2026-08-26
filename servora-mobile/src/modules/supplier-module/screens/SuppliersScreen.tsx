@@ -1,29 +1,16 @@
 // ============================================
 // SERVORA ERP — SuppliersScreen
 // ✅ Real Firestore data via useSuppliers (FROZEN hook).
-// ✅ Simple client-side name search.
-// ✅ Tapping a card opens the SAME SupplierForm in edit mode.
-// ✅ Auto-open-on-navigation uses a Context-level flag
-//    (requestAutoOpenSupplierForm/consumeAutoOpenSupplierForm),
-//    checked synchronously in this screen's render body via a lazy
-//    useState initializer.
-// ✅ handleSaved receives the optional supplierId from SupplierForm's
-//    onSaved signature; records it via markSupplierCreated() before
-//    navigating away when this was an auto-opened create.
-// ✅ FIX — handleSaved now ALSO calls requestAutoOpenSupplierForm()
-//    again (a second, independent signal) right before
-//    router.replace("/inventory-module"). Root cause this fixes: on
-//    web, router.replace() to the SAME route InventoryScreen was
-//    already showing did not reliably trigger a fresh
-//    useFocusEffect firing — the previous instance could be reused
-//    rather than re-focused, so InventoryScreen's own
-//    checkForReturnAndReopen() (which depends on a focus event) had
-//    no reliable trigger to run again after the supplier was saved.
-//    InventoryScreen.tsx now ALSO checks
-//    consumeAutoOpenSupplierForm() directly inside its
-//    useFocusEffect (see that file), giving it two independent paths
-//    to detect "I should reopen the Add Item modal" instead of
-//    relying solely on the focus-effect's own draft check.
+// ✅ Auto-open-on-navigation uses requestAutoOpenSupplierForm/
+//    consumeAutoOpenSupplierForm — checked synchronously in this
+//    screen's render body via a lazy useState initializer.
+// ✅ FIX — handleSaved now calls requestAutoOpenInventoryForm()
+//    (a SEPARATE, dedicated signal for the Suppliers → Inventory
+//    direction) instead of incorrectly reusing
+//    requestAutoOpenSupplierForm() (which is exclusively for the
+//    Inventory → Suppliers direction, and was never read by
+//    InventoryScreen — meaning the "reopen after save" signal was
+//    previously set but silently never consumed by anyone).
 // ✅ router.replace("/inventory-module") instead of router.back().
 // PHASE 8.3
 // ============================================
@@ -53,7 +40,7 @@ export default function SuppliersScreen() {
   const canEditPurchaseOrders = usePermission("edit_purchase_orders");
   const router = useRouter();
   const {
-    markSupplierCreated, consumeAutoOpenSupplierForm, requestAutoOpenSupplierForm,
+    markSupplierCreated, consumeAutoOpenSupplierForm, requestAutoOpenInventoryForm,
   } = useInventoryFormDraft();
 
   const { suppliers, loading, error } = useSuppliers(restaurantId);
@@ -89,21 +76,22 @@ export default function SuppliersScreen() {
     setFormState({ mode: "edit", supplier });
   }, []);
 
-  // ✅ FIX — calls requestAutoOpenSupplierForm() again before
-  // navigating back, as a second independent signal for
-  // InventoryScreen to reopen the modal. See FROZEN header.
+  // ✅ FIX — requestAutoOpenInventoryForm(), a dedicated signal for
+  // this direction, not requestAutoOpenSupplierForm().
   const handleSaved = useCallback((supplierId?: string) => {
     const shouldGoBack = wasAutoOpened.current;
     wasAutoOpened.current = false;
+
     if (shouldGoBack && supplierId) {
       markSupplierCreated(supplierId);
-    }
-    setFormState({ mode: "closed" });
-    if (shouldGoBack) {
-      requestAutoOpenSupplierForm();
+      requestAutoOpenInventoryForm();
+      setFormState({ mode: "closed" });
       router.replace("/inventory-module");
+      return;
     }
-  }, [router, markSupplierCreated, requestAutoOpenSupplierForm]);
+
+    setFormState({ mode: "closed" });
+  }, [router, markSupplierCreated, requestAutoOpenInventoryForm]);
 
   const closeForm = useCallback(() => {
     wasAutoOpened.current = false;
