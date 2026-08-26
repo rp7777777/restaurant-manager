@@ -1,15 +1,18 @@
 // ============================================
 // SERVORA ERP — InventoryFilters Component
-// ✅ Category chips + sort chips. Search box MOVED OUT to be
-//    rendered inline alongside Stats (see InventoryScreen.tsx) —
-//    this component no longer renders its own search row, per the
-//    confirmed request to compact search into the Stats row and
-//    reclaim vertical space for the table.
+// ✅ Category chips + sort chips. Search box MOVED OUT (see
+//    InventoryScreen.tsx).
+// ✅ Category chips WRAP (flexWrap) — all categories visible at once
+//    without needing horizontal scroll.
+// ✅ "Full Screen" button, opens InventoryFullScreenTableModal via
+//    the onOpenFullScreen callback.
+// ✅ FIX — Full Screen button now solid blue (highlighted, stands
+//    out clearly) instead of the previous light-blue subtle tint.
 // FROZEN
 // ============================================
 
 import React from "react";
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import {
   InventoryFilters as InventoryFilterState,
@@ -28,20 +31,16 @@ interface InventoryFiltersProps {
   categories:       Category[];
   setCategoryId:    (categoryId: string | null) => void;
   setSort:          (sort: InventorySortOption) => void;
+  onOpenFullScreen: () => void;
 }
 
 export function InventoryFilters({
-  filters, categories, setCategoryId, setSort,
+  filters, categories, setCategoryId, setSort, onOpenFullScreen,
 }: InventoryFiltersProps) {
   return (
     <>
       {categories.length > 0 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.categoryScroll}
-          contentContainerStyle={styles.categoryScrollContent}
-        >
+        <View style={styles.categoryWrap}>
           <TouchableOpacity
             style={[
               styles.categoryChip,
@@ -73,7 +72,7 @@ export function InventoryFilters({
               </Text>
             </TouchableOpacity>
           ))}
-        </ScrollView>
+        </View>
       )}
 
       <View style={styles.sortRow}>
@@ -100,14 +99,20 @@ export function InventoryFilters({
             </Text>
           </TouchableOpacity>
         ))}
+        <TouchableOpacity style={styles.fullScreenBtn} onPress={onOpenFullScreen}>
+          <MaterialIcons name="fullscreen" size={16} color="#fff" />
+          <Text style={styles.fullScreenBtnText}>Full Screen</Text>
+        </TouchableOpacity>
       </View>
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  categoryScroll: { marginTop: 8, maxHeight: 30 },
-  categoryScrollContent: { paddingHorizontal: 16, gap: 6, alignItems: "center" },
+  categoryWrap: {
+    flexDirection: "row", flexWrap: "wrap", gap: 6,
+    paddingHorizontal: 16, marginTop: 8,
+  },
   categoryChip: {
     height: 22,
     justifyContent: "center",
@@ -132,4 +137,10 @@ const styles = StyleSheet.create({
   sortChipActive: { backgroundColor: "#0369a1" },
   sortChipText: { fontSize: 11, fontWeight: "700", color: "#64748b" },
   sortChipTextActive: { color: "#fff" },
+  fullScreenBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
+    backgroundColor: "#0369a1", marginLeft: "auto",
+  },
+  fullScreenBtnText: { fontSize: 11, fontWeight: "800", color: "#fff" },
 });

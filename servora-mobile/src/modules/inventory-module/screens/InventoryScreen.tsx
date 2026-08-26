@@ -5,25 +5,16 @@
 // ✅ UI/modal state → useInventoryScreenState.
 // ✅ Date navigation → useInventoryDateNavigation.
 // ✅ "New Supplier" detour timing/return → useSupplierDetourNavigation.
-// ✅ All modal/drawer rendering → InventoryModalsGroup.
-// ✅ FIX — useFocusEffect now checks consumeAutoOpenInventoryForm()
-//    FIRST — a DEDICATED, separate signal (from
-//    InventoryFormDraftContext) meaning "a supplier was just
-//    successfully saved via the New Supplier detour, reopen the Add
-//    Item modal now." This is distinct from
-//    requestAutoOpenSupplierForm/consumeAutoOpenSupplierForm, which
-//    is exclusively for the OPPOSITE direction (Inventory →
-//    Suppliers, opening SupplierForm). Previously both directions
-//    shared one flag that InventoryScreen deliberately never read
-//    (to avoid an earlier bug where reading it caused the modal to
-//    reopen on itself the instant "New Supplier" was tapped, before
-//    navigation even happened) — meaning the "reopen after supplier
-//    save" signal was set but silently never consumed by anyone.
-//    Two fully independent flags removes all ambiguity: this screen
-//    now safely reads consumeAutoOpenInventoryForm() on every focus
-//    (it's a no-op unless a supplier was genuinely just saved),
-//    falling through to the existing checkForReturnAndReopen() path
-//    (still guarded by isDetourActive()) for all other cases.
+// ✅ Two independent one-time signals for the New Supplier detour:
+//    requestAutoOpenSupplierForm (Inventory → Suppliers) and
+//    requestAutoOpenInventoryForm (Suppliers → Inventory, consumed
+//    here in useFocusEffect).
+// ✅ NEW — showFullScreenTable state + InventoryFullScreenTableModal,
+//    triggered from InventoryFilters' "Full Screen" button. Reuses
+//    InventoryTableView (not duplicated) with its own independent
+//    search/category state, letting the user browse the full item
+//    list without the header/stats taking up vertical space.
+// ✅ All other modal/drawer rendering → InventoryModalsGroup.
 // ✅ handleSubmit branches on InventoryFormSubmitPayload's
 //    discriminated union: newItem/existingItem/edit — UNCHANGED.
 // ✅ ARCHITECTURE NOTE — purchaseDate is currently set equal to
@@ -62,6 +53,7 @@ import { InventoryFilters } from "../components/InventoryFilters";
 import { InventoryTableView } from "../components/InventoryTableView";
 import { HistoricalInventoryTableView } from "../components/HistoricalInventoryTableView";
 import { InventoryModalsGroup } from "../components/InventoryModalsGroup";
+import { InventoryFullScreenTableModal } from "../components/InventoryFullScreenTableModal";
 
 const isWeb = Platform.OS === "web";
 
@@ -85,6 +77,7 @@ export default function InventoryScreen() {
 
   const [historicalSearchQuery, setHistoricalSearchQuery] = React.useState("");
   const [historicalCategoryId, setHistoricalCategoryId] = React.useState<string | null>(null);
+  const [showFullScreenTable, setShowFullScreenTable] = React.useState(false);
 
   const {
     filters, filteredItems,
@@ -131,8 +124,6 @@ export default function InventoryScreen() {
     onReopen: openCreate,
   });
 
-  // ✅ FIX — checks consumeAutoOpenInventoryForm() first. See FROZEN
-  // header.
   useFocusEffect(
     useCallback(() => {
       if (consumeAutoOpenInventoryForm()) {
@@ -290,6 +281,7 @@ export default function InventoryScreen() {
             categories={categories}
             setCategoryId={setCategoryId}
             setSort={setSort}
+            onOpenFullScreen={() => setShowFullScreenTable(true)}
           />
 
           {itemsError && (
@@ -342,6 +334,15 @@ export default function InventoryScreen() {
         categories={categories}
         showMovementHistory={showMovementHistory}
         onCloseMovementHistory={closeMovementHistory}
+      />
+
+      <InventoryFullScreenTableModal
+        visible={showFullScreenTable}
+        onClose={() => setShowFullScreenTable(false)}
+        items={items}
+        categories={categories}
+        batches={allBatches}
+        onItemPress={openDrawer}
       />
     </View>
   );

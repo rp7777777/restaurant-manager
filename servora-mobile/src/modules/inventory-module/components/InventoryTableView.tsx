@@ -1,17 +1,16 @@
 // ============================================
 // SERVORA ERP — InventoryTableView Component
 // ✅ THIS IS THE MAIN INVENTORY SCREEN VIEW.
-// ✅ FIX — column widths increased (~2 inches / ~192px total added
-//    across columns) per confirmed request, and chevron-right (›)
-//    added to the end of every row — matching Store Module's
-//    KitchenRequestTable visual affordance that a row is tappable.
-//    Widths chosen to comfortably fit an A4 page in portrait (~800px
-//    usable width at 96 DPI) when printed, matching the "office
-//    printout" sizing already established for Movement History/
-//    Batch Report.
+// ✅ Column widths increased (~2 inches / ~192px total), and
+//    chevron-right (›) added to the end of every row.
+// ✅ FIX — Item Name cell now bold + larger (fontWeight 700, fontSize
+//    11 vs. the table's usual 9) and darker color, standing out as
+//    the primary identifying text in the row.
+// ✅ FIX — Lot/Batch QTY cell now bold + dark purple (#6d28d9),
+//    clearly distinct from Total QTY's dark green (#059669) — both
+//    highlighted, neither visually confused with the other.
 // ✅ Row tap still opens ItemDetailsDrawer via onItemPress — the
-//    chevron is a visual cue only, not a new interaction (the whole
-//    row is already tappable).
+//    chevron is a visual cue only, not a new interaction.
 // FROZEN
 // ============================================
 
@@ -45,8 +44,6 @@ interface CategoryGroup {
 
 const ROW_HEIGHT = 24;
 
-// ✅ FIX — widened ~2 inches (~192px) total vs. the previous compact
-// sizing, and a chevron column added.
 const LEFT_COLS = { sn: 40, item: 170 };
 const RIGHT_COLS = { date: 100, batch: 120, stock: 90, unit: 70, expiry: 100, total: 90, chevron: 30 };
 const LEFT_WIDTH = LEFT_COLS.sn + LEFT_COLS.item;
@@ -155,7 +152,7 @@ export function InventoryTableView({
                   >
                     <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }]}>
                       <Text style={[styles.leftStripCell, { width: LEFT_COLS.sn }]}>{itemIndex + 1}</Text>
-                      <Text style={[styles.leftStripCell, { width: LEFT_COLS.item }]} numberOfLines={2}>
+                      <Text style={[styles.leftStripCell, styles.itemNameCell, { width: LEFT_COLS.item }]} numberOfLines={2}>
                         {row.item.itemName}
                       </Text>
                     </View>
@@ -173,7 +170,7 @@ export function InventoryTableView({
                           >
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.date }]}>{batch.receivedDate}</Text>
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.batch }]} numberOfLines={1}>{batch.batchNo}</Text>
-                            <Text style={[styles.tableCell, { width: RIGHT_COLS.stock }]}>{batch.quantity}</Text>
+                            <Text style={[styles.tableCell, styles.batchQtyCell, { width: RIGHT_COLS.stock }]}>{batch.quantity}</Text>
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.unit }]}>{batch.unit}</Text>
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.expiry }]}>{batch.expiryDate ?? "—"}</Text>
                             <Text style={[styles.tableCell, styles.totalCell, { width: RIGHT_COLS.total }]}>
@@ -253,6 +250,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#f8fafc",
   },
   leftStripCell: { fontSize: 9, color: "#334155", paddingHorizontal: 3 },
+  itemNameCell: { fontWeight: "700", color: "#1e293b", fontSize: 11 },
   rightBatchRows: { flex: 1 },
   batchRow: {
     flexDirection: "row",
@@ -263,6 +261,7 @@ const styles = StyleSheet.create({
     borderBottomColor: "#f1f5f9",
   },
   tableCell: { fontSize: 9, color: "#334155", paddingHorizontal: 3 },
+  batchQtyCell: { fontWeight: "800", color: "#6d28d9", fontSize: 10 },
   totalCell: { fontWeight: "800", color: "#059669", fontSize: 10 },
   noBatchText: { fontSize: 9, color: "#94a3b8", fontStyle: "italic" },
   chevronCell: { alignItems: "center", justifyContent: "center" },
