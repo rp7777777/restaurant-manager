@@ -6,26 +6,18 @@
 // ✅ useHistoricalInventory() called with inventoryItems param so
 //    categoryId metadata can be joined by inventoryId — no
 //    duplicate Firestore subscription.
-// ✅ FIX — results are now GROUPED BY CATEGORY, matching
-//    InventoryTableView.tsx's own visual language exactly (one
-//    bordered block per category, category name as a colored
-//    header, alphabetically sorted categories, S.N. restarting at 1
-//    per category). Previously all filtered items rendered under a
-//    single flat "HISTORICAL STOCK" block regardless of category —
-//    functionally correct filtering, but visually inconsistent with
-//    the rest of the Inventory module. Items whose categoryId
-//    doesn't match any category in the `categories` list (a rare
-//    edge case — e.g. category deleted after the historical data was
-//    recorded) are grouped under a final "Uncategorized" block
-//    rather than silently dropped.
+// ✅ Results GROUPED BY CATEGORY, matching InventoryTableView.tsx's
+//    own visual language exactly.
 // ✅ Category filter chips — category reflects the item's CURRENT
-//    category assignment (a live-metadata join, not a historical
-//    snapshot of what category it was in ON that date) — documented,
-//    accepted limitation.
-// ✅ Sort/stock-status filters deliberately NOT included — those are
-//    live-inventory-specific concepts without a well-defined
-//    historical meaning.
+//    category assignment.
+// ✅ Sort/stock-status filters deliberately NOT included.
 // ✅ hasInconsistency surfaced as a small warning indicator per item.
+// ✅ FIX — column widths now match InventoryTableView.tsx exactly
+//    (previously smaller, causing a visible size mismatch between
+//    Today's live table and the historical date-navigated table —
+//    the two views now look identical in row/column proportions).
+//    Item Name also given the same bold styling as
+//    InventoryTableView.tsx for visual consistency.
 // FROZEN
 // ============================================
 
@@ -54,9 +46,10 @@ interface HistoricalCategoryGroup {
   items:        HistoricalItemStock[];
 }
 
+// ✅ FIX — matches InventoryTableView.tsx exactly.
 const ROW_HEIGHT = 24;
-const LEFT_COLS = { sn: 30, item: 110 };
-const RIGHT_COLS = { date: 74, batch: 84, stock: 62, unit: 48, expiry: 74, total: 62 };
+const LEFT_COLS = { sn: 40, item: 170 };
+const RIGHT_COLS = { date: 100, batch: 120, stock: 90, unit: 70, expiry: 100, total: 90 };
 const LEFT_WIDTH = LEFT_COLS.sn + LEFT_COLS.item;
 const RIGHT_WIDTH =
   RIGHT_COLS.date + RIGHT_COLS.batch + RIGHT_COLS.stock +
@@ -84,8 +77,6 @@ export function HistoricalInventoryTableView({
     return result;
   }, [itemsWithHistoricalStock, searchQuery, categoryId]);
 
-  // ✅ NEW — group filteredItems by category, mirroring
-  // InventoryTableView.tsx's own grouping approach.
   const categoryGroups = useMemo<HistoricalCategoryGroup[]>(() => {
     const categoryById = new Map(categories.map((c) => [c.id, c]));
     const byCategory = new Map<string, HistoricalItemStock[]>();
@@ -206,7 +197,7 @@ export function HistoricalInventoryTableView({
                       <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }]}>
                         <Text style={[styles.leftStripCell, { width: LEFT_COLS.sn }]}>{itemIndex + 1}</Text>
                         <View style={{ width: LEFT_COLS.item }}>
-                          <Text style={styles.leftStripCell} numberOfLines={2}>{item.itemName}</Text>
+                          <Text style={[styles.leftStripCell, styles.itemNameCell]} numberOfLines={2}>{item.itemName}</Text>
                           {item.hasInconsistency && (
                             <View style={styles.inconsistencyBadge}>
                               <MaterialIcons name="warning" size={10} color="#d97706" />
@@ -228,7 +219,7 @@ export function HistoricalInventoryTableView({
                           >
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.date }]}>{batch.receivedDate}</Text>
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.batch }]} numberOfLines={1}>{batch.batchNo}</Text>
-                            <Text style={[styles.tableCell, { width: RIGHT_COLS.stock }]}>{batch.quantity}</Text>
+                            <Text style={[styles.tableCell, styles.batchQtyCell, { width: RIGHT_COLS.stock }]}>{batch.quantity}</Text>
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.unit }]}>{batch.unit}</Text>
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.expiry }]}>{batch.expiryDate ?? "—"}</Text>
                             <Text style={[styles.tableCell, styles.totalCell, { width: RIGHT_COLS.total }]}>
@@ -292,11 +283,13 @@ const styles = StyleSheet.create({
     borderRightWidth: 1, borderRightColor: "#cbd5e1", backgroundColor: "#f8fafc", paddingVertical: 3,
   },
   leftStripCell: { fontSize: 9, color: "#334155", paddingHorizontal: 3 },
+  itemNameCell: { fontWeight: "700", color: "#1e293b", fontSize: 11 },
   inconsistencyBadge: { flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: 3, marginTop: 2 },
   inconsistencyText: { fontSize: 7, color: "#d97706", fontWeight: "700" },
   rightBatchRows: { flex: 1 },
   batchRow: { flexDirection: "row", alignItems: "center" },
   batchRowDivider: { borderBottomWidth: 1, borderBottomColor: "#f1f5f9" },
   tableCell: { fontSize: 9, color: "#334155", paddingHorizontal: 3 },
+  batchQtyCell: { fontWeight: "800", color: "#6d28d9", fontSize: 10 },
   totalCell: { fontWeight: "800", color: "#7c3aed", fontSize: 10 },
 });
