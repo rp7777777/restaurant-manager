@@ -29,6 +29,7 @@ import { View, Text, StyleSheet, Platform, Alert, TouchableOpacity, TextInput } 
 import { MaterialIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useApp } from "../../../context/AppContext";
+import { auth } from "../../../firebase";
 import { usePermission } from "../../../hooks/usePermission";
 import { useInventory } from "../hooks/useInventory";
 import { useInventoryFilters } from "../hooks/useInventoryFilters";
@@ -58,7 +59,9 @@ import { InventoryFullScreenTableModal } from "../components/InventoryFullScreen
 const isWeb = Platform.OS === "web";
 
 export default function InventoryScreen() {
-  const { restaurant, restaurantId, fmt } = useApp();
+ const { restaurant, restaurantId, fmt, userProfile } = useApp();
+  const actorName = userProfile?.name?.trim() || auth.currentUser?.email || "Inventory";
+  
   const canEditInventory = usePermission("edit_inventory");
   const { consumeAutoOpenInventoryForm } = useInventoryFormDraft();
 
@@ -309,6 +312,7 @@ export default function InventoryScreen() {
         restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
         fmt={fmt}
         canEditInventory={canEditInventory}
+        actorName={actorName}
         onCloseDrawer={closeDrawer}
         onEditItem={openEdit}
         onAdjustStock={openAdjustStock}
@@ -335,7 +339,6 @@ export default function InventoryScreen() {
         showMovementHistory={showMovementHistory}
         onCloseMovementHistory={closeMovementHistory}
       />
-
       <InventoryFullScreenTableModal
         visible={showFullScreenTable}
         onClose={() => setShowFullScreenTable(false)}
