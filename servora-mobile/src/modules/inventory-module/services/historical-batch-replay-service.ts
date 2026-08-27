@@ -14,11 +14,11 @@
 //      matching this batch's id, that allocation's quantity is
 //      DEDUCTED — batchAllocations always represents a deduction
 //      FROM an existing batch (WASTE/KITCHEN_ISSUE/TRANSFER_OUT via
-//      deductStockBatch()/issueKitchenRequest()). A PURCHASE
-//      movement creates a BRAND NEW batch via receiveBatch() — it
-//      never adds an allocation entry pointing at an existing
-//      batch's id, so there's no double-counting risk to guard
-//      against in practice.
+//      deductStockBatch()/issueKitchenRequest()/moveBatchToItem()).
+//      A PURCHASE movement creates a BRAND NEW batch via
+//      receiveBatch() — it never adds an allocation entry pointing
+//      at an existing batch's id, so there's no double-counting risk
+//      to guard against in practice.
 //    - The exact movement whose replay brings quantity to 0 sets
 //      depletedDate = that movement's date.
 //    - selectedDate === depletedDate → visible, quantity 0.
@@ -29,36 +29,37 @@
 //    an allocation would take a batch's running quantity below 0, or
 //    if an allocation's quantity is itself malformed (NaN, Infinity,
 //    negative), the batch is flagged inconsistent rather than
-//    silently producing a wrong/NaN number. The caller decides how
-//    to surface that (e.g. a warning icon) — this service only
-//    detects and reports it.
+//    silently producing a wrong/NaN number.
 // ✅ relevantMovements = "deduction movements containing an
-//    allocation for this batch" (not "all movements relevant to
-//    this batch") — matches exactly what the filter does. This
-//    deliberately does NOT include the batch's own creation/receive
-//    movement — receivedDate + originalQuantity already establish
-//    the starting state without replaying the PURCHASE movement
-//    itself.
+//    allocation for this batch" — deliberately does NOT include the
+//    batch's own creation/receive movement.
 // ✅ Each allocation's quantity is validated (Number.isFinite + >= 0)
-//    BEFORE being subtracted — a malformed allocation.quantity (e.g.
-//    NaN from corrupted data) is caught explicitly rather than
-//    silently propagating through `runningQuantity - NaN`, which
-//    would otherwise defeat the `next < 0` negative-guard entirely
-//    (NaN < 0 is false in JS).
+//    BEFORE being subtracted.
 // ✅ Local-timezone date key (getFullYear/getMonth/getDate, NOT UTC
-//    methods) — matches the same "what a person physically there
-//    calls today" convention already established in
-//    MovementHistoryModal.tsx's own movementDateKey() fix. This
-//    means batch.receivedDate (a plain YYYY-MM-DD string, entered by
-//    a user in their local context) and this function's output are
-//    both consistently LOCAL-date-based — a movement recorded at
-//    23:50 local time is keyed to that same local day, not shifted
-//    to the next UTC day. No cross-timezone mismatch between the two
-//    date sources this service compares.
-// ✅ Firestore Timestamp vs JS Date — movement.createdAt can arrive
-//    as either (Firestore Timestamp objects have a .toDate() method;
-//    plain Date/ISO-string values do not) — toJsDate() normalizes
-//    both safely.
+//    methods) — matches MovementHistoryModal.tsx's own convention.
+// ✅ Firestore Timestamp vs JS Date — toJsDate() normalizes both.
+// ✅ NEW — getIssuesForDate(): a SEPARATE pure function (does not
+//    modify replayBatchAsOfDate() at all) answering a different
+//    question — "what went OUT of this specific batch on this exact
+//    date" (for the historical table's Issue column), as opposed to
+//    replayBatchAsOfDate()'s "what remains AS OF this date" (closing
+//    stock). Confirmed matching rules:
+//    - Movement's movementType must be one of KITCHEN_ISSUE / WASTE /
+//      TRANSFER_OUT (explicit allowlist, not just "any negative
+//      quantityChanged" — guards against a future unrelated negative
+//      movement type being misinterpreted as an "issue").
+//    - Movement's date (from createdAt) must equal selectedDate
+//      EXACTLY (not <=, unlike replay's cumulative matching).
+//    - Movement must carry a batchAllocations entry for THIS
+//      specific batch.id.
+//    - The displayed quantity is the ALLOCATION's quantity for this
+//      batch — NEVER the movement's overall quantityChanged — since
+//      a single Kitchen Issue can draw from multiple batches via
+//      FEFO, and only this batch's portion belongs in this batch's
+//      entry.
+//    - Source label: KITCHEN_ISSUE → "Kitchen", WASTE → "Waste",
+//      TRANSFER_OUT + reasonCategory DATA_CORRECTION → "Correction",
+//      TRANSFER_OUT (other reason) → "Transfer".
 // FROZEN
 // ============================================
 
@@ -180,4 +181,50 @@ export function replayBatchesAsOfDate(
   selectedDate: string
 ): HistoricalBatchState[] {
   return batches.map((batch) => replayBatchAsOfDate(batch, movements, selectedDate));
+}
+
+// ── Per-date Issue breakdown — see FROZEN header for full rules. ──
+export interface HistoricalIssueEntry {
+  quantity: number;
+  source:   string;
+}
+
+const OUTGOING_MOVEMENT_TYPES = new Set(["KITCHEN_ISSUE", "WASTE", "TRANSFER_OUT"]);
+
+function deriveIssueSource(movementType: string, reasonCategory?: string): string {
+  if (movementType === "KITCHEN_ISSUE") return "Kitchen";
+  if (movementType === "WASTE") return "Waste";
+  if (movementType === "TRANSFER_OUT") {
+    return reasonCategory === "DATA_CORRECTION" ? "Correction" : "Transfer";
+  }
+  return movementType;
+}
+
+export function getIssuesForDate(
+  batchId: string,
+  movements: StockMovement[],
+  selectedDate: string
+): HistoricalIssueEntry[] {
+  const entries: HistoricalIssueEntry[] = [];
+
+  for (const movement of movements) {
+    if (!OUTGOING_MOVEMENT_TYPES.has(movement.movementType)) continue;
+    if (movement.quantityChanged >= 0) continue;
+
+    const jsDate = toJsDate(movement.createdAt);
+    if (!jsDate) continue;
+    if (toDateKey(jsDate) !== selectedDate) continue;
+
+    const allocation = (movement.batchAllocations ?? []).find((a) => a.batchId === batchId);
+    if (!allocation) continue;
+
+    if (!Number.isFinite(allocation.quantity) || allocation.quantity <= 0) continue;
+
+    entries.push({
+      quantity: allocation.quantity,
+      source:   deriveIssueSource(movement.movementType, movement.reasonCategory),
+    });
+  }
+
+  return entries;
 }
