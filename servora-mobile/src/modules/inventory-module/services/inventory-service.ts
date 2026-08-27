@@ -801,3 +801,190 @@ export async function correctBatchDetails(
 
   return { newCurrentStock: result.newCurrentStock };
 }
+
+// ── Move Batch to Correct Item — for correcting human-error data
+//    entry (e.g. a batch was received against the WRONG
+//    InventoryItem, such as "beer" stock accidentally receipted onto
+//    "water"'s document). Moves the batch's inventoryId/itemName,
+//    transfers its quantity between the two items' currentStock, and
+//    records a paired TRANSFER_OUT/TRANSFER_IN movement (both tagged
+//    reasonCategory: "DATA_CORRECTION") for a full audit trail. ──
+export interface MoveBatchToItemResult {
+  movementOutId: string;
+  movementInId:  string;
+}
+
+export async function moveBatchToItem(
+  restaurantId: string,
+  batchId: string,
+  targetItem: InventoryItem,
+  actor?: ActorInfo
+): Promise<MoveBatchToItemResult> {
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
+  if (!batchId) throw new Error("Batch is required");
+  if (!targetItem?.id) throw new Error("Target item is required");
+
+  const targetBatchRef = batchDoc(restaurantId, batchId);
+  const targetItemRef  = inventoryDoc(restaurantId, targetItem.id);
+  const movementOutRef = doc(stockMovementsCollection(restaurantId));
+  const movementInRef  = doc(stockMovementsCollection(restaurantId));
+
+  const result = await runTransaction(db, async (transaction) => {
+    const batchSnap = await transaction.get(targetBatchRef);
+    if (!batchSnap.exists()) throw new Error("Batch not found");
+    const batchData = batchSnap.data();
+
+    const sourceInventoryId: string = batchData.inventoryId;
+    const batchNo: string            = batchData.batchNo;
+    const batchQuantity: number      = batchData.quantity;
+    const batchUnit: string          = batchData.unit;
+    const batchUnitCost: number      = batchData.unitCost ?? 0;
+
+    if (sourceInventoryId === targetItem.id) {
+      throw new Error("Batch is already assigned to this item");
+    }
+
+    // ✅ Unit compatibility guard — moving a "bottle" batch onto a
+    // "kg" item (or similar mismatch) would silently corrupt the
+    // target item's currentStock math. Refuse rather than guess.
+    if (batchUnit !== targetItem.unit) {
+      throw new Error(
+        `Cannot move — this batch is measured in ${batchUnit}, but ` +
+        `"${targetItem.itemName}" is measured in ${targetItem.unit}`
+      );
+    }
+
+    const sourceItemRef = inventoryDoc(restaurantId, sourceInventoryId);
+    const sourceItemSnap = await transaction.get(sourceItemRef);
+    if (!sourceItemSnap.exists()) throw new Error("Source inventory item not found");
+    const sourceItemData = sourceItemSnap.data();
+
+    const targetItemSnap = await transaction.get(targetItemRef);
+    if (!targetItemSnap.exists()) throw new Error("Target inventory item not found");
+    const targetItemData = targetItemSnap.data();
+
+    // ✅ Batch-key uniqueness — the target item must not already have
+    // a batch with this same batchNo (same integrity rule as
+    // receiveBatch()/correctBatchDetails()).
+    const newKey = normalizeBatchKey(targetItem.id, batchNo);
+    const newKeyRef = batchKeyDoc(restaurantId, newKey);
+    const newKeySnap = await transaction.get(newKeyRef);
+    if (newKeySnap.exists()) {
+      throw new Error(`Batch number "${batchNo}" already exists on "${targetItem.itemName}"`);
+    }
+
+    const oldKey = normalizeBatchKey(sourceInventoryId, batchNo);
+    const oldKeyRef = batchKeyDoc(restaurantId, oldKey);
+
+    // ── Source item: currentStock decreases ──
+    const sourceBeforeQuantity: number = sourceItemData.currentStock ?? 0;
+    const sourceAfterQuantity = sourceBeforeQuantity - batchQuantity;
+    if (sourceAfterQuantity < 0) {
+      throw new Error(
+        `Cannot move — source item's recorded stock (${sourceBeforeQuantity}) is less than ` +
+        `this batch's quantity (${batchQuantity}); data is already inconsistent and needs manual review`
+      );
+    }
+    const sourceMinStock: number = Number(sourceItemData.minStock ?? 0);
+    const sourceIsLowStock = computeIsLowStock(sourceAfterQuantity, sourceMinStock);
+
+    // ── Target item: currentStock increases ──
+    const targetBeforeQuantity: number = targetItemData.currentStock ?? 0;
+    const targetAfterQuantity = targetBeforeQuantity + batchQuantity;
+    const targetMinStock: number = Number(targetItemData.minStock ?? 0);
+    const targetIsLowStock = computeIsLowStock(targetAfterQuantity, targetMinStock);
+
+    const batchAllocations: BatchAllocationRecord[] = [{
+      batchId,
+      batchNo,
+      quantity: batchQuantity,
+    }];
+
+    // ── Move the batch key (uniqueness lock) ──
+    transaction.set(newKeyRef, {
+      inventoryId: targetItem.id,
+      batchNo,
+      batchId,
+      restaurantId,
+      createdAt:   serverTimestamp(),
+    });
+    transaction.delete(oldKeyRef);
+
+    // ── Update the batch document itself ──
+    transaction.update(targetBatchRef, {
+      inventoryId: targetItem.id,
+      itemName:    targetItem.itemName,
+      updatedAt:   serverTimestamp(),
+      updatedBy:   auth.currentUser!.uid,
+    });
+
+    // ── Update both items' currentStock ──
+    transaction.update(sourceItemRef, {
+      currentStock: sourceAfterQuantity,
+      isLowStock:   sourceIsLowStock,
+      updatedAt:    serverTimestamp(),
+    });
+    transaction.update(targetItemRef, {
+      currentStock: targetAfterQuantity,
+      isLowStock:   targetIsLowStock,
+      updatedAt:    serverTimestamp(),
+    });
+
+    const movementValue = Math.round(batchQuantity * batchUnitCost * 100) / 100;
+
+    // ── Paired movement records — TRANSFER_OUT on the source item,
+    //    TRANSFER_IN on the target item, both tagged as a data
+    //    correction. ──
+    transaction.set(movementOutRef, {
+      inventoryId:     sourceInventoryId,
+      itemName:        sourceItemData.itemName,
+      movementType:    "TRANSFER_OUT",
+      quantityChanged: -batchQuantity,
+      beforeQuantity:  sourceBeforeQuantity,
+      afterQuantity:   sourceAfterQuantity,
+      unit:            batchUnit,
+      unitCostAtTime:  batchUnitCost,
+      movementValue,
+      reasonCategory:  "DATA_CORRECTION",
+      referenceType:   "MANUAL",
+      referenceId:     null,
+      reason:          `Batch ${batchNo} moved to "${targetItem.itemName}" (incorrect item correction)`,
+      batchAllocations,
+      restaurantId,
+      createdBy:       auth.currentUser!.uid,
+      createdByName:   actor?.createdByName ?? null,
+      createdByRole:   actor?.createdByRole ?? null,
+      createdAt:       serverTimestamp(),
+    });
+
+    transaction.set(movementInRef, {
+      inventoryId:     targetItem.id,
+      itemName:        targetItem.itemName,
+      movementType:    "TRANSFER_IN",
+      quantityChanged: batchQuantity,
+      beforeQuantity:  targetBeforeQuantity,
+      afterQuantity:   targetAfterQuantity,
+      unit:            batchUnit,
+      unitCostAtTime:  batchUnitCost,
+      movementValue,
+      reasonCategory:  "DATA_CORRECTION",
+      referenceType:   "MANUAL",
+      referenceId:     null,
+      reason:          `Batch ${batchNo} moved from "${sourceItemData.itemName}" (incorrect item correction)`,
+      batchAllocations,
+      restaurantId,
+      createdBy:       auth.currentUser!.uid,
+      createdByName:   actor?.createdByName ?? null,
+      createdByRole:   actor?.createdByRole ?? null,
+      createdAt:       serverTimestamp(),
+    });
+
+    return {};
+  });
+
+  return {
+    movementOutId: movementOutRef.id,
+    movementInId:  movementInRef.id,
+  };
+}

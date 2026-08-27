@@ -24,6 +24,15 @@
 //    Currently only WASTE's UI would populate this (enforced at the
 //    service layer — see stock-movement-service.ts), but the type
 //    itself stays generic so no rename is needed later.
+// ✅ NEW — "DATA_CORRECTION" reasonCategory: used exclusively by
+//    moveBatchToItem() (inventory-service.ts) when a batch was
+//    received against the wrong InventoryItem (e.g. by human error
+//    while typing a supplier receipt) and is being moved to the
+//    correct item. This is paired with the EXISTING
+//    TRANSFER_OUT/TRANSFER_IN movementType values (no new
+//    movementType introduced) — the reasonCategory is what
+//    distinguishes "this was a data-entry correction" from a
+//    genuine physical location transfer in the audit trail.
 // ✅ beforeQuantity/afterQuantity — always server-computed inside
 //    the transaction, never trusted from the caller.
 // ✅ createdByName/createdByRole — snapshot of who made the change,
@@ -40,6 +49,8 @@
 //    - WASTE/TRANSFER_OUT (via deductStockBatch()) — one entry PER
 //      BATCH the FEFO engine actually drew from, mirroring
 //      batch-allocation-service.ts's AllocationResult.allocations.
+//    - TRANSFER_OUT/TRANSFER_IN (via moveBatchToItem()) — always
+//      exactly ONE entry, the batch being moved.
 //    This type file (stock-movement-module) stays a plain data
 //    shape — it does not itself know about FEFO/batches; that
 //    logic lives entirely in inventory-module, which populates this
@@ -68,6 +79,7 @@ export type StockMovementReasonCategory =
   | "BURNT"
   | "PREPARATION_ERROR"
   | "CUSTOMER_RETURN"
+  | "DATA_CORRECTION"
   | "OTHER";
 
 // ── One batch's contribution to a movement — see FROZEN header. ──
