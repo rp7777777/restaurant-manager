@@ -40,6 +40,7 @@ interface InventoryModalsGroupProps {
   restaurantDefaultExpiryAlertDays?: number;
   fmt:                              (value: number) => string;
   canEditInventory:                 boolean;
+  actorName:                        string;
   onCloseDrawer:                    () => void;
   onEditItem:                       (item: InventoryItem) => void;
   onAdjustStock:                    (item: InventoryItem) => void;
@@ -81,7 +82,7 @@ interface InventoryModalsGroupProps {
 
 export function InventoryModalsGroup({
   drawerItem, categoryMap, restaurantId, todayISO, restaurantDefaultExpiryAlertDays,
-  fmt, canEditInventory, onCloseDrawer, onEditItem, onAdjustStock, onReceiveBatch,
+  fmt, canEditInventory, actorName, onCloseDrawer, onEditItem, onAdjustStock, onReceiveBatch,
   showForm, editingItem, categoryGroups, suppliers, allItems, onSubmit, onCancelForm,
   onDeleteItem, onAddSupplier,
   adjustingItem, onCloseAdjustStock,
@@ -101,6 +102,8 @@ export function InventoryModalsGroup({
         restaurantDefaultExpiryAlertDays={restaurantDefaultExpiryAlertDays}
         fmt={fmt}
         canEditInventory={canEditInventory}
+        allItems={allItems}
+        actorName={actorName}
         onClose={onCloseDrawer}
         onEdit={onEditItem}
         onAdjustStock={onAdjustStock}

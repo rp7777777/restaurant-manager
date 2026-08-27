@@ -46,6 +46,8 @@ interface ItemDetailsDrawerProps {
   restaurantDefaultExpiryAlertDays?: number;
   fmt:                               (n: number) => string;
   canEditInventory:                  boolean;
+  allItems:                          InventoryItem[];
+  actorName:                         string;
   onClose:                           () => void;
   onEdit:                            (item: InventoryItem) => void;
   onAdjustStock:                     (item: InventoryItem) => void;
@@ -55,7 +57,7 @@ interface ItemDetailsDrawerProps {
 
 export function ItemDetailsDrawer({
   visible, item, category, restaurantId, todayISO, restaurantDefaultExpiryAlertDays,
-  fmt, canEditInventory, onClose, onEdit, onAdjustStock, onReceiveBatch,
+  fmt, canEditInventory, allItems, actorName, onClose, onEdit, onAdjustStock, onReceiveBatch,
 }: ItemDetailsDrawerProps) {
   const [busy, setBusy] = useState(false);
   const [editingBatch, setEditingBatch] = useState<InventoryBatch | undefined>(undefined);
@@ -272,7 +274,9 @@ export function ItemDetailsDrawer({
         visible={!!editingBatch}
         batch={editingBatch}
         item={item}
+        allItems={allItems}
         restaurantId={restaurantId}
+        actorName={actorName}
         onClose={() => setEditingBatch(undefined)}
       />
     </>
