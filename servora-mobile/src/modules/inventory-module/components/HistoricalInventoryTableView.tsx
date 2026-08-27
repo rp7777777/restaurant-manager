@@ -12,12 +12,19 @@
 //    category assignment.
 // ✅ Sort/stock-status filters deliberately NOT included.
 // ✅ hasInconsistency surfaced as a small warning indicator per item.
-// ✅ FIX — column widths now match InventoryTableView.tsx exactly
-//    (previously smaller, causing a visible size mismatch between
-//    Today's live table and the historical date-navigated table —
-//    the two views now look identical in row/column proportions).
-//    Item Name also given the same bold styling as
-//    InventoryTableView.tsx for visual consistency.
+// ✅ Column widths match InventoryTableView.tsx (Today/Historical
+//    tables look identical in proportions).
+// ✅ NEW — "Issue" column. Shows what actually moved OUT of this
+//    batch on the SELECTED DATE specifically (not cumulative),
+//    sourced from batch.issues (HistoricalIssueEntry[], populated by
+//    useHistoricalInventory via getIssuesForDate() —
+//    historical-batch-replay-service.ts). Rendered as
+//    "3 kg Kitchen", or "3 kg Kitchen • 1 kg Waste" if multiple
+//    outgoing movements touched this batch on the same date. Empty
+//    ("—") when no outgoing movement touched this batch on this
+//    date. Final column order: S.N. / Item Name / Received /
+//    Lot/Batch No. / Issue / Lot/Batch QTY / Unit / Expiry /
+//    Total QTY.
 // FROZEN
 // ============================================
 
@@ -46,13 +53,14 @@ interface HistoricalCategoryGroup {
   items:        HistoricalItemStock[];
 }
 
-// ✅ FIX — matches InventoryTableView.tsx exactly.
 const ROW_HEIGHT = 24;
 const LEFT_COLS = { sn: 40, item: 170 };
-const RIGHT_COLS = { date: 100, batch: 120, stock: 90, unit: 70, expiry: 100, total: 90 };
+// ✅ NEW — "issue" column added between "batch" (Lot/Batch No.) and
+// "stock" (Lot/Batch QTY).
+const RIGHT_COLS = { date: 90, batch: 110, issue: 160, stock: 90, unit: 70, expiry: 90, total: 90 };
 const LEFT_WIDTH = LEFT_COLS.sn + LEFT_COLS.item;
 const RIGHT_WIDTH =
-  RIGHT_COLS.date + RIGHT_COLS.batch + RIGHT_COLS.stock +
+  RIGHT_COLS.date + RIGHT_COLS.batch + RIGHT_COLS.issue + RIGHT_COLS.stock +
   RIGHT_COLS.unit + RIGHT_COLS.expiry + RIGHT_COLS.total;
 const TABLE_WIDTH = LEFT_WIDTH + RIGHT_WIDTH;
 
@@ -181,7 +189,8 @@ export function HistoricalInventoryTableView({
                   <View style={styles.rightHeaderGroup}>
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.date }]}>Received</Text>
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.stock }]}>Batch Qty</Text>
+                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.issue }]}>Issue</Text>
+                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.stock }]}>Lot/Batch QTY</Text>
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry</Text>
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.total }]}>Total QTY</Text>
@@ -219,6 +228,11 @@ export function HistoricalInventoryTableView({
                           >
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.date }]}>{batch.receivedDate}</Text>
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.batch }]} numberOfLines={1}>{batch.batchNo}</Text>
+                            <Text style={[styles.tableCell, styles.issueCell, { width: RIGHT_COLS.issue }]} numberOfLines={1}>
+                              {batch.issues.length > 0
+                                ? batch.issues.map((iss) => `${iss.quantity} ${batch.unit} ${iss.source}`).join(" • ")
+                                : "—"}
+                            </Text>
                             <Text style={[styles.tableCell, styles.batchQtyCell, { width: RIGHT_COLS.stock }]}>{batch.quantity}</Text>
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.unit }]}>{batch.unit}</Text>
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.expiry }]}>{batch.expiryDate ?? "—"}</Text>
@@ -290,6 +304,7 @@ const styles = StyleSheet.create({
   batchRow: { flexDirection: "row", alignItems: "center" },
   batchRowDivider: { borderBottomWidth: 1, borderBottomColor: "#f1f5f9" },
   tableCell: { fontSize: 9, color: "#334155", paddingHorizontal: 3 },
+  issueCell: { color: "#dc2626", fontWeight: "700" },
   batchQtyCell: { fontWeight: "800", color: "#6d28d9", fontSize: 10 },
   totalCell: { fontWeight: "800", color: "#7c3aed", fontSize: 10 },
 });
