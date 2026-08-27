@@ -131,8 +131,6 @@ export function useHistoricalInventory(
   }, [batches, movements, selectedDate]);
 
   const itemsWithHistoricalStock = useMemo(() => {
-    // ✅ FIX — renamed from batchByInventoryId (misleading — key is
-    // actually batch.id, not inventoryId) to batchById.
     const batchById = new Map<string, InventoryBatch>();
     for (const b of batches) batchById.set(b.id, b);
 
@@ -161,7 +159,20 @@ export function useHistoricalInventory(
       if (state.inconsistent) entry.hasInconsistency = true;
 
       if (state.visible) {
-        entry.historicalStock += state.quantity;
+        // ✅ FIX — historicalStock (Total QTY) reflects the CLOSING
+        // quantity for selectedDate, not the opening quantity.
+        // state.quantity is now the OPENING quantity (per the
+        // confirmed replayBatchAsOfDate() change) — that day's own
+        // issues (state.issues, from getIssuesForDate()) must be
+        // subtracted here to arrive at the closing/remaining amount.
+        // This keeps Lot/Batch QTY (per-row, opening) and Total QTY
+        // (item-level, closing) as two intentionally DIFFERENT
+        // figures — Lot/Batch QTY shows "what was available at the
+        // start of the day," Total QTY shows "what's actually left
+        // after that day's activity," matching the confirmed design.
+        const dayIssuedTotal = state.issues.reduce((sum, iss) => sum + iss.quantity, 0);
+        const closingQuantity = Math.max(0, state.quantity - dayIssuedTotal);
+        entry.historicalStock += closingQuantity;
         entry.batches.push(state);
       }
 
@@ -170,7 +181,6 @@ export function useHistoricalInventory(
 
     return Array.from(byItem.values()).filter((item) => item.batches.length > 0);
   }, [batchStates, batches, inventoryItems]);
-
   return {
     batchStates,
     itemsWithHistoricalStock,
