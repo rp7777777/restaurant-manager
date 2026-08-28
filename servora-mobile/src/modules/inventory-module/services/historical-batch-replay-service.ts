@@ -1,62 +1,58 @@
 // ============================================
 // SERVORA ERP — Historical Batch Replay Service
 // ✅ PURE FUNCTION — no Firestore calls, no React, no side effects.
-//    Takes batches + movements + a target date, returns each batch's
-//    reconstructed quantity/visibility as of that date. Testable in
-//    complete isolation.
-// ✅ CONFIRMED REPLAY RULES (UPDATED):
+// ✅ CONFIRMED REPLAY RULES:
 //    - Starting quantity = batch.originalQuantity, as of
 //      batch.receivedDate.
-//    - selectedDate < receivedDate → invisible (batch didn't exist
-//      yet on that date).
-//    - "quantity" (Lot/Batch QTY) now represents the OPENING
-//      quantity for selectedDate — i.e. what was available at the
-//      START of that day, BEFORE that day's own outgoing movements
-//      are applied. Movements are replayed in chronological order
-//      (by createdAt), deducting only movements dated STRICTLY
-//      BEFORE selectedDate (`dateKey >= selectedDate` breaks the
-//      loop). This is a CONFIRMED DESIGN CHANGE from the original
-//      "closing quantity as of selectedDate" behavior — see the
-//      full rationale below.
-//    - WHY: previously, a batch that started a day at 12kg and had
-//      4kg issued that SAME day showed "Lot/Batch QTY: 8" — already
-//      reduced, indistinguishable from what remained AFTER that
-//      day's Issue activity. This double-counted the day's movement
-//      into a single already-reduced number, conflicting with the
-//      separate "Issue" column (getIssuesForDate()) which ALSO shows
-//      that same day's 4kg outgoing. Per confirmed requirement,
-//      Lot/Batch QTY must show the OPENING balance (12kg) so Issue
-//      (4kg) and Lot/Batch QTY (12kg) are complementary, non-
-//      overlapping pieces of information — the item-level Total QTY
-//      (computed by useHistoricalInventory.ts, summing
-//      visible batches' quantity) is what independently reflects the
-//      day's actual closing/remaining stock.
-//    - depletedDate now only reflects a batch fully depleting on a
-//      date STRICTLY BEFORE selectedDate (since selectedDate's own
-//      movements are no longer replayed into this calculation) — a
-//      batch that empties out ON selectedDate itself still shows its
-//      (non-zero) opening quantity for that date, which is the
-//      confirmed intended behavior.
+//    - selectedDate < receivedDate → invisible.
+//    - "quantity" (Lot/Batch QTY) represents the OPENING quantity
+//      for selectedDate — before that day's own outgoing movements.
+//      Movements are replayed chronologically, deducting only
+//      movements dated STRICTLY BEFORE selectedDate
+//      (`dateKey >= selectedDate` breaks the loop).
+// ✅ CRITICAL FIX — relevantMovements now filters to an explicit
+//    DEDUCTING_MOVEMENT_TYPES allowlist (KITCHEN_ISSUE, WASTE,
+//    TRANSFER_OUT) BEFORE checking batchAllocations, instead of
+//    matching ANY movement carrying a batchAllocations entry
+//    regardless of type. Root cause this fixes: moveBatchToItem()
+//    (Move Batch to Correct Item feature) records TWO paired
+//    movements for a single batch move — TRANSFER_OUT (source item)
+//    AND TRANSFER_IN (target item) — BOTH carrying the SAME
+//    batchAllocations entry (same batchId, same quantity), since
+//    it's the same physical batch. The old filter treated both as
+//    deductions, so a 10kg moved batch computed
+//    originalQuantity - 10 (OUT) - 10 (IN) = -10, triggering the
+//    negative-quantity safety clamp and a false "inconsistent" flag.
+//    This allowlist now exactly mirrors OUTGOING_MOVEMENT_TYPES
+//    (used by getIssuesForDate() below) — both functions share one
+//    consistent definition of "what counts as stock leaving this
+//    batch." TRANSFER_IN, PURCHASE, RETURN, and any other incoming/
+//    neutral movement type are never treated as a deduction, even if
+//    they happen to carry a batchAllocations entry.
 // ✅ SAFETY — quantity is NEVER allowed to go negative. Malformed
-//    allocation quantities (NaN, Infinity, negative) are caught and
-//    flagged inconsistent rather than silently corrupting the total.
-// ✅ relevantMovements = "deduction movements containing an
-//    allocation for this batch" — deliberately does NOT include the
-//    batch's own creation/receive movement.
-// ✅ Local-timezone date key (getFullYear/getMonth/getDate).
-// ✅ Firestore Timestamp vs JS Date — toJsDate() normalizes both.
-// ✅ getIssuesForDate() — a SEPARATE pure function, UNCHANGED by
-//    this update, answering "what went OUT of this batch on EXACTLY
-//    this date" (matches dateKey === selectedDate, the complement of
-//    replayBatchAsOfDate()'s now-exclusive-of-selectedDate logic).
-//    Confirmed matching rules: movementType must be KITCHEN_ISSUE/
-//    WASTE/TRANSFER_OUT; date must equal selectedDate exactly;
-//    quantity is the ALLOCATION's quantity for this specific batch
-//    (never the movement's overall quantityChanged, since a single
-//    movement can span multiple batches via FEFO). Source label:
-//    KITCHEN_ISSUE → "Kitchen", WASTE → "Waste", TRANSFER_OUT +
-//    DATA_CORRECTION → "Correction", TRANSFER_OUT (other) →
-//    "Transfer".
+//    allocation quantities are caught and flagged inconsistent.
+// ✅ Local-timezone date key. Firestore Timestamp vs JS Date handled
+//    via toJsDate().
+// ✅ getIssuesForDate() — SEPARATE pure function, UNCHANGED,
+//    answering "what went OUT of this batch on EXACTLY this date"
+//    (matches dateKey === selectedDate). Same
+//    OUTGOING_MOVEMENT_TYPES definition as replayBatchAsOfDate's new
+//    DEDUCTING_MOVEMENT_TYPES — kept as two separately-named
+//    constants (not shared/exported) since they're conceptually
+//    identical but independently owned by each function; a future
+//    refactor could unify them if desired, but that's out of scope
+//    for this fix.
+// ✅ CONFIRMED, ACCEPTED BEHAVIOR — after a batch is moved via
+//    moveBatchToItem(), historical views for dates BEFORE the move
+//    will show that batch under its CURRENT (corrected) item, not
+//    the item it was originally (incorrectly) attributed to. This is
+//    NOT a replay quantity bug — replayBatchAsOfDate() reconstructs
+//    each batch's quantity independently of item attribution; item
+//    grouping in useHistoricalInventory.ts uses batch.inventoryId
+//    (the CURRENT, corrected value). This is intentional: a "Move
+//    Batch" correction means "this batch always belonged to the
+//    correct item," so historical views reflecting the corrected
+//    item is the intended semantics, not a defect.
 // FROZEN
 // ============================================
 
@@ -72,8 +68,8 @@ export interface HistoricalBatchState {
   expiryDate:   string | null;
   quantity:     number;    // OPENING quantity for selectedDate (before that day's own movements)
   visible:      boolean;
-  depletedDate: string | null; // YYYY-MM-DD the batch first reached 0 (strictly before a later selectedDate), or null if never depleted (yet)
-  inconsistent: boolean;   // true if replay detected a negative/malformed-quantity scenario
+  depletedDate: string | null;
+  inconsistent: boolean;
 }
 
 function toJsDate(value: unknown): Date | null {
@@ -84,7 +80,6 @@ function toJsDate(value: unknown): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-// ✅ Local-timezone date key — see FROZEN header.
 function toDateKey(date: Date): string {
   const yyyy = date.getFullYear();
   const mm = String(date.getMonth() + 1).padStart(2, "0");
@@ -92,15 +87,9 @@ function toDateKey(date: Date): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-/**
- * Reconstructs one batch's OPENING quantity/visibility for
- * `selectedDate` — i.e. what was available at the start of that day,
- * before that day's own outgoing movements. `movements` should
- * already be filtered to ONLY movements relevant to this batch's
- * item (the caller/hook layer is responsible for that scoping) —
- * this function further narrows to deduction movements carrying a
- * batchAllocations entry for this specific batch's id.
- */
+// ✅ FIX — explicit deducting-movement allowlist, see FROZEN header.
+const DEDUCTING_MOVEMENT_TYPES = new Set(["KITCHEN_ISSUE", "WASTE", "TRANSFER_OUT"]);
+
 export function replayBatchAsOfDate(
   batch: InventoryBatch,
   movements: StockMovement[],
@@ -115,14 +104,15 @@ export function replayBatchAsOfDate(
     expiryDate:   batch.expiryDate ?? null,
   };
 
-  // Not received yet as of selectedDate — invisible, no replay needed.
   if (selectedDate < batch.receivedDate) {
     return { ...base, quantity: 0, visible: false, depletedDate: null, inconsistent: false };
   }
 
-  // Deduction movements carrying an allocation for THIS batch — see
-  // FROZEN header. Sorted chronologically.
+  // ✅ FIX — filters by DEDUCTING_MOVEMENT_TYPES first, then
+  // batchAllocations. Excludes TRANSFER_IN/PURCHASE/RETURN even if
+  // they carry a batchAllocations entry.
   const relevantMovements = movements
+    .filter((m) => DEDUCTING_MOVEMENT_TYPES.has(m.movementType))
     .filter((m) => (m.batchAllocations ?? []).some((a) => a.batchId === batch.id))
     .map((m) => {
       const jsDate = toJsDate(m.createdAt);
@@ -135,16 +125,12 @@ export function replayBatchAsOfDate(
   let depletedDate: string | null = null;
   let inconsistent = false;
 
-  // ✅ FIX — `dateKey >= selectedDate` (was `> selectedDate`):
-  // excludes selectedDate's OWN movements from this opening-quantity
-  // calculation. See FROZEN header for full rationale.
   for (const { movement, dateKey } of relevantMovements) {
     if (dateKey >= selectedDate) break;
 
     const allocation = (movement.batchAllocations ?? []).find((a) => a.batchId === batch.id);
     if (!allocation) continue;
 
-    // Validate BEFORE subtracting — see FROZEN header.
     if (!Number.isFinite(allocation.quantity) || allocation.quantity < 0) {
       inconsistent = true;
       continue;
@@ -170,12 +156,6 @@ export function replayBatchAsOfDate(
   return { ...base, quantity: runningQuantity, visible: true, depletedDate, inconsistent };
 }
 
-/**
- * Convenience wrapper — replays ALL given batches as of selectedDate.
- * `movements` should be the full relevant movement set for the
- * restaurant/items being reconstructed (scoping is the caller's
- * responsibility, e.g. useHistoricalInventory.ts).
- */
 export function replayBatchesAsOfDate(
   batches: InventoryBatch[],
   movements: StockMovement[],
@@ -184,7 +164,6 @@ export function replayBatchesAsOfDate(
   return batches.map((batch) => replayBatchAsOfDate(batch, movements, selectedDate));
 }
 
-// ── Per-date Issue breakdown — see FROZEN header for full rules. ──
 export interface HistoricalIssueEntry {
   quantity: number;
   source:   string;
