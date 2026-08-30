@@ -185,7 +185,21 @@ export function ItemDetailsDrawer({
               </View>
               <View style={styles.row}>
                 <Text style={styles.rowLabel}>Inventory Value</Text>
-                <Text style={styles.rowValue}>{fmt(item.totalValue)}</Text>
+                {/* ✅ FIX — computed live (currentStock × unitCost)
+                    instead of reading the stored item.totalValue
+                    field. Root cause of the "€NaN" bug: totalValue
+                    is a denormalized snapshot field that isn't
+                    guaranteed to be recomputed by every code path
+                    that changes currentStock (e.g. the DEV
+                    reconciliation script that fixed the "beer"/
+                    "water" stale-stock issue updated currentStock
+                    directly but never touched totalValue, leaving it
+                    undefined on any item it modified). Computing
+                    live from the two source values that are always
+                    present and correct (currentStock, unitCost)
+                    eliminates this entire class of staleness —
+                    there's no snapshot left to go stale. */}
+                <Text style={styles.rowValue}>{fmt(item.currentStock * item.unitCost)}</Text>
               </View>
               {item.storageLocation && (
                 <View style={styles.row}>
