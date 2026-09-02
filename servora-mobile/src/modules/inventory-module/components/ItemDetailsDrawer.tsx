@@ -29,7 +29,7 @@ import { InventoryItem, classifyExpiry, resolveExpiryAlertDays } from "../types/
 import { Category } from "../types/category";
 import {
   archiveInventoryItem, restoreInventoryItem,
-} from "../services/inventory-service";
+} from "../services/inventory-item-service";
 import { useBatchesForItem } from "../hooks/useBatchesForItem";
 import { InventoryBatchTable } from "./InventoryBatchTable";
 import { InventoryBatch } from "../types/inventory-batch";

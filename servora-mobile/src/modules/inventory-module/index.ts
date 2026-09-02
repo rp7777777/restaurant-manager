@@ -54,7 +54,7 @@ export {
   archiveInventoryItem,
   restoreInventoryItem,
   duplicateInventoryItem,
-} from "./services/inventory-service";
+} from "./services/inventory-item-service";
 
 // Hooks (for external screens that need inventory data, e.g. a
 // future cross-module dashboard widget)

@@ -43,7 +43,7 @@ import { useInventoryFormDraft } from "../context/InventoryFormDraftContext";
 import {
   updateInventoryItem, deleteInventoryItem,
 } from "../repository/inventory-repository";
-import { createInventoryItemWithInitialBatch, receiveBatch } from "../services/inventory-service";
+import { createInventoryItemWithInitialBatch, receiveBatch } from "../services/inventory-receive-service";
 import { InventoryItem } from "../types/inventory";
 import { InventoryFormSubmitPayload } from "../hooks/useInventoryForm";
 import { seedDefaultStoreTaxonomy } from "../../store-module/services/seed-store-defaults-service";

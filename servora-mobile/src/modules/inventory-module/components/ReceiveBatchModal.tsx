@@ -40,7 +40,7 @@ import {
 import { MaterialIcons } from "@expo/vector-icons";
 import { InventoryItem } from "../types/inventory";
 import { CreateInventoryBatchInput } from "../types/inventory-batch";
-import { receiveBatch, ReceiveBatchResult } from "../services/inventory-service";
+import { receiveBatch, ReceiveBatchResult } from "../services/inventory-receive-service";
 import { Supplier } from "../../supplier-module/types/supplier";
 import { todayISO } from "../../../utils/date-utils";
 

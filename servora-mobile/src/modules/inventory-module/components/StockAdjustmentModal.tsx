@@ -53,7 +53,7 @@ import {
 import { MaterialIcons } from "@expo/vector-icons";
 import { InventoryItem } from "../types/inventory";
 import { useStockAdjustment } from "../hooks/useStockAdjustment";
-import { deductStockBatch } from "../services/inventory-service";
+import { deductStockBatch } from "../services/inventory-deduct-service";
 import {
   StockMovementType,
   StockMovementReasonCategory,

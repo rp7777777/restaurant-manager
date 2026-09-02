@@ -23,7 +23,7 @@
 // ============================================
 
 import { useState, useCallback } from "react";
-import { adjustStock } from "../services/inventory-service";
+import { adjustStock } from "../services/inventory-item-service";
 import {
   RecordStockMovementInput,
   StockMovementType,

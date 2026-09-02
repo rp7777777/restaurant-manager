@@ -32,7 +32,8 @@ import {
 import { MaterialIcons } from "@expo/vector-icons";
 import { InventoryItem } from "../types/inventory";
 import { InventoryBatch } from "../types/inventory-batch";
-import { correctBatchDetails, moveBatchToItem } from "../services/inventory-service";
+import { correctBatchDetails } from "../services/inventory-correct-service";
+import { moveBatchToItem } from "../services/inventory-move-service";
 import { MoveBatchSection } from "./MoveBatchSection";
 
 interface EditBatchModalProps {

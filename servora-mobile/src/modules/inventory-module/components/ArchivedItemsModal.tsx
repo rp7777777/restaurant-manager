@@ -27,7 +27,7 @@ import {
 import { MaterialIcons } from "@expo/vector-icons";
 import { InventoryItem } from "../types/inventory";
 import { Category } from "../types/category";
-import { restoreInventoryItem } from "../services/inventory-service";
+import { restoreInventoryItem } from "../services/inventory-item-service";
 
 const isWeb = Platform.OS === "web";
 
