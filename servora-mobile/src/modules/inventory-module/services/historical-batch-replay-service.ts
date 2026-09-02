@@ -1,48 +1,17 @@
 // ============================================
 // SERVORA ERP — Historical Batch Replay Service
-// ✅ PURE FUNCTION — no Firestore calls, no React, no side effects.
+// 🔧 DEBUG BUILD — console.log statements added temporarily to
+//    diagnose why "TEST001" batch (fully depleted same-day) shows
+//    hidden on its depletion date instead of visible with quantity 0.
+//    Remove once root cause is confirmed and fixed.
 // ✅ CONFIRMED FINAL REPLAY RULES:
-//    - Starting quantity = batch.originalQuantity, as of
-//      batch.receivedDate.
-//    - selectedDate < receivedDate → invisible.
 //    - "quantity" (Lot/Batch QTY) is the CLOSING quantity as of
 //      selectedDate — movements dated selectedDate OR EARLIER
-//      (inclusive) are applied. This is a CONFIRMED FINAL semantics
-//      decision, replacing an earlier "opening quantity" design: a
-//      batch that receives 15kg and is fully issued out on the SAME
-//      day now shows quantity=0 on that day (with the Issue column
-//      showing the 15kg that left), not the pre-deduction 15.
-//    - depletedDate (the date closing quantity first reaches 0) is
-//      detected within the SAME replay loop as quantity itself — not
-//      a separate pass. A batch depleted ON selectedDate is still
-//      VISIBLE that day (quantity=0); it only becomes HIDDEN starting
-//      the day AFTER depletedDate (selectedDate > depletedDate).
-// ✅ CRITICAL — relevantMovements filters to an explicit
-//    DEDUCTING_MOVEMENT_TYPES allowlist (KITCHEN_ISSUE, WASTE,
-//    TRANSFER_OUT) BEFORE checking batchAllocations, instead of
-//    matching ANY movement carrying a batchAllocations entry
-//    regardless of type — so moveBatchToItem()'s paired
-//    TRANSFER_OUT+TRANSFER_IN no longer both get treated as
-//    deductions (TRANSFER_IN was never in this set to begin with).
-// ✅ isRealStockDeduction(): a TRANSFER_OUT tagged with
-//    reasonCategory "DATA_CORRECTION" (written exclusively by
-//    moveBatchToItem()) represents a data-entry correction, NOT a
-//    real physical stock loss — the batch's actual quantity didn't
-//    decrease, only its item assignment changed. This exclusion
-//    applies to BOTH replayBatchAsOfDate() and getIssuesForDate()
-//    below, so a moved batch is never double-deducted nor shown as a
-//    fake "Issue" entry.
-// ✅ SAFETY — quantity is NEVER allowed to go negative. Malformed
-//    allocation quantities are caught and flagged inconsistent.
-// ✅ Local-timezone date key. Firestore Timestamp vs JS Date handled
-//    via toJsDate().
-// ⚠️ IMPORTANT — since "quantity" is now the CLOSING value (already
-//    reflects that day's deductions), callers (specifically
-//    useHistoricalInventory.ts's Total QTY aggregation) must NOT
-//    additionally subtract that day's Issue total from it — doing so
-//    would double-deduct. See useHistoricalInventory.ts's own header
-//    for the corresponding fix.
-// FROZEN
+//      (inclusive) are applied.
+//    - depletedDate detected within the SAME replay loop as quantity.
+//      A batch depleted ON selectedDate is still VISIBLE that day
+//      (quantity=0); hidden only starting the day AFTER depletedDate.
+// FROZEN (once debug removed)
 // ============================================
 
 import { InventoryBatch } from "../types/inventory-batch";
@@ -53,9 +22,9 @@ export interface HistoricalBatchState {
   batchNo:      string;
   itemName:     string;
   unit:         string;
-  receivedDate: string;    // YYYY-MM-DD
+  receivedDate: string;
   expiryDate:   string | null;
-  quantity:     number;    // CLOSING quantity as of selectedDate (inclusive of that day's own deductions)
+  quantity:     number;
   visible:      boolean;
   depletedDate: string | null;
   inconsistent: boolean;
@@ -100,7 +69,18 @@ export function replayBatchAsOfDate(
     expiryDate:   batch.expiryDate ?? null,
   };
 
+  // 🔧 DEBUG
+  if (batch.batchNo === "TEST001") {
+    console.log("[replay-debug] === START ===");
+    console.log("[replay-debug] batch:", batch.batchNo, "id:", batch.id, "receivedDate:", batch.receivedDate, "selectedDate:", selectedDate);
+    console.log("[replay-debug] originalQuantity:", batch.originalQuantity, "current stored quantity:", batch.quantity);
+    console.log("[replay-debug] total movements passed in:", movements.length);
+  }
+
   if (selectedDate < batch.receivedDate) {
+    if (batch.batchNo === "TEST001") {
+      console.log("[replay-debug] EARLY RETURN: selectedDate < receivedDate -> invisible");
+    }
     return { ...base, quantity: 0, visible: false, depletedDate: null, inconsistent: false };
   }
 
@@ -114,15 +94,31 @@ export function replayBatchAsOfDate(
     .filter((x): x is { movement: StockMovement; date: Date; dateKey: string } => x !== null)
     .sort((a, b) => a.date.getTime() - b.date.getTime());
 
+  if (batch.batchNo === "TEST001") {
+    console.log("[replay-debug] relevantMovements count:", relevantMovements.length);
+    console.log("[replay-debug] relevantMovements detail:", relevantMovements.map((m) => ({
+      dateKey: m.dateKey,
+      movementType: m.movement.movementType,
+      allocations: m.movement.batchAllocations,
+    })));
+  }
+
   let quantity = batch.originalQuantity;
   let depletedDate: string | null = null;
   let inconsistent = false;
 
   for (const { dateKey, movement } of relevantMovements) {
-    if (dateKey > selectedDate) break;
+    const willBreak = dateKey > selectedDate;
+    if (batch.batchNo === "TEST001") {
+      console.log("[replay-debug] LOOP dateKey:", dateKey, "selectedDate:", selectedDate, "dateKey > selectedDate:", willBreak);
+    }
+    if (willBreak) break;
 
     const allocation = (movement.batchAllocations ?? []).find((a) => a.batchId === batch.id);
-    if (!allocation) continue;
+    if (!allocation) {
+      if (batch.batchNo === "TEST001") console.log("[replay-debug] no allocation found for this movement, skipping");
+      continue;
+    }
 
     if (!Number.isFinite(allocation.quantity) || allocation.quantity < 0) {
       inconsistent = true;
@@ -133,12 +129,26 @@ export function replayBatchAsOfDate(
     quantity = next < 0 ? 0 : next;
     if (next < 0) inconsistent = true;
 
+    if (batch.batchNo === "TEST001") {
+      console.log("[replay-debug] applied allocation qty:", allocation.quantity, "-> running quantity:", quantity);
+    }
+
     if (quantity === 0 && depletedDate === null) {
       depletedDate = dateKey;
+      if (batch.batchNo === "TEST001") {
+        console.log("[replay-debug] DEPLETED on dateKey:", depletedDate);
+      }
     }
   }
 
-  if (depletedDate !== null && selectedDate > depletedDate) {
+  const willHide = depletedDate !== null && selectedDate > depletedDate;
+
+  if (batch.batchNo === "TEST001") {
+    console.log("[replay-debug] FINAL quantity:", quantity, "depletedDate:", depletedDate, "selectedDate > depletedDate:", willHide, "=> visible:", !willHide);
+    console.log("[replay-debug] === END ===");
+  }
+
+  if (willHide) {
     return { ...base, quantity: 0, visible: false, depletedDate, inconsistent };
   }
 

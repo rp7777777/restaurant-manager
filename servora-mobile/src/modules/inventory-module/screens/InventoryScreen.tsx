@@ -253,6 +253,7 @@ export default function InventoryScreen() {
           setSearchQuery={setHistoricalSearchQuery}
           categoryId={historicalCategoryId}
           setCategoryId={setHistoricalCategoryId}
+          onItemPress={openDrawer}
         />
       ) : (
         <>

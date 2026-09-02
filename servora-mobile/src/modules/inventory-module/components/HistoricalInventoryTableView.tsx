@@ -1,30 +1,19 @@
 // ============================================
 // SERVORA ERP — HistoricalInventoryTableView Component
-// ✅ NEW, SEPARATE component — the existing, FROZEN
-//    InventoryTableView.tsx is NEVER modified or reused for
-//    historical mode.
-// ✅ useHistoricalInventory() called with inventoryItems param so
-//    categoryId metadata can be joined by inventoryId — no
-//    duplicate Firestore subscription.
-// ✅ Results GROUPED BY CATEGORY, matching InventoryTableView.tsx's
-//    own visual language exactly.
-// ✅ Category filter chips — category reflects the item's CURRENT
-//    category assignment.
-// ✅ Sort/stock-status filters deliberately NOT included.
-// ✅ hasInconsistency surfaced as a small warning indicator per item.
-// ✅ Column widths match InventoryTableView.tsx (Today/Historical
-//    tables look identical in proportions).
-// ✅ NEW — "Issue" column. Shows what actually moved OUT of this
-//    batch on the SELECTED DATE specifically (not cumulative),
-//    sourced from batch.issues (HistoricalIssueEntry[], populated by
-//    useHistoricalInventory via getIssuesForDate() —
-//    historical-batch-replay-service.ts). Rendered as
-//    "3 kg Kitchen", or "3 kg Kitchen • 1 kg Waste" if multiple
-//    outgoing movements touched this batch on the same date. Empty
-//    ("—") when no outgoing movement touched this batch on this
-//    date. Final column order: S.N. / Item Name / Received /
-//    Lot/Batch No. / Issue / Lot/Batch QTY / Unit / Expiry /
-//    Total QTY.
+// ✅ Existing behavior UNCHANGED — grouping by category, search,
+//    category filter chips, closing-quantity semantics, Issue
+//    column, hasInconsistency warning.
+// ✅ NEW (Step 1 of migration to single Inventory table) —
+//    onItemPress prop, matching InventoryTableView.tsx's own
+//    contract EXACTLY: receives the real, current InventoryItem
+//    (never a HistoricalItemStock), looked up from the inventoryItems
+//    prop by inventoryId. Batch-level actions (Edit/Archive/Receive/
+//    Adjust, all reached via ItemDetailsDrawer) must always operate
+//    on the CURRENT item state — historical data is read-only
+//    reconstruction, never itself the target of a mutation. Rows for
+//    an item not found in inventoryItems (edge case: item deleted
+//    since the movements that reference it) are disabled rather than
+//    calling onItemPress with nothing, avoiding a crash.
 // FROZEN
 // ============================================
 
@@ -44,6 +33,7 @@ interface HistoricalInventoryTableViewProps {
   setSearchQuery: (q: string) => void;
   categoryId:     string | null;
   setCategoryId:  (id: string | null) => void;
+  onItemPress:    (item: InventoryItem) => void;
 }
 
 interface HistoricalCategoryGroup {
@@ -55,8 +45,6 @@ interface HistoricalCategoryGroup {
 
 const ROW_HEIGHT = 24;
 const LEFT_COLS = { sn: 40, item: 170 };
-// ✅ NEW — "issue" column added between "batch" (Lot/Batch No.) and
-// "stock" (Lot/Batch QTY).
 const RIGHT_COLS = { date: 90, batch: 110, issue: 160, stock: 90, unit: 70, expiry: 90, total: 90 };
 const LEFT_WIDTH = LEFT_COLS.sn + LEFT_COLS.item;
 const RIGHT_WIDTH =
@@ -69,9 +57,16 @@ const UNCATEGORIZED_ID = "__uncategorized__";
 export function HistoricalInventoryTableView({
   restaurantId, selectedDate, categories, inventoryItems,
   searchQuery, setSearchQuery, categoryId, setCategoryId,
+  onItemPress,
 }: HistoricalInventoryTableViewProps) {
   const { itemsWithHistoricalStock, loading, error } =
     useHistoricalInventory(restaurantId, selectedDate, inventoryItems);
+
+  const inventoryItemById = useMemo(() => {
+    const map = new Map<string, InventoryItem>();
+    for (const it of inventoryItems) map.set(it.id, it);
+    return map;
+  }, [inventoryItems]);
 
   const filteredItems = useMemo(() => {
     let result = itemsWithHistoricalStock;
@@ -200,9 +195,16 @@ export function HistoricalInventoryTableView({
                 {group.items.map((item, itemIndex) => {
                   const rowCount = item.batches.length;
                   const groupHeight = ROW_HEIGHT * rowCount;
+                  const realItem = inventoryItemById.get(item.inventoryId);
 
                   return (
-                    <View key={item.inventoryId} style={[styles.itemGroupRow, { minHeight: groupHeight }]}>
+                    <TouchableOpacity
+                      key={item.inventoryId}
+                      style={[styles.itemGroupRow, { minHeight: groupHeight }]}
+                      onPress={() => { if (realItem) onItemPress(realItem); }}
+                      activeOpacity={0.7}
+                      disabled={!realItem}
+                    >
                       <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }]}>
                         <Text style={[styles.leftStripCell, { width: LEFT_COLS.sn }]}>{itemIndex + 1}</Text>
                         <View style={{ width: LEFT_COLS.item }}>
@@ -242,7 +244,7 @@ export function HistoricalInventoryTableView({
                           </View>
                         ))}
                       </View>
-                    </View>
+                    </TouchableOpacity>
                   );
                 })}
               </View>
