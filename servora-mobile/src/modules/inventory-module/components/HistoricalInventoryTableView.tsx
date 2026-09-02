@@ -318,7 +318,7 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, fontSize: 14, color: "#1e293b" },
   categoryWrap: {
     flexDirection: "row", flexWrap: "wrap", gap: 6,
-    width: "100%", maxWidth: 500, marginBottom: 8,
+    width: "100%", marginBottom: 8,
   },
   categoryChip: {
     height: 22, justifyContent: "center", paddingHorizontal: 10, borderRadius: 4,
