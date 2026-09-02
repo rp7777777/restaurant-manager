@@ -12,17 +12,26 @@
 // ⚠️ KNOWN SCALING LIMIT (intentionally deferred).
 // ✅ For selectedDate === today, replayed result is EXPECTED (not
 //    guaranteed) to match InventoryItem.currentStock.
-// ✅ NEW — HistoricalBatchWithIssues extends HistoricalBatchState
-//    with an `issues` field (HistoricalIssueEntry[]), computed via
-//    getIssuesForDate() (historical-batch-replay-service.ts,
-//    UNCHANGED/FROZEN — this hook composes its output, never
-//    modifies that pure function). This is a hook-layer composition
-//    choice: the pure replay service stays focused on "closing stock
-//    as of a date," this hook layers "what moved out on this exact
-//    date" on top of it using the SAME movements array already
-//    loaded for replay — no additional Firestore query. issues is
-//    computed per-batch, per-selectedDate, via useMemo alongside
-//    batchStates.
+// ✅ HistoricalBatchWithIssues extends HistoricalBatchState with an
+//    `issues` field (HistoricalIssueEntry[]), computed via
+//    getIssuesForDate() (historical-batch-replay-service.ts) —
+//    composed here using the SAME movements array already loaded for
+//    replay, no additional Firestore query, pre-grouped by batchId
+//    for O(n) performance instead of re-scanning per batch.
+// ✅ FIX — historicalStock (Total QTY) now sums state.quantity
+//    DIRECTLY, with NO further subtraction of that day's issues.
+//    replayBatchAsOfDate() was updated (CONFIRMED FINAL semantics)
+//    to return the CLOSING quantity as of selectedDate — i.e.
+//    state.quantity ALREADY reflects that day's own deductions. The
+//    previous version here additionally subtracted
+//    state.issues.reduce(...) from state.quantity, which was correct
+//    ONLY under the prior "opening quantity" semantics — under the
+//    new closing semantics, that same subtraction double-deducts the
+//    day's issues (once inside replayBatchAsOfDate(), a second time
+//    here). Lot/Batch QTY (per-row) and Total QTY (item-level) are
+//    now the SAME closing-quantity concept, just at different
+//    granularities (per-batch vs summed-per-item) — no longer two
+//    deliberately different figures.
 // FROZEN
 // ============================================
 
@@ -43,7 +52,6 @@ function movementsCollection(restaurantId: string) {
   return collection(db, COL.RESTAURANTS, restaurantId, RCOL.STOCK_MOVEMENTS);
 }
 
-// ✅ NEW — HistoricalBatchState + per-date issues, composed here.
 export interface HistoricalBatchWithIssues extends HistoricalBatchState {
   issues: HistoricalIssueEntry[];
 }
@@ -102,13 +110,6 @@ export function useHistoricalInventory(
     return unsubscribe;
   }, [restaurantId]);
 
-  // ✅ FIX — pre-group movements by batchId ONCE (not per-batch
-  // scanning). Previously getIssuesForDate() was called once per
-  // batch, each call re-scanning the ENTIRE movements array — at
-  // scale (many batches × many movements) this is quadratic. Now
-  // movements are grouped by allocated batchId a single time, and
-  // getIssuesForDate() only ever receives the (much smaller) slice
-  // relevant to that specific batch.
   const batchStates = useMemo<HistoricalBatchWithIssues[]>(() => {
     const movementsByBatchId = new Map<string, StockMovement[]>();
     for (const movement of movements) {
@@ -159,20 +160,9 @@ export function useHistoricalInventory(
       if (state.inconsistent) entry.hasInconsistency = true;
 
       if (state.visible) {
-        // ✅ FIX — historicalStock (Total QTY) reflects the CLOSING
-        // quantity for selectedDate, not the opening quantity.
-        // state.quantity is now the OPENING quantity (per the
-        // confirmed replayBatchAsOfDate() change) — that day's own
-        // issues (state.issues, from getIssuesForDate()) must be
-        // subtracted here to arrive at the closing/remaining amount.
-        // This keeps Lot/Batch QTY (per-row, opening) and Total QTY
-        // (item-level, closing) as two intentionally DIFFERENT
-        // figures — Lot/Batch QTY shows "what was available at the
-        // start of the day," Total QTY shows "what's actually left
-        // after that day's activity," matching the confirmed design.
-        const dayIssuedTotal = state.issues.reduce((sum, iss) => sum + iss.quantity, 0);
-        const closingQuantity = Math.max(0, state.quantity - dayIssuedTotal);
-        entry.historicalStock += closingQuantity;
+        // ✅ FIX — state.quantity is already the CLOSING quantity.
+        // No further subtraction of that day's issues here.
+        entry.historicalStock += state.quantity;
         entry.batches.push(state);
       }
 
@@ -181,6 +171,7 @@ export function useHistoricalInventory(
 
     return Array.from(byItem.values()).filter((item) => item.batches.length > 0);
   }, [batchStates, batches, inventoryItems]);
+
   return {
     batchStates,
     itemsWithHistoricalStock,
