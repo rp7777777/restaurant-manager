@@ -1,19 +1,20 @@
 // ============================================
 // SERVORA ERP — HistoricalInventoryTableView Component
-// ✅ Existing behavior UNCHANGED — grouping by category, search,
-//    category filter chips, closing-quantity semantics, Issue
-//    column, hasInconsistency warning.
-// ✅ NEW (Step 1 of migration to single Inventory table) —
-//    onItemPress prop, matching InventoryTableView.tsx's own
-//    contract EXACTLY: receives the real, current InventoryItem
-//    (never a HistoricalItemStock), looked up from the inventoryItems
-//    prop by inventoryId. Batch-level actions (Edit/Archive/Receive/
-//    Adjust, all reached via ItemDetailsDrawer) must always operate
-//    on the CURRENT item state — historical data is read-only
-//    reconstruction, never itself the target of a mutation. Rows for
-//    an item not found in inventoryItems (edge case: item deleted
-//    since the movements that reference it) are disabled rather than
-//    calling onItemPress with nothing, avoiding a crash.
+// ✅ Migration Step 1 — onItemPress (real InventoryItem lookup, not
+//    HistoricalItemStock — batch actions always act on current item
+//    state).
+// ✅ Migration Step 2 — sort (Name/Stock — "Value" deliberately
+//    excluded, since Historical has no per-date unitCost tracking).
+//    Sort is applied inside categoryGroups' useMemo via sortItems();
+//    filteredItems itself is filter-only, never sorts — categoryGroups
+//    correctly lists `sort` in its dependency array, so output is
+//    never stale.
+// ✅ HistoricalCategoryGroup.items is ALREADY SORTED per the current
+//    sort option — never re-sort this array downstream, or the
+//    user's chosen order will be silently discarded.
+// ✅ DESIGN — professional/corporate visual pass: navy/slate palette,
+//    right-aligned numeric columns, subtle pill badges, thin slate
+//    borders, zebra-striped rows.
 // FROZEN
 // ============================================
 
@@ -23,6 +24,8 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { Category } from "../types/category";
 import { InventoryItem } from "../types/inventory";
 import { useHistoricalInventory, HistoricalItemStock } from "../hooks/useHistoricalInventory";
+
+type HistoricalSortOption = "name-asc" | "stock-asc";
 
 interface HistoricalInventoryTableViewProps {
   restaurantId:   string;
@@ -34,16 +37,22 @@ interface HistoricalInventoryTableViewProps {
   categoryId:     string | null;
   setCategoryId:  (id: string | null) => void;
   onItemPress:    (item: InventoryItem) => void;
+  sort:           HistoricalSortOption;
+  setSort:        (s: HistoricalSortOption) => void;
 }
 
 interface HistoricalCategoryGroup {
   categoryId:   string;
   categoryName: string;
   categoryIcon: string | undefined;
+  // ✅ Already sorted per the current `sort` option (see sortItems()
+  // in categoryGroups' useMemo below) — never re-sort this array
+  // downstream; doing so would silently discard the user's chosen
+  // sort order.
   items:        HistoricalItemStock[];
 }
 
-const ROW_HEIGHT = 24;
+const ROW_HEIGHT = 26;
 const LEFT_COLS = { sn: 40, item: 170 };
 const RIGHT_COLS = { date: 90, batch: 110, issue: 160, stock: 90, unit: 70, expiry: 90, total: 90 };
 const LEFT_WIDTH = LEFT_COLS.sn + LEFT_COLS.item;
@@ -57,7 +66,7 @@ const UNCATEGORIZED_ID = "__uncategorized__";
 export function HistoricalInventoryTableView({
   restaurantId, selectedDate, categories, inventoryItems,
   searchQuery, setSearchQuery, categoryId, setCategoryId,
-  onItemPress,
+  onItemPress, sort, setSort,
 }: HistoricalInventoryTableViewProps) {
   const { itemsWithHistoricalStock, loading, error } =
     useHistoricalInventory(restaurantId, selectedDate, inventoryItems);
@@ -67,6 +76,16 @@ export function HistoricalInventoryTableView({
     for (const it of inventoryItems) map.set(it.id, it);
     return map;
   }, [inventoryItems]);
+
+  const sortItems = (list: HistoricalItemStock[]): HistoricalItemStock[] => {
+    const sorted = [...list];
+    if (sort === "stock-asc") {
+      sorted.sort((a, b) => a.historicalStock - b.historicalStock);
+    } else {
+      sorted.sort((a, b) => a.itemName.localeCompare(b.itemName));
+    }
+    return sorted;
+  };
 
   const filteredItems = useMemo(() => {
     let result = itemsWithHistoricalStock;
@@ -95,33 +114,32 @@ export function HistoricalInventoryTableView({
     for (const category of categories) {
       const items = byCategory.get(category.id);
       if (!items || items.length === 0) continue;
-      items.sort((a, b) => a.itemName.localeCompare(b.itemName));
-      groups.push({ categoryId: category.id, categoryName: category.name, categoryIcon: category.icon, items });
+      groups.push({ categoryId: category.id, categoryName: category.name, categoryIcon: category.icon, items: sortItems(items) });
     }
 
     const uncategorized = byCategory.get(UNCATEGORIZED_ID);
     if (uncategorized && uncategorized.length > 0) {
-      uncategorized.sort((a, b) => a.itemName.localeCompare(b.itemName));
-      groups.push({ categoryId: UNCATEGORIZED_ID, categoryName: "Uncategorized", categoryIcon: undefined, items: uncategorized });
+      groups.push({ categoryId: UNCATEGORIZED_ID, categoryName: "Uncategorized", categoryIcon: undefined, items: sortItems(uncategorized) });
     }
 
     groups.sort((a, b) => a.categoryName.localeCompare(b.categoryName));
     return groups;
-  }, [filteredItems, categories]);
+  }, [filteredItems, categories, sort]);
 
   if (loading) {
-    return <ActivityIndicator size="large" color="#0369a1" style={styles.loadingIndicator} />;
+    return <ActivityIndicator size="large" color="#1e3a5f" style={styles.loadingIndicator} />;
   }
 
   return (
     <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
       <View style={styles.searchRow}>
-        <MaterialIcons name="search" size={18} color="#94a3b8" />
+        <MaterialIcons name="search" size={18} color="#64748b" />
         <TextInput
           style={styles.searchInput}
           value={searchQuery}
           onChangeText={setSearchQuery}
           placeholder="Search historical items..."
+          placeholderTextColor="#94a3b8"
         />
       </View>
 
@@ -154,6 +172,24 @@ export function HistoricalInventoryTableView({
         </ScrollView>
       )}
 
+      <View style={styles.sortRow}>
+        <Text style={styles.sortLabel}>Sort:</Text>
+        <TouchableOpacity
+          style={[styles.sortChip, sort === "name-asc" && styles.sortChipActive]}
+          onPress={() => setSort("name-asc")}
+        >
+          <MaterialIcons name="sort-by-alpha" size={13} color={sort === "name-asc" ? "#fff" : "#64748b"} />
+          <Text style={[styles.sortChipText, sort === "name-asc" && styles.sortChipTextActive]}>Name</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.sortChip, sort === "stock-asc" && styles.sortChipActive]}
+          onPress={() => setSort("stock-asc")}
+        >
+          <MaterialIcons name="trending-up" size={13} color={sort === "stock-asc" ? "#fff" : "#64748b"} />
+          <Text style={[styles.sortChipText, sort === "stock-asc" && styles.sortChipTextActive]}>Stock</Text>
+        </TouchableOpacity>
+      </View>
+
       {error && (
         <View style={styles.errorBanner}>
           <Text style={styles.errorBannerText}>{error}</Text>
@@ -185,10 +221,10 @@ export function HistoricalInventoryTableView({
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.date }]}>Received</Text>
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.issue }]}>Issue</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.stock }]}>Lot/Batch QTY</Text>
+                    <Text style={[styles.tableHeaderCell, styles.tableHeaderCellRight, { width: RIGHT_COLS.stock }]}>Lot/Batch QTY</Text>
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.total }]}>Total QTY</Text>
+                    <Text style={[styles.tableHeaderCell, styles.tableHeaderCellRight, { width: RIGHT_COLS.total }]}>Total QTY</Text>
                   </View>
                 </View>
 
@@ -196,22 +232,27 @@ export function HistoricalInventoryTableView({
                   const rowCount = item.batches.length;
                   const groupHeight = ROW_HEIGHT * rowCount;
                   const realItem = inventoryItemById.get(item.inventoryId);
+                  const isEvenRow = itemIndex % 2 === 1;
 
                   return (
                     <TouchableOpacity
                       key={item.inventoryId}
-                      style={[styles.itemGroupRow, { minHeight: groupHeight }]}
+                      style={[
+                        styles.itemGroupRow,
+                        { minHeight: groupHeight },
+                        isEvenRow && styles.itemGroupRowAlt,
+                      ]}
                       onPress={() => { if (realItem) onItemPress(realItem); }}
                       activeOpacity={0.7}
                       disabled={!realItem}
                     >
-                      <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }]}>
+                      <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }, isEvenRow && styles.leftStripAlt]}>
                         <Text style={[styles.leftStripCell, { width: LEFT_COLS.sn }]}>{itemIndex + 1}</Text>
                         <View style={{ width: LEFT_COLS.item }}>
                           <Text style={[styles.leftStripCell, styles.itemNameCell]} numberOfLines={2}>{item.itemName}</Text>
                           {item.hasInconsistency && (
                             <View style={styles.inconsistencyBadge}>
-                              <MaterialIcons name="warning" size={10} color="#d97706" />
+                              <MaterialIcons name="warning" size={10} color="#b45309" />
                               <Text style={styles.inconsistencyText}>data issue</Text>
                             </View>
                           )}
@@ -235,10 +276,10 @@ export function HistoricalInventoryTableView({
                                 ? batch.issues.map((iss) => `${iss.quantity} ${batch.unit} ${iss.source}`).join(" • ")
                                 : "—"}
                             </Text>
-                            <Text style={[styles.tableCell, styles.batchQtyCell, { width: RIGHT_COLS.stock }]}>{batch.quantity}</Text>
+                            <Text style={[styles.tableCell, styles.numericCell, styles.batchQtyCell, { width: RIGHT_COLS.stock }]}>{batch.quantity}</Text>
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.unit }]}>{batch.unit}</Text>
                             <Text style={[styles.tableCell, { width: RIGHT_COLS.expiry }]}>{batch.expiryDate ?? "—"}</Text>
-                            <Text style={[styles.tableCell, styles.totalCell, { width: RIGHT_COLS.total }]}>
+                            <Text style={[styles.tableCell, styles.numericCell, styles.totalCell, { width: RIGHT_COLS.total }]}>
                               {batchIndex === 0 ? String(item.historicalStock) : ""}
                             </Text>
                           </View>
@@ -263,50 +304,71 @@ const styles = StyleSheet.create({
   searchRow: {
     flexDirection: "row", alignItems: "center", gap: 8,
     backgroundColor: "#fff", width: "100%", maxWidth: 500, paddingHorizontal: 12, paddingVertical: 8,
-    borderRadius: 10, borderWidth: 1, borderColor: "#e2e8f0", marginBottom: 8,
+    borderRadius: 8, borderWidth: 1, borderColor: "#cbd5e1", marginBottom: 8,
   },
   searchInput: { flex: 1, fontSize: 14, color: "#1e293b" },
-  categoryScroll: { maxHeight: 30, marginBottom: 10, width: "100%" },
+  categoryScroll: { maxHeight: 30, marginBottom: 8, width: "100%" },
   categoryScrollContent: { gap: 6, alignItems: "center" },
   categoryChip: {
-    height: 22, justifyContent: "center", paddingHorizontal: 9, borderRadius: 12,
-    backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#e2e8f0",
+    height: 22, justifyContent: "center", paddingHorizontal: 10, borderRadius: 4,
+    backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#cbd5e1",
   },
-  categoryChipActive: { backgroundColor: "#7c3aed", borderColor: "#7c3aed" },
+  categoryChipActive: { backgroundColor: "#1e3a5f", borderColor: "#1e3a5f" },
   categoryChipText: { fontSize: 10, fontWeight: "600", color: "#475569" },
   categoryChipTextActive: { color: "#fff" },
-  errorBanner: {
-    backgroundColor: "#fef2f2", padding: 10, borderRadius: 8, marginBottom: 10, width: "100%", maxWidth: 500,
+  sortRow: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    width: "100%", maxWidth: 500, marginBottom: 10,
   },
-  errorBannerText: { color: "#dc2626", fontSize: 12, fontWeight: "600" },
+  sortLabel: { fontSize: 11, fontWeight: "700", color: "#94a3b8", marginRight: 2 },
+  sortChip: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 4,
+    backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#cbd5e1",
+  },
+  sortChipActive: { backgroundColor: "#1e3a5f", borderColor: "#1e3a5f" },
+  sortChipText: { fontSize: 11, fontWeight: "700", color: "#64748b" },
+  sortChipTextActive: { color: "#fff" },
+  errorBanner: {
+    backgroundColor: "#fef2f2", padding: 10, borderRadius: 6, marginBottom: 10, width: "100%", maxWidth: 500,
+    borderWidth: 1, borderColor: "#fecaca",
+  },
+  errorBannerText: { color: "#b91c1c", fontSize: 12, fontWeight: "600" },
   emptyState: { alignItems: "center", marginTop: 60, gap: 8 },
   emptyStateText: { color: "#94a3b8", fontSize: 14, fontWeight: "600" },
   categoryBlock: {
-    marginBottom: 16, borderWidth: 1, borderColor: "#1e293b", borderRadius: 6, overflow: "hidden",
+    marginBottom: 16, borderWidth: 1, borderColor: "#cbd5e1", borderRadius: 4, overflow: "hidden",
   },
-  categoryHeader: { backgroundColor: "#7c3aed", paddingVertical: 6, paddingHorizontal: 10 },
-  categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 11, letterSpacing: 0.5 },
+  categoryHeader: { backgroundColor: "#1e3a5f", paddingVertical: 7, paddingHorizontal: 10 },
+  categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 11, letterSpacing: 0.6 },
   tableHeaderRow: {
-    flexDirection: "row", backgroundColor: "#fef9c3",
-    borderBottomWidth: 2, borderBottomColor: "#1e293b", paddingVertical: 4,
+    flexDirection: "row", backgroundColor: "#f1f5f9",
+    borderBottomWidth: 1, borderBottomColor: "#cbd5e1", paddingVertical: 5,
   },
   leftHeaderGroup: { flexDirection: "row" },
   rightHeaderGroup: { flexDirection: "row" },
-  tableHeaderCell: { fontSize: 9, fontWeight: "800", color: "#1e293b", paddingHorizontal: 3 },
-  itemGroupRow: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: "#94a3b8" },
+  tableHeaderCell: { fontSize: 9, fontWeight: "800", color: "#334155", paddingHorizontal: 4, letterSpacing: 0.3 },
+  tableHeaderCellRight: { textAlign: "right" },
+  itemGroupRow: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: "#e2e8f0" },
+  itemGroupRowAlt: { backgroundColor: "#f8fafc" },
   leftStrip: {
     flexDirection: "row", alignItems: "flex-start",
-    borderRightWidth: 1, borderRightColor: "#cbd5e1", backgroundColor: "#f8fafc", paddingVertical: 3,
+    borderRightWidth: 1, borderRightColor: "#e2e8f0", backgroundColor: "#fff", paddingVertical: 4,
   },
-  leftStripCell: { fontSize: 9, color: "#334155", paddingHorizontal: 3 },
-  itemNameCell: { fontWeight: "700", color: "#1e293b", fontSize: 11 },
-  inconsistencyBadge: { flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: 3, marginTop: 2 },
-  inconsistencyText: { fontSize: 7, color: "#d97706", fontWeight: "700" },
+  leftStripAlt: { backgroundColor: "#f8fafc" },
+  leftStripCell: { fontSize: 9, color: "#475569", paddingHorizontal: 4 },
+  itemNameCell: { fontWeight: "700", color: "#0f172a", fontSize: 11 },
+  inconsistencyBadge: {
+    flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: 5, paddingVertical: 1,
+    marginTop: 3, marginLeft: 4, backgroundColor: "#fef3c7", borderRadius: 3, alignSelf: "flex-start",
+  },
+  inconsistencyText: { fontSize: 7, color: "#92400e", fontWeight: "700" },
   rightBatchRows: { flex: 1 },
   batchRow: { flexDirection: "row", alignItems: "center" },
   batchRowDivider: { borderBottomWidth: 1, borderBottomColor: "#f1f5f9" },
-  tableCell: { fontSize: 9, color: "#334155", paddingHorizontal: 3 },
-  issueCell: { color: "#dc2626", fontWeight: "700" },
-  batchQtyCell: { fontWeight: "800", color: "#6d28d9", fontSize: 10 },
-  totalCell: { fontWeight: "800", color: "#7c3aed", fontSize: 10 },
+  tableCell: { fontSize: 9, color: "#334155", paddingHorizontal: 4 },
+  numericCell: { textAlign: "right" },
+  issueCell: { color: "#b91c1c", fontWeight: "600" },
+  batchQtyCell: { fontWeight: "800", color: "#1e3a5f", fontSize: 10 },
+  totalCell: { fontWeight: "800", color: "#1e3a5f", fontSize: 10 },
 });

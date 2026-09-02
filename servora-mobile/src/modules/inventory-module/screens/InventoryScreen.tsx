@@ -78,10 +78,11 @@ export default function InventoryScreen() {
     goToPreviousDay, goToNextDay, isNextDisabled,
   } = useInventoryDateNavigation(today);
 
-  const [historicalSearchQuery, setHistoricalSearchQuery] = React.useState("");
+ const [historicalSearchQuery, setHistoricalSearchQuery] = React.useState("");
   const [historicalCategoryId, setHistoricalCategoryId] = React.useState<string | null>(null);
+  const [historicalSort, setHistoricalSort] = React.useState<"name-asc" | "stock-asc">("name-asc");
   const [showFullScreenTable, setShowFullScreenTable] = React.useState(false);
-
+  
   const {
     filters, filteredItems,
     setSearchQuery, setCategoryId, setStockStatus, setSort,
@@ -243,7 +244,7 @@ export default function InventoryScreen() {
         </TouchableOpacity>
       </View>
 
-      {isHistorical ? (
+     {isHistorical ? (
         <HistoricalInventoryTableView
           restaurantId={safeRestaurantId}
           selectedDate={selectedDate}
@@ -254,6 +255,8 @@ export default function InventoryScreen() {
           categoryId={historicalCategoryId}
           setCategoryId={setHistoricalCategoryId}
           onItemPress={openDrawer}
+          sort={historicalSort}
+          setSort={setHistoricalSort}
         />
       ) : (
         <>
