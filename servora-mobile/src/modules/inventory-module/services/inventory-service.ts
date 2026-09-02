@@ -6,51 +6,39 @@
 //    isActive.
 // ✅ duplicateInventoryItem() — real, common ERP row-action.
 // ✅ InventoryItem.currentStock is the AUTHORITATIVE transactional
-//    counter — every stock-changing write reads it fresh inside its
-//    own transaction, calculates the new value, and writes it back.
-// ✅ FIX — isLowStock is now recomputed and written in EVERY
-//    transaction that changes currentStock (receiveBatch(),
-//    deductStockBatch(), createInventoryItemWithInitialBatch(),
-//    correctBatchDetails() when quantity changes) — matching
-//    inventory-repository.ts's own corrected formula exactly:
+//    counter — every stock-changing write recomputes it from actual
+//    batch documents (source of truth), not from a stored-value
+//    delta.
+// ⚠️ CONCURRENCY NOTE (project-wide, applies to receiveBatch(),
+//    deductStockBatch(), correctBatchDetails(), moveBatchToItem()):
+//    this project's installed Firestore SDK typings do not support
+//    transaction.get(Query) — only transaction.get(DocumentReference).
+//    Sibling/related batches are therefore read with getDocs()
+//    BEFORE each transaction starts, then re-read by direct
+//    reference INSIDE the transaction. This introduces a narrow
+//    concurrency window: a batch write for the same item occurring
+//    between the pre-transaction getDocs() and the transaction's
+//    commit would not be included in that operation's recomputed
+//    currentStock. These are comparatively low-frequency, largely
+//    single-operator inventory actions (not high-volume POS-scale
+//    concurrent writes), so this trade-off is currently accepted. If
+//    stronger concurrency guarantees are required later, move
+//    sibling-batch aggregation to a transaction-safe reference/
+//    counter architecture instead of a query-based sum.
+// ✅ isLowStock is recomputed and written in EVERY transaction that
+//    changes currentStock, matching inventory-repository.ts's own
+//    corrected formula exactly:
 //      isLowStock = afterQuantity > 0 && afterQuantity <= minStock
-//    Previously only inventory-repository.ts's manual-edit path
-//    (createInventoryItem/updateInventoryItem) recomputed this
-//    field — the batch-tracking transactions here wrote
-//    currentStock directly without ever touching isLowStock, so an
-//    item's isLowStock could go stale (wrong) after any Receive
-//    Batch / Waste / Transfer Out / batch quantity correction, even
-//    though currentStock itself was always correct. Now every path
-//    that can change currentStock keeps isLowStock in sync with it,
-//    at the same moment, in the same transaction.
-// ✅ minStock is read FRESH from the transaction's own itemSnap
-//    inside each transaction (never trusted from a caller-supplied
-//    InventoryItem object, which could be stale relative to a
-//    concurrent edit) — the same discipline already used for
-//    currentStock itself.
-// ✅ FIX — inventoryId cross-check, negative-stock guard, batch-key
-//    integrity check, actor metadata (createdByName/Role), "pending"
-//    placeholder removed, NaN/Infinity validation — all from the
-//    prior concurrency-hardening pass, unchanged here.
-// ⚠️ ACCEPTED, DOCUMENTED RESIDUAL LIMITATION — FEFO candidate
-//    discovery: deductStockBatch() still discovers batch document
-//    IDs via a pre-transaction query. A batch created by a truly
-//    concurrent operation between that query and this transaction's
-//    commit is not considered as an FEFO candidate by THIS
-//    deduction. currentStock itself is protected by the
-//    transactional-counter design and can never become numerically
-//    wrong from this.
-// ⚠️ DEPLOYMENT NOTE: existing InventoryBatch documents from before
-//    the batchKeys system need a one-time backfill (already run —
-//    see project history). Similarly, existing InventoryItem
-//    documents with a stale/incorrect isLowStock value (from before
-//    this fix) need their own one-time backfill — see the
-//    accompanying migration script.
+// ✅ totalValue is recomputed (currentStock × item.unitCost) in every
+//    transaction that changes currentStock — this project's existing
+//    item-level valuation model (not per-batch weighted valuation,
+//    which is a separate, larger design decision, out of scope here).
+// ✅ minStock/unitCost are read FRESH from each transaction's own
+//    itemSnap (never trusted from a caller-supplied InventoryItem
+//    object, which could be stale relative to a concurrent edit).
 // ✅ FEFO allocation logic is NOT duplicated — reuses the same pure
 //    sortBatchesByFEFO()/isEligibleForFEFO() functions
 //    batch-allocation-service.ts uses.
-// ⚠️ KNOWN LIMITATION (documented, accepted): movementValue uses
-//    item.unitCost, not a per-batch weighted cost. Deferred.
 // FROZEN
 // ============================================
 
@@ -99,7 +87,7 @@ function batchKeyDoc(restaurantId: string, key: string) {
   return doc(db, COL.RESTAURANTS, restaurantId, RCOL.BATCH_KEYS, key);
 }
 
-// ✅ FIX — single source of truth for isLowStock, matching
+// ✅ Single source of truth for isLowStock, matching
 // inventory-repository.ts's own corrected formula exactly.
 function computeIsLowStock(currentStock: number, minStock: number): boolean {
   return currentStock > 0 && currentStock <= minStock;
@@ -245,7 +233,7 @@ function validateBatchInput(batchInput: Omit<CreateInventoryBatchInput, "invento
   }
 }
 
-// ── Receive Batch — currentStock + isLowStock authoritative ──
+// ── Receive Batch — currentStock + isLowStock + totalValue authoritative ──
 export interface ReceiveBatchResult {
   batchId:         string;
   newCurrentStock: number;
@@ -264,12 +252,22 @@ export async function receiveBatch(
     throw new Error("Batch inventory item does not match the selected inventory item");
   }
   validateBatchInput(batchInput);
+  if (batchInput.quantity <= 0) {
+    throw new Error("Received quantity must be greater than 0");
+  }
 
   const batchKey = normalizeBatchKey(batchInput.inventoryId, batchInput.batchNo);
   const batchKeyRef = batchKeyDoc(restaurantId, batchKey);
   const newBatchRef = doc(batchesCollection(restaurantId));
   const movementRef = doc(stockMovementsCollection(restaurantId));
   const itemRef = inventoryDoc(restaurantId, existingItem.id);
+
+  // ⚠️ See file-level CONCURRENCY NOTE — sibling batches read via
+  // getDocs() before the transaction starts.
+  const siblingBatchesSnap = await getDocs(
+    query(batchesCollection(restaurantId), where("inventoryId", "==", existingItem.id))
+  );
+  const siblingBatchRefs = siblingBatchesSnap.docs.map((d) => batchDoc(restaurantId, d.id));
 
   const result = await runTransaction(db, async (transaction) => {
     const batchKeySnap = await transaction.get(batchKeyRef);
@@ -279,14 +277,40 @@ export async function receiveBatch(
 
     const itemSnap = await transaction.get(itemRef);
     if (!itemSnap.exists()) throw new Error("Inventory item not found");
-
     const itemData = itemSnap.data();
-    const beforeQuantity: number = itemData.currentStock ?? 0;
+
+    if ((itemData.isActive ?? true) === false) {
+      throw new Error("Cannot receive stock — this item is archived. Restore it first.");
+    }
+
+    const itemUnit: string = itemData.unit;
+    if (batchInput.unit !== itemUnit) {
+      throw new Error(
+        `Cannot receive — this batch is measured in ${batchInput.unit}, but ` +
+        `"${itemData.itemName}" is measured in ${itemUnit}`
+      );
+    }
+
+    const siblingSnaps = await Promise.all(siblingBatchRefs.map((ref) => transaction.get(ref)));
+    let beforeQuantity = 0;
+    for (const snap of siblingSnaps) {
+      if (!snap.exists()) continue;
+      const data = snap.data();
+      const q = Number(data.quantity);
+      if (!Number.isFinite(q) || q < 0) {
+        throw new Error(`Cannot receive stock — existing batch "${data.batchNo}" has an invalid quantity`);
+      }
+      if (q > 0) beforeQuantity += q;
+    }
+
     const afterQuantity = beforeQuantity + batchInput.quantity;
-    // ✅ FIX — fresh minStock from the transaction, isLowStock
-    // recomputed and written alongside currentStock.
     const minStock: number = Number(itemData.minStock ?? 0);
     const isLowStock = computeIsLowStock(afterQuantity, minStock);
+
+    const itemUnitCost: number = itemData.unitCost ?? 0;
+    const recomputedTotalValue = Math.round(afterQuantity * itemUnitCost * 100) / 100;
+
+    const freshItemName: string = itemData.itemName;
 
     const batchAllocations: BatchAllocationRecord[] = [{
       batchId:  newBatchRef.id,
@@ -304,7 +328,7 @@ export async function receiveBatch(
 
     transaction.set(newBatchRef, {
       inventoryId:      batchInput.inventoryId,
-      itemName:         batchInput.itemName.trim(),
+      itemName:         freshItemName,
       batchNo:          batchInput.batchNo.trim(),
       quantity:         batchInput.quantity,
       originalQuantity: batchInput.quantity,
@@ -325,7 +349,7 @@ export async function receiveBatch(
 
     transaction.set(movementRef, {
       inventoryId:      existingItem.id,
-      itemName:         existingItem.itemName,
+      itemName:         freshItemName,
       movementType:     "PURCHASE",
       quantityChanged:  batchInput.quantity,
       beforeQuantity,
@@ -348,6 +372,7 @@ export async function receiveBatch(
     transaction.update(itemRef, {
       currentStock: afterQuantity,
       isLowStock,
+      totalValue:   recomputedTotalValue,
       updatedAt:    serverTimestamp(),
     });
 
@@ -361,7 +386,7 @@ export async function receiveBatch(
   };
 }
 
-// ── Deduct Stock via FEFO — currentStock + isLowStock authoritative ──
+// ── Deduct Stock via FEFO — currentStock + isLowStock + totalValue authoritative ──
 type DeductibleMovementType = "WASTE" | "KITCHEN_ISSUE" | "TRANSFER_OUT";
 
 export interface DeductStockBatchInput {
@@ -412,6 +437,8 @@ export async function deductStockBatch(
   const itemRef = inventoryDoc(restaurantId, item.id);
   const movementRef = doc(stockMovementsCollection(restaurantId));
 
+  // ⚠️ See file-level CONCURRENCY NOTE — batch IDs discovered via
+  // getDocs() before the transaction starts.
   const idQuerySnap = await getDocs(
     query(batchesCollection(restaurantId), where("inventoryId", "==", input.inventoryId))
   );
@@ -429,17 +456,24 @@ export async function deductStockBatch(
       throw new Error("Cannot deduct stock — this item is archived");
     }
 
-    const beforeQuantity: number = itemData.currentStock ?? 0;
-
-    if (beforeQuantity < input.quantity) {
-      throw new Error(`Cannot deduct ${input.quantity} — only ${beforeQuantity} stock available`);
-    }
-
     const batchRefs = batchIds.map((id) => batchDoc(restaurantId, id));
     const batchSnaps = await Promise.all(batchRefs.map((ref) => transaction.get(ref)));
     const allBatches: InventoryBatch[] = batchSnaps
       .filter((s) => s.exists())
       .map((s) => ({ id: s.id, ...(s.data() as Omit<InventoryBatch, "id">) }));
+
+    let beforeQuantity = 0;
+    for (const batch of allBatches) {
+      const q = Number(batch.quantity);
+      if (!Number.isFinite(q) || q < 0) {
+        throw new Error(`Cannot deduct stock — batch "${batch.batchNo}" has an invalid quantity`);
+      }
+      beforeQuantity += q;
+    }
+
+    if (beforeQuantity < input.quantity) {
+      throw new Error(`Cannot deduct ${input.quantity} — only ${beforeQuantity} stock available`);
+    }
 
     const eligibleBatches = sortBatchesByFEFO(allBatches.filter(isEligibleForFEFO));
     const eligibleTotal = eligibleBatches.reduce((sum, b) => sum + b.quantity, 0);
@@ -479,15 +513,22 @@ export async function deductStockBatch(
       });
     }
 
-    const afterQuantity = beforeQuantity - input.quantity;
-    // ✅ FIX — fresh minStock from the transaction, isLowStock
-    // recomputed and written alongside currentStock.
+    const allocationMap = new Map(allocations.map((a) => [a.batchId, a.remainingQuantity]));
+    const afterQuantity = allBatches.reduce((sum, batch) => {
+      const remaining = allocationMap.has(batch.id) ? allocationMap.get(batch.id)! : batch.quantity;
+      return remaining > 0 ? sum + remaining : sum;
+    }, 0);
+
     const minStock: number = Number(itemData.minStock ?? 0);
     const isLowStock = computeIsLowStock(afterQuantity, minStock);
+
+    const itemUnitCost: number = itemData.unitCost ?? 0;
+    const recomputedTotalValue = Math.round(afterQuantity * itemUnitCost * 100) / 100;
 
     transaction.update(itemRef, {
       currentStock: afterQuantity,
       isLowStock,
+      totalValue:   recomputedTotalValue,
       updatedAt:    serverTimestamp(),
       updatedBy:    auth.currentUser!.uid,
     });
@@ -500,7 +541,7 @@ export async function deductStockBatch(
 
     transaction.set(movementRef, {
       inventoryId:      item.id,
-      itemName:         item.itemName,
+      itemName:         itemData.itemName,
       movementType:     input.movementType,
       quantityChanged:  -input.quantity,
       beforeQuantity,
@@ -563,9 +604,6 @@ export async function createInventoryItemWithInitialBatch(
   }
 
   if (requestedQuantity === 0) {
-    // ✅ repoCreateInventoryItem() (inventory-repository.ts) already
-    // computes isLowStock correctly via the corrected formula — no
-    // separate handling needed here.
     const itemId = await repoCreateInventoryItem(restaurantId, {
       ...input.itemInput,
       currentStock: 0,
@@ -606,9 +644,6 @@ export async function createInventoryItemWithInitialBatch(
       quantity: requestedQuantity,
     }];
 
-    // ✅ FIX — isLowStock computed for the brand-new item too
-    // (currentStock === requestedQuantity, no existing item document
-    // to read minStock from — it comes straight from itemInput).
     const isLowStock = computeIsLowStock(requestedQuantity, input.itemInput.minStock);
 
     transaction.set(itemRef, {
@@ -703,11 +738,15 @@ export interface CorrectBatchDetailsResult {
 
 export async function correctBatchDetails(
   restaurantId: string,
-  _existingItem: InventoryItem,
+  existingItem: InventoryItem,
   input: CorrectBatchDetailsInput
 ): Promise<CorrectBatchDetailsResult> {
   if (!restaurantId) throw new Error("Restaurant not configured");
   if (!auth.currentUser) throw new Error("User not authenticated");
+
+  if (existingItem.id !== input.itemId) {
+    throw new Error("Batch correction item does not match the selected inventory item");
+  }
 
   if (input.batchNo !== undefined && !input.batchNo.trim()) {
     throw new Error("Batch number cannot be empty");
@@ -722,15 +761,33 @@ export async function correctBatchDetails(
   const targetBatchRef = batchDoc(restaurantId, input.batchId);
   const itemRef = inventoryDoc(restaurantId, input.itemId);
 
+  // ⚠️ See file-level CONCURRENCY NOTE — sibling batches read via
+  // getDocs() before the transaction starts.
+  const siblingBatchesSnap = await getDocs(
+    query(batchesCollection(restaurantId), where("inventoryId", "==", input.itemId))
+  );
+  const siblingBatchRefs = siblingBatchesSnap.docs.map((d) => batchDoc(restaurantId, d.id));
+
   const result = await runTransaction(db, async (transaction) => {
     const batchSnap = await transaction.get(targetBatchRef);
     if (!batchSnap.exists()) throw new Error("Batch not found");
     const batchData = batchSnap.data();
+
+    if (batchData.inventoryId !== input.itemId) {
+      throw new Error("This batch does not belong to the specified inventory item");
+    }
+
     const currentBatchNo: string = batchData.batchNo;
-    const oldQuantity: number = batchData.quantity;
+
+    const oldQuantity = Number(batchData.quantity);
+    if (!Number.isFinite(oldQuantity) || oldQuantity < 0) {
+      throw new Error(`Cannot correct batch — batch "${batchData.batchNo}" has an invalid quantity`);
+    }
+
+    const quantityIsChanging = input.quantity !== undefined && input.quantity !== oldQuantity;
 
     let itemSnap = null;
-    if (input.quantity !== undefined && input.quantity !== oldQuantity) {
+    if (quantityIsChanging) {
       itemSnap = await transaction.get(itemRef);
       if (!itemSnap.exists()) throw new Error("Inventory item not found");
     }
@@ -757,6 +814,38 @@ export async function correctBatchDetails(
       }
     }
 
+    let newCurrentStock: number | null = null;
+    if (itemSnap && quantityIsChanging) {
+      const itemData = itemSnap.data();
+
+      const siblingSnaps = await Promise.all(siblingBatchRefs.map((ref) => transaction.get(ref)));
+
+      let recomputedStock = 0;
+      for (const snap of siblingSnaps) {
+        if (!snap.exists()) continue;
+        const isTargetBatch = snap.id === input.batchId;
+        const data = snap.data();
+        const q = isTargetBatch ? input.quantity! : Number(data.quantity);
+        if (!Number.isFinite(q) || q < 0) {
+          throw new Error(`Cannot correct batch — batch "${data.batchNo}" has an invalid quantity`);
+        }
+        if (q > 0) recomputedStock += q;
+      }
+
+      newCurrentStock = recomputedStock;
+      const minStock: number = Number(itemData.minStock ?? 0);
+      const isLowStock = computeIsLowStock(newCurrentStock, minStock);
+      const itemUnitCost: number = itemData.unitCost ?? 0;
+      const recomputedTotalValue = Math.round(newCurrentStock * itemUnitCost * 100) / 100;
+
+      transaction.update(itemRef, {
+        currentStock: newCurrentStock,
+        isLowStock,
+        totalValue:   recomputedTotalValue,
+        updatedAt:    serverTimestamp(),
+      });
+    }
+
     const batchUpdates: Record<string, unknown> = {
       updatedAt: serverTimestamp(),
       updatedBy: auth.currentUser!.uid,
@@ -778,37 +867,13 @@ export async function correctBatchDetails(
       transaction.delete(oldKeyRef);
     }
 
-    let newCurrentStock: number | null = null;
-    if (itemSnap && input.quantity !== undefined) {
-      const delta = input.quantity - oldQuantity;
-      const itemData = itemSnap.data();
-      const currentItemStock: number = itemData.currentStock ?? 0;
-      newCurrentStock = currentItemStock + delta;
-      // ✅ FIX — fresh minStock from the transaction, isLowStock
-      // recomputed and written alongside currentStock.
-      const minStock: number = Number(itemData.minStock ?? 0);
-      const isLowStock = computeIsLowStock(newCurrentStock, minStock);
-
-      transaction.update(itemRef, {
-        currentStock: newCurrentStock,
-        isLowStock,
-        updatedAt:    serverTimestamp(),
-      });
-    }
-
     return { newCurrentStock };
   });
 
-  return { newCurrentStock: result.newCurrentStock };
+  return result;
 }
 
-// ── Move Batch to Correct Item — for correcting human-error data
-//    entry (e.g. a batch was received against the WRONG
-//    InventoryItem, such as "beer" stock accidentally receipted onto
-//    "water"'s document). Moves the batch's inventoryId/itemName,
-//    transfers its quantity between the two items' currentStock, and
-//    records a paired TRANSFER_OUT/TRANSFER_IN movement (both tagged
-//    reasonCategory: "DATA_CORRECTION") for a full audit trail. ──
+// ── Move Batch to Correct Item ───────────────────
 export interface MoveBatchToItemResult {
   movementOutId: string;
   movementInId:  string;
@@ -830,6 +895,27 @@ export async function moveBatchToItem(
   const movementOutRef = doc(stockMovementsCollection(restaurantId));
   const movementInRef  = doc(stockMovementsCollection(restaurantId));
 
+  // First, read this batch (outside the transaction) to know which
+  // source item's sibling batches to fetch.
+  const targetBatchLookupSnap = await getDocs(
+    query(batchesCollection(restaurantId), where("__name__", "==", batchId))
+  );
+  if (targetBatchLookupSnap.empty) throw new Error("Batch not found");
+  const sourceInventoryIdForFetch: string = targetBatchLookupSnap.docs[0].data().inventoryId;
+
+  // ⚠️ See file-level CONCURRENCY NOTE — sibling batches for BOTH
+  // source and target items read via getDocs() before the
+  // transaction starts.
+  const sourceSiblingSnap = await getDocs(
+    query(batchesCollection(restaurantId), where("inventoryId", "==", sourceInventoryIdForFetch))
+  );
+  const sourceSiblingRefs = sourceSiblingSnap.docs.map((d) => batchDoc(restaurantId, d.id));
+
+  const targetSiblingSnap = await getDocs(
+    query(batchesCollection(restaurantId), where("inventoryId", "==", targetItem.id))
+  );
+  const targetSiblingRefs = targetSiblingSnap.docs.map((d) => batchDoc(restaurantId, d.id));
+
   const result = await runTransaction(db, async (transaction) => {
     const batchSnap = await transaction.get(targetBatchRef);
     if (!batchSnap.exists()) throw new Error("Batch not found");
@@ -837,22 +923,19 @@ export async function moveBatchToItem(
 
     const sourceInventoryId: string = batchData.inventoryId;
     const batchNo: string            = batchData.batchNo;
-    const batchQuantity: number      = batchData.quantity;
+    const batchQuantity: number      = Number(batchData.quantity);
     const batchUnit: string          = batchData.unit;
     const batchUnitCost: number      = batchData.unitCost ?? 0;
 
-    if (sourceInventoryId === targetItem.id) {
-      throw new Error("Batch is already assigned to this item");
+    if (!Number.isFinite(batchQuantity) || batchQuantity <= 0) {
+      throw new Error(`Cannot move — batch "${batchNo}" has an invalid or zero quantity`);
+    }
+    if (!sourceInventoryId) {
+      throw new Error("Cannot move — batch has no source inventory item");
     }
 
-    // ✅ Unit compatibility guard — moving a "bottle" batch onto a
-    // "kg" item (or similar mismatch) would silently corrupt the
-    // target item's currentStock math. Refuse rather than guess.
-    if (batchUnit !== targetItem.unit) {
-      throw new Error(
-        `Cannot move — this batch is measured in ${batchUnit}, but ` +
-        `"${targetItem.itemName}" is measured in ${targetItem.unit}`
-      );
+    if (sourceInventoryId === targetItem.id) {
+      throw new Error("Batch is already assigned to this item");
     }
 
     const sourceItemRef = inventoryDoc(restaurantId, sourceInventoryId);
@@ -864,36 +947,67 @@ export async function moveBatchToItem(
     if (!targetItemSnap.exists()) throw new Error("Target inventory item not found");
     const targetItemData = targetItemSnap.data();
 
-    // ✅ Batch-key uniqueness — the target item must not already have
-    // a batch with this same batchNo (same integrity rule as
-    // receiveBatch()/correctBatchDetails()).
+    const targetUnit: string = targetItemData.unit;
+    const targetItemName: string = targetItemData.itemName;
+
+    if (batchUnit !== targetUnit) {
+      throw new Error(
+        `Cannot move — this batch is measured in ${batchUnit}, but ` +
+        `"${targetItemName}" is measured in ${targetUnit}`
+      );
+    }
+
+    if (targetItemData.isActive === false) {
+      throw new Error(`Cannot move — target item "${targetItemName}" is inactive`);
+    }
+
     const newKey = normalizeBatchKey(targetItem.id, batchNo);
     const newKeyRef = batchKeyDoc(restaurantId, newKey);
     const newKeySnap = await transaction.get(newKeyRef);
     if (newKeySnap.exists()) {
-      throw new Error(`Batch number "${batchNo}" already exists on "${targetItem.itemName}"`);
+      throw new Error(`Batch number "${batchNo}" already exists on "${targetItemName}"`);
     }
 
     const oldKey = normalizeBatchKey(sourceInventoryId, batchNo);
     const oldKeyRef = batchKeyDoc(restaurantId, oldKey);
 
-    // ── Source item: currentStock decreases ──
-    const sourceBeforeQuantity: number = sourceItemData.currentStock ?? 0;
-    const sourceAfterQuantity = sourceBeforeQuantity - batchQuantity;
-    if (sourceAfterQuantity < 0) {
-      throw new Error(
-        `Cannot move — source item's recorded stock (${sourceBeforeQuantity}) is less than ` +
-        `this batch's quantity (${batchQuantity}); data is already inconsistent and needs manual review`
-      );
+    const sourceSiblingSnaps = await Promise.all(sourceSiblingRefs.map((ref) => transaction.get(ref)));
+    let sourceAfterQuantity = 0;
+    for (const snap of sourceSiblingSnaps) {
+      if (!snap.exists()) continue;
+      if (snap.id === batchId) continue; // this batch is leaving
+      const data = snap.data();
+      const q = Number(data.quantity);
+      if (!Number.isFinite(q) || q < 0) {
+        throw new Error(`Cannot move — source batch "${data.batchNo}" has an invalid quantity`);
+      }
+      if (q > 0) sourceAfterQuantity += q;
     }
+
     const sourceMinStock: number = Number(sourceItemData.minStock ?? 0);
     const sourceIsLowStock = computeIsLowStock(sourceAfterQuantity, sourceMinStock);
+    const sourceUnitCost: number = sourceItemData.unitCost ?? 0;
+    const sourceRecomputedTotalValue = Math.round(sourceAfterQuantity * sourceUnitCost * 100) / 100;
 
-    // ── Target item: currentStock increases ──
-    const targetBeforeQuantity: number = targetItemData.currentStock ?? 0;
-    const targetAfterQuantity = targetBeforeQuantity + batchQuantity;
+    const targetSiblingSnaps = await Promise.all(targetSiblingRefs.map((ref) => transaction.get(ref)));
+    let targetAfterQuantity = batchQuantity; // this batch, arriving
+    for (const snap of targetSiblingSnaps) {
+      if (!snap.exists()) continue;
+      const data = snap.data();
+      const q = Number(data.quantity);
+      if (!Number.isFinite(q) || q < 0) {
+        throw new Error(`Cannot move — target batch "${data.batchNo}" has an invalid quantity`);
+      }
+      if (q > 0) targetAfterQuantity += q;
+    }
+
     const targetMinStock: number = Number(targetItemData.minStock ?? 0);
     const targetIsLowStock = computeIsLowStock(targetAfterQuantity, targetMinStock);
+    const targetUnitCost: number = targetItemData.unitCost ?? 0;
+    const targetRecomputedTotalValue = Math.round(targetAfterQuantity * targetUnitCost * 100) / 100;
+
+    const sourceBeforeQuantity = sourceAfterQuantity + batchQuantity;
+    const targetBeforeQuantity = targetAfterQuantity - batchQuantity;
 
     const batchAllocations: BatchAllocationRecord[] = [{
       batchId,
@@ -901,7 +1015,6 @@ export async function moveBatchToItem(
       quantity: batchQuantity,
     }];
 
-    // ── Move the batch key (uniqueness lock) ──
     transaction.set(newKeyRef, {
       inventoryId: targetItem.id,
       batchNo,
@@ -911,31 +1024,28 @@ export async function moveBatchToItem(
     });
     transaction.delete(oldKeyRef);
 
-    // ── Update the batch document itself ──
     transaction.update(targetBatchRef, {
       inventoryId: targetItem.id,
-      itemName:    targetItem.itemName,
+      itemName:    targetItemName,
       updatedAt:   serverTimestamp(),
       updatedBy:   auth.currentUser!.uid,
     });
 
-    // ── Update both items' currentStock ──
     transaction.update(sourceItemRef, {
       currentStock: sourceAfterQuantity,
       isLowStock:   sourceIsLowStock,
+      totalValue:   sourceRecomputedTotalValue,
       updatedAt:    serverTimestamp(),
     });
     transaction.update(targetItemRef, {
       currentStock: targetAfterQuantity,
       isLowStock:   targetIsLowStock,
+      totalValue:   targetRecomputedTotalValue,
       updatedAt:    serverTimestamp(),
     });
 
     const movementValue = Math.round(batchQuantity * batchUnitCost * 100) / 100;
 
-    // ── Paired movement records — TRANSFER_OUT on the source item,
-    //    TRANSFER_IN on the target item, both tagged as a data
-    //    correction. ──
     transaction.set(movementOutRef, {
       inventoryId:     sourceInventoryId,
       itemName:        sourceItemData.itemName,
@@ -949,7 +1059,7 @@ export async function moveBatchToItem(
       reasonCategory:  "DATA_CORRECTION",
       referenceType:   "MANUAL",
       referenceId:     null,
-      reason:          `Batch ${batchNo} moved to "${targetItem.itemName}" (incorrect item correction)`,
+      reason:          `Batch ${batchNo} moved to "${targetItemName}" (incorrect item correction)`,
       batchAllocations,
       restaurantId,
       createdBy:       auth.currentUser!.uid,
@@ -960,7 +1070,7 @@ export async function moveBatchToItem(
 
     transaction.set(movementInRef, {
       inventoryId:     targetItem.id,
-      itemName:        targetItem.itemName,
+      itemName:        targetItemName,
       movementType:    "TRANSFER_IN",
       quantityChanged: batchQuantity,
       beforeQuantity:  targetBeforeQuantity,
