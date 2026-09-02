@@ -2,19 +2,13 @@
 // SERVORA ERP — HistoricalInventoryTableView Component
 // ✅ Migration Step 1 — onItemPress (real InventoryItem lookup).
 // ✅ Migration Step 2 — sort (Name/Stock).
-// ✅ DESIGN — professional/corporate visual pass: navy/slate palette,
-//    right-aligned numeric columns, subtle pill badges, zebra-striped
-//    rows, wider Total QTY column with right padding (numbers no
-//    longer flush against column edge), hidden scrollbar (drag/swipe
-//    still works), extra spacing between category header and column
-//    header row.
-// ✅ NEW — multi-line Issue column: a batch with MORE THAN 2 Issue
-//    entries on the selected date shows each entry on its own line
-//    (row height grows to fit); 1-2 entries stay on one line joined
-//    by "•", as before. Each batch row's height is now computed
-//    per-row (not a fixed ROW_HEIGHT for the whole group) — the
-//    left-hand item-name strip's total height is the SUM of all its
-//    batch rows' individual heights.
+// ✅ DESIGN — professional/corporate visual pass.
+// ✅ Multi-line Issue column (>2 entries -> one per line, dynamic
+//    row height).
+// ✅ FIX — category chips now WRAP (flexWrap) instead of horizontal-
+//    scrolling in a single line, matching InventoryFilters.tsx's own
+//    fix — all categories visible at once, no hidden/scroll-required
+//    chips.
 // FROZEN
 // ============================================
 
@@ -59,8 +53,6 @@ const TABLE_WIDTH = LEFT_WIDTH + RIGHT_WIDTH;
 
 const UNCATEGORIZED_ID = "__uncategorized__";
 
-// ✅ NEW — each batch's own row height, based on its Issue entry
-// count (>2 entries -> one line per entry; otherwise one line).
 function getBatchRowHeight(issueCount: number): number {
   return issueCount > 2 ? ROW_HEIGHT * issueCount : ROW_HEIGHT;
 }
@@ -146,12 +138,7 @@ export function HistoricalInventoryTableView({
       </View>
 
       {categories.length > 0 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.categoryScroll}
-          contentContainerStyle={styles.categoryScrollContent}
-        >
+        <View style={styles.categoryWrap}>
           <TouchableOpacity
             style={[styles.categoryChip, categoryId === null && styles.categoryChipActive]}
             onPress={() => setCategoryId(null)}
@@ -171,7 +158,7 @@ export function HistoricalInventoryTableView({
               </Text>
             </TouchableOpacity>
           ))}
-        </ScrollView>
+        </View>
       )}
 
       <View style={styles.sortRow}>
@@ -235,8 +222,6 @@ export function HistoricalInventoryTableView({
                 </View>
 
                 {group.items.map((item, itemIndex) => {
-                  // ✅ NEW — total group height is the SUM of each
-                  // batch's own (potentially multi-line) height.
                   const groupHeight = item.batches.reduce(
                     (sum, b) => sum + getBatchRowHeight(b.issues.length), 0
                   );
@@ -331,8 +316,10 @@ const styles = StyleSheet.create({
     borderRadius: 8, borderWidth: 1, borderColor: "#cbd5e1", marginBottom: 8,
   },
   searchInput: { flex: 1, fontSize: 14, color: "#1e293b" },
-  categoryScroll: { maxHeight: 30, marginBottom: 8, width: "100%" },
-  categoryScrollContent: { gap: 6, alignItems: "center" },
+  categoryWrap: {
+    flexDirection: "row", flexWrap: "wrap", gap: 6,
+    width: "100%", maxWidth: 500, marginBottom: 8,
+  },
   categoryChip: {
     height: 22, justifyContent: "center", paddingHorizontal: 10, borderRadius: 4,
     backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#cbd5e1",
@@ -370,8 +357,6 @@ const styles = StyleSheet.create({
   categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 11, letterSpacing: 0.6 },
   tableHeaderRow: {
     flexDirection: "row", backgroundColor: "#f1f5f9",
-    // ✅ NEW — extra top/bottom padding creates visible gap between
-    // the navy category header above and this column-header row.
     borderBottomWidth: 1, borderBottomColor: "#cbd5e1", paddingVertical: 8, marginTop: 2,
   },
   leftHeaderGroup: { flexDirection: "row" },
@@ -393,8 +378,6 @@ const styles = StyleSheet.create({
   },
   inconsistencyText: { fontSize: 7, color: "#92400e", fontWeight: "700" },
   rightBatchRows: { flex: 1 },
-  // ✅ CHANGED — alignItems: "flex-start" (was "center") so
-  // multi-line Issue content doesn't push other columns off-center.
   batchRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: 2 },
   batchRowDivider: { borderBottomWidth: 1, borderBottomColor: "#cbd5e1" },
   tableCell: { fontSize: 9, color: "#334155", paddingHorizontal: 4 },
