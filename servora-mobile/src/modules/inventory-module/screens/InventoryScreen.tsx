@@ -5,22 +5,23 @@
 // ✅ UI/modal state → useInventoryScreenState.
 // ✅ Date navigation → useInventoryDateNavigation.
 // ✅ "New Supplier" detour timing/return → useSupplierDetourNavigation.
-// ✅ Two independent one-time signals for the New Supplier detour:
-//    requestAutoOpenSupplierForm (Inventory → Suppliers) and
-//    requestAutoOpenInventoryForm (Suppliers → Inventory, consumed
-//    here in useFocusEffect).
-// ✅ NEW — showFullScreenTable state + InventoryFullScreenTableModal,
-//    triggered from InventoryFilters' "Full Screen" button. Reuses
-//    InventoryTableView (not duplicated) with its own independent
-//    search/category state, letting the user browse the full item
-//    list without the header/stats taking up vertical space.
+// ✅ showFullScreenTable state + InventoryFullScreenTableModal.
 // ✅ All other modal/drawer rendering → InventoryModalsGroup.
 // ✅ handleSubmit branches on InventoryFormSubmitPayload's
 //    discriminated union: newItem/existingItem/edit — UNCHANGED.
+// ✅ NEW (Migration Step 4) — InventoryStats now renders above BOTH
+//    the Today table AND the Historical table. In Historical mode,
+//    stats are computed via useHistoricalInventoryStats() (from
+//    itemsWithHistoricalStock — the SAME data
+//    HistoricalInventoryTableView itself displays, fetched once here
+//    via useHistoricalInventory() and NOT duplicated inside that
+//    component) and passed to InventoryStats via the statsOverride
+//    prop, which renders those pre-computed stats display-only (no
+//    click-to-filter — Historical has no stock-status filter
+//    concept) and omits the Total Value card (no per-date unitCost
+//    tracking).
 // ✅ ARCHITECTURE NOTE — purchaseDate is currently set equal to
 //    receivedDate for the "existingItem" (Receive Batch) path.
-// ✅ InventoryTableView, useInventory, useAllInventoryBatches,
-//    HistoricalInventoryTableView are NOT modified.
 // FROZEN
 // ============================================
 
@@ -40,6 +41,8 @@ import { useInventoryDateNavigation } from "../hooks/useInventoryDateNavigation"
 import { useInventoryScreenState } from "../hooks/useInventoryScreenState";
 import { useSupplierDetourNavigation } from "../hooks/useSupplierDetourNavigation";
 import { useInventoryFormDraft } from "../context/InventoryFormDraftContext";
+import { useHistoricalInventory } from "../hooks/useHistoricalInventory";
+import { useHistoricalInventoryStats } from "../hooks/useHistoricalInventoryStats";
 import {
   updateInventoryItem, deleteInventoryItem,
 } from "../repository/inventory-repository";
@@ -59,9 +62,9 @@ import { InventoryFullScreenTableModal } from "../components/InventoryFullScreen
 const isWeb = Platform.OS === "web";
 
 export default function InventoryScreen() {
- const { restaurant, restaurantId, fmt, userProfile } = useApp();
+  const { restaurant, restaurantId, fmt, userProfile } = useApp();
   const actorName = userProfile?.name?.trim() || auth.currentUser?.email || "Inventory";
-  
+
   const canEditInventory = usePermission("edit_inventory");
   const { consumeAutoOpenInventoryForm } = useInventoryFormDraft();
 
@@ -78,10 +81,25 @@ export default function InventoryScreen() {
     goToPreviousDay, goToNextDay, isNextDisabled,
   } = useInventoryDateNavigation(today);
 
- const [historicalSearchQuery, setHistoricalSearchQuery] = React.useState("");
+  const [historicalSearchQuery, setHistoricalSearchQuery] = React.useState("");
   const [historicalCategoryId, setHistoricalCategoryId] = React.useState<string | null>(null);
   const [historicalSort, setHistoricalSort] = React.useState<"name-asc" | "stock-asc">("name-asc");
   const [showFullScreenTable, setShowFullScreenTable] = React.useState(false);
+
+  // ✅ NEW — fetched ONCE here (a SEPARATE onSnapshot subscription
+  // from the one HistoricalInventoryTableView creates internally via
+  // its own useHistoricalInventory() call) solely to compute the
+  // stats row above the table. Keeping HistoricalInventoryTableView
+  // self-contained (it still fetches its own data) avoids a
+  // prop-drilling refactor of that already-FROZEN component.
+  const { itemsWithHistoricalStock } = useHistoricalInventory(restaurantId, selectedDate, items);
+  const historicalStats = useHistoricalInventoryStats(
+    itemsWithHistoricalStock,
+    items,
+    categoryMap,
+    selectedDate,
+    restaurant?.defaultExpiryAlertDays
+  );
 
   const {
     filters, filteredItems,
@@ -244,7 +262,33 @@ export default function InventoryScreen() {
         </TouchableOpacity>
       </View>
 
-     {isHistorical ? (
+      {!loading && (
+        <View style={styles.statsSearchRow}>
+          <InventoryStats
+            items={items}
+            categoryMap={categoryMap}
+            todayISO={today}
+            restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
+            fmt={fmt}
+            activeStockStatus={filters.stockStatus}
+            onStatusPress={handleStatusPress}
+            statsOverride={isHistorical ? historicalStats : undefined}
+          />
+          {!isHistorical && (
+            <View style={styles.compactSearchRow}>
+              <MaterialIcons name="search" size={16} color="#94a3b8" />
+              <TextInput
+                style={styles.compactSearchInput}
+                value={filters.searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder="Search items..."
+              />
+            </View>
+          )}
+        </View>
+      )}
+
+      {isHistorical ? (
         <HistoricalInventoryTableView
           restaurantId={safeRestaurantId}
           selectedDate={selectedDate}
@@ -261,29 +305,6 @@ export default function InventoryScreen() {
         />
       ) : (
         <>
-          {!loading && (
-            <View style={styles.statsSearchRow}>
-              <InventoryStats
-                items={items}
-                categoryMap={categoryMap}
-                todayISO={today}
-                restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
-                fmt={fmt}
-                activeStockStatus={filters.stockStatus}
-                onStatusPress={handleStatusPress}
-              />
-              <View style={styles.compactSearchRow}>
-                <MaterialIcons name="search" size={16} color="#94a3b8" />
-                <TextInput
-                  style={styles.compactSearchInput}
-                  value={filters.searchQuery}
-                  onChangeText={setSearchQuery}
-                  placeholder="Search items..."
-                />
-              </View>
-            </View>
-          )}
-
           <InventoryFilters
             filters={filters}
             categories={categories}

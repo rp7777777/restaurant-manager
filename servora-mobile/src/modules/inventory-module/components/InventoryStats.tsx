@@ -1,12 +1,25 @@
 // ============================================
 // SERVORA ERP — InventoryStats Component
-// ✅ Simple on-demand aggregation.
+// ✅ Simple on-demand aggregation from live InventoryItem[].
 // ✅ Low Stock/Out of Stock mutually exclusive.
-// ✅ FIX — added activeStockStatus prop so the currently-selected
-//    filter's card is visually highlighted (colored border +
-//    tinted background matching that stat's own color) — previously
-//    tapping a card applied the filter but gave no lasting visual
-//    feedback that it was active, only a brief press-opacity flash.
+// ✅ activeStockStatus prop highlights the currently-selected
+//    filter's card.
+// ✅ statsOverride prop — when provided (Historical mode, via
+//    useHistoricalInventoryStats), this component renders those
+//    pre-computed stats INSTEAD of calculating from `items`/
+//    `categoryMap`. "Total Value" card is OMITTED when statsOverride
+//    is provided — Historical has no per-date unitCost tracking.
+//    `items`/`categoryMap`/`todayISO`/
+//    `restaurantDefaultExpiryAlertDays` remain REQUIRED props even
+//    in override mode; simply unused when statsOverride is present.
+// ✅ FIX — Historical mode cards are DISPLAY-ONLY: no onPress, no
+//    active-state highlight, disabled=true. Historical view has no
+//    stock-status filter concept (that only exists on the Live/Today
+//    table) — clicking a card in Historical mode would either silently
+//    no-op or, worse, could leave a card looking "stuck active" if
+//    activeStockStatus (still driven by the Live filter state)
+//    happened to match one of the historical values. Display-only is
+//    the correct behavior here, not a workaround.
 // FROZEN
 // ============================================
 
@@ -20,6 +33,7 @@ import {
 } from "../types/inventory";
 import { Category } from "../types/category";
 import { InventoryStockStatus } from "../hooks/useInventoryFilters";
+import { HistoricalInventoryStats } from "../hooks/useHistoricalInventoryStats";
 
 interface InventoryStatsProps {
   items:                            InventoryItem[];
@@ -29,6 +43,7 @@ interface InventoryStatsProps {
   fmt:                              (value: number) => string;
   activeStockStatus:                InventoryStockStatus;
   onStatusPress:                    (status: InventoryStockStatus) => void;
+  statsOverride?:                   HistoricalInventoryStats;
 }
 
 interface StatItem {
@@ -41,9 +56,12 @@ interface StatItem {
 }
 
 export function InventoryStats({
-  items, categoryMap, todayISO, restaurantDefaultExpiryAlertDays, fmt, activeStockStatus, onStatusPress,
+  items, categoryMap, todayISO, restaurantDefaultExpiryAlertDays, fmt,
+  activeStockStatus, onStatusPress, statsOverride,
 }: InventoryStatsProps) {
-  const stats = useMemo(() => {
+  const isHistoricalMode = !!statsOverride;
+
+  const liveStats = useMemo(() => {
     let totalValue   = 0;
     let lowStock      = 0;
     let outOfStock    = 0;
@@ -79,9 +97,15 @@ export function InventoryStats({
     };
   }, [items, categoryMap, todayISO, restaurantDefaultExpiryAlertDays]);
 
+  const stats = statsOverride
+    ? { ...statsOverride, totalValue: null as number | null }
+    : { ...liveStats, totalValue: liveStats.totalValue as number | null };
+
   const statList: StatItem[] = [
     { key: "total",    icon: "inventory-2",   label: "Total Items",  value: String(stats.totalItems),      color: "#1e293b", status: "all" },
-    { key: "value",    icon: "attach-money",  label: "Total Value",  value: fmt(stats.totalValue),         color: "#0369a1", status: "all" },
+    ...(stats.totalValue !== null
+      ? [{ key: "value", icon: "attach-money" as const, label: "Total Value", value: fmt(stats.totalValue), color: "#0369a1", status: "all" as const }]
+      : []),
     { key: "low",      icon: "trending-down", label: "Low Stock",    value: String(stats.lowStock),        color: "#d97706", status: "lowStock" },
     { key: "out",      icon: "remove-shopping-cart", label: "Out of Stock", value: String(stats.outOfStock), color: "#dc2626", status: "outOfStock" },
     { key: "expiring", icon: "schedule",      label: "Expiring Soon", value: String(stats.expiringSoon),   color: "#7c3aed", status: "expiringSoon" },
@@ -95,14 +119,7 @@ export function InventoryStats({
       contentContainerStyle={styles.row}
     >
       {statList.map((stat) => {
-        // ✅ FIX — "all" status cards (Total Items, Total Value) now
-        // also highlight when active, matching the confirmed request
-        // that every card give visual feedback when tapped —
-        // previously these two were deliberately excluded since "all"
-        // isn't a "real" filter in the same sense as
-        // lowStock/outOfStock/expiringSoon, but visual consistency
-        // across all 5 cards was confirmed to matter more here.
-        const isActive = activeStockStatus === stat.status;
+        const isActive = !isHistoricalMode && activeStockStatus === stat.status;
         return (
           <TouchableOpacity
             key={stat.key}
@@ -110,8 +127,9 @@ export function InventoryStats({
               styles.card,
               isActive && { borderColor: stat.color, borderWidth: 2, backgroundColor: `${stat.color}18` },
             ]}
-            onPress={() => onStatusPress(stat.status)}
-            activeOpacity={0.7}
+            onPress={isHistoricalMode ? undefined : () => onStatusPress(stat.status)}
+            disabled={isHistoricalMode}
+            activeOpacity={isHistoricalMode ? 1 : 0.7}
           >
             <MaterialIcons name={stat.icon} size={13} color={stat.color} />
             <Text style={[styles.value, { color: stat.color }]}>{stat.value}</Text>
