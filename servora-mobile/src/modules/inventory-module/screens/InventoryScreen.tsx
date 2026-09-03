@@ -82,7 +82,7 @@ export default function InventoryScreen() {
   const [historicalCategoryId, setHistoricalCategoryId] = React.useState<string | null>(null);
   const [historicalSort, setHistoricalSort] = React.useState<"name-asc" | "stock-asc">("name-asc");
   const [showFullScreenTable, setShowFullScreenTable] = React.useState(false);
-  
+
   const {
     filters, filteredItems,
     setSearchQuery, setCategoryId, setStockStatus, setSort,
@@ -257,6 +257,7 @@ export default function InventoryScreen() {
           onItemPress={openDrawer}
           sort={historicalSort}
           setSort={setHistoricalSort}
+          isHistorical={isHistorical}
         />
       ) : (
         <>
@@ -346,9 +347,11 @@ export default function InventoryScreen() {
       <InventoryFullScreenTableModal
         visible={showFullScreenTable}
         onClose={() => setShowFullScreenTable(false)}
+        restaurantId={safeRestaurantId}
         items={items}
         categories={categories}
-        batches={allBatches}
+        initialDate={selectedDate}
+        today={today}
         onItemPress={openDrawer}
       />
     </View>

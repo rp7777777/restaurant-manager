@@ -2,13 +2,19 @@
 // SERVORA ERP — HistoricalInventoryTableView Component
 // ✅ Migration Step 1 — onItemPress (real InventoryItem lookup).
 // ✅ Migration Step 2 — sort (Name/Stock).
-// ✅ DESIGN — professional/corporate visual pass.
+// ✅ NEW — isHistorical prop: dynamic theme. When false (viewing
+//    today), adopts the SAME colors as Live InventoryTableView.tsx
+//    (green category headers, purple Batch QTY, green Total QTY,
+//    dark-slate active chips). When true (viewing a past date),
+//    uses the navy/slate Historical theme. This is a color-only
+//    switch — data/logic/layout are completely unaffected — applied
+//    here (rather than switching table components) so Full Screen
+//    always retains the date navigator and full Historical feature
+//    set regardless of which date it's currently on.
 // ✅ Multi-line Issue column (>2 entries -> one per line, dynamic
 //    row height).
-// ✅ FIX — category chips now WRAP (flexWrap) instead of horizontal-
-//    scrolling in a single line, matching InventoryFilters.tsx's own
-//    fix — all categories visible at once, no hidden/scroll-required
-//    chips.
+// ✅ Category chips wrap (flexWrap, full width) instead of
+//    horizontal-scrolling.
 // FROZEN
 // ============================================
 
@@ -33,6 +39,7 @@ interface HistoricalInventoryTableViewProps {
   onItemPress:    (item: InventoryItem) => void;
   sort:           HistoricalSortOption;
   setSort:        (s: HistoricalSortOption) => void;
+  isHistorical:   boolean;
 }
 
 interface HistoricalCategoryGroup {
@@ -60,8 +67,13 @@ function getBatchRowHeight(issueCount: number): number {
 export function HistoricalInventoryTableView({
   restaurantId, selectedDate, categories, inventoryItems,
   searchQuery, setSearchQuery, categoryId, setCategoryId,
-  onItemPress, sort, setSort,
+  onItemPress, sort, setSort, isHistorical,
 }: HistoricalInventoryTableViewProps) {
+  // ✅ NEW — dynamic theme colors.
+  const theme = isHistorical
+    ? { headerBg: "#1e3a5f", batchQty: "#1e3a5f", total: "#1e3a5f", chipActive: "#1e3a5f" }
+    : { headerBg: "#059669", batchQty: "#6d28d9", total: "#059669", chipActive: "#1e293b" };
+
   const { itemsWithHistoricalStock, loading, error } =
     useHistoricalInventory(restaurantId, selectedDate, inventoryItems);
 
@@ -121,7 +133,7 @@ export function HistoricalInventoryTableView({
   }, [filteredItems, categories, sort]);
 
   if (loading) {
-    return <ActivityIndicator size="large" color="#1e3a5f" style={styles.loadingIndicator} />;
+    return <ActivityIndicator size="large" color={theme.headerBg} style={styles.loadingIndicator} />;
   }
 
   return (
@@ -140,7 +152,10 @@ export function HistoricalInventoryTableView({
       {categories.length > 0 && (
         <View style={styles.categoryWrap}>
           <TouchableOpacity
-            style={[styles.categoryChip, categoryId === null && styles.categoryChipActive]}
+            style={[
+              styles.categoryChip,
+              categoryId === null && { backgroundColor: theme.chipActive, borderColor: theme.chipActive },
+            ]}
             onPress={() => setCategoryId(null)}
           >
             <Text style={[styles.categoryChipText, categoryId === null && styles.categoryChipTextActive]}>
@@ -150,7 +165,10 @@ export function HistoricalInventoryTableView({
           {categories.map((cat) => (
             <TouchableOpacity
               key={cat.id}
-              style={[styles.categoryChip, categoryId === cat.id && styles.categoryChipActive]}
+              style={[
+                styles.categoryChip,
+                categoryId === cat.id && { backgroundColor: theme.chipActive, borderColor: theme.chipActive },
+              ]}
               onPress={() => setCategoryId(cat.id)}
             >
               <Text style={[styles.categoryChipText, categoryId === cat.id && styles.categoryChipTextActive]}>
@@ -164,14 +182,14 @@ export function HistoricalInventoryTableView({
       <View style={styles.sortRow}>
         <Text style={styles.sortLabel}>Sort:</Text>
         <TouchableOpacity
-          style={[styles.sortChip, sort === "name-asc" && styles.sortChipActive]}
+          style={[styles.sortChip, sort === "name-asc" && { backgroundColor: theme.chipActive, borderColor: theme.chipActive }]}
           onPress={() => setSort("name-asc")}
         >
           <MaterialIcons name="sort-by-alpha" size={13} color={sort === "name-asc" ? "#fff" : "#64748b"} />
           <Text style={[styles.sortChipText, sort === "name-asc" && styles.sortChipTextActive]}>Name</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.sortChip, sort === "stock-asc" && styles.sortChipActive]}
+          style={[styles.sortChip, sort === "stock-asc" && { backgroundColor: theme.chipActive, borderColor: theme.chipActive }]}
           onPress={() => setSort("stock-asc")}
         >
           <MaterialIcons name="trending-up" size={13} color={sort === "stock-asc" ? "#fff" : "#64748b"} />
@@ -199,7 +217,7 @@ export function HistoricalInventoryTableView({
               style={styles.horizontalScroll}
             >
               <View style={{ width: TABLE_WIDTH }}>
-                <View style={styles.categoryHeader}>
+                <View style={[styles.categoryHeader, { backgroundColor: theme.headerBg }]}>
                   <Text style={styles.categoryHeaderText}>
                     {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
                   </Text>
@@ -284,10 +302,10 @@ export function HistoricalInventoryTableView({
                                   </Text>
                                 )}
                               </View>
-                              <Text style={[styles.tableCell, styles.numericCell, styles.batchQtyCell, { width: RIGHT_COLS.stock }]}>{batch.quantity}</Text>
+                              <Text style={[styles.tableCell, styles.numericCell, styles.batchQtyCell, { width: RIGHT_COLS.stock, color: theme.batchQty }]}>{batch.quantity}</Text>
                               <Text style={[styles.tableCell, { width: RIGHT_COLS.unit }]}>{batch.unit}</Text>
                               <Text style={[styles.tableCell, { width: RIGHT_COLS.expiry }]}>{batch.expiryDate ?? "—"}</Text>
-                              <Text style={[styles.tableCell, styles.numericCell, styles.totalCell, { width: RIGHT_COLS.total }]}>
+                              <Text style={[styles.tableCell, styles.numericCell, styles.totalCell, { width: RIGHT_COLS.total, color: theme.total }]}>
                                 {batchIndex === 0 ? String(item.historicalStock) : ""}
                               </Text>
                             </View>
@@ -324,7 +342,6 @@ const styles = StyleSheet.create({
     height: 22, justifyContent: "center", paddingHorizontal: 10, borderRadius: 4,
     backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#cbd5e1",
   },
-  categoryChipActive: { backgroundColor: "#1e3a5f", borderColor: "#1e3a5f" },
   categoryChipText: { fontSize: 10, fontWeight: "600", color: "#475569" },
   categoryChipTextActive: { color: "#fff" },
   sortRow: {
@@ -337,7 +354,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 5, borderRadius: 4,
     backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#cbd5e1",
   },
-  sortChipActive: { backgroundColor: "#1e3a5f", borderColor: "#1e3a5f" },
   sortChipText: { fontSize: 11, fontWeight: "700", color: "#64748b" },
   sortChipTextActive: { color: "#fff" },
   errorBanner: {
@@ -353,7 +369,7 @@ const styles = StyleSheet.create({
   horizontalScroll: {
     ...(Platform.OS === "web" ? ({ scrollbarWidth: "thin" } as any) : {}),
   },
-  categoryHeader: { backgroundColor: "#1e3a5f", paddingVertical: 7, paddingHorizontal: 10 },
+  categoryHeader: { paddingVertical: 7, paddingHorizontal: 10 },
   categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 11, letterSpacing: 0.6 },
   tableHeaderRow: {
     flexDirection: "row", backgroundColor: "#f1f5f9",
@@ -384,6 +400,6 @@ const styles = StyleSheet.create({
   numericCell: { textAlign: "right" },
   issueCell: { color: "#b91c1c", fontWeight: "600" },
   issueMultiLine: { marginBottom: 1 },
-  batchQtyCell: { fontWeight: "800", color: "#1e3a5f", fontSize: 10, paddingRight: 6 },
-  totalCell: { fontWeight: "800", color: "#1e3a5f", fontSize: 10, paddingRight: 6 },
+  batchQtyCell: { fontWeight: "800", fontSize: 10, paddingRight: 6 },
+  totalCell: { fontWeight: "800", fontSize: 10, paddingRight: 6 },
 });
