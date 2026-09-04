@@ -2,19 +2,23 @@
 // SERVORA ERP — HistoricalInventoryTableView Component
 // ✅ Migration Step 1 — onItemPress (real InventoryItem lookup).
 // ✅ Migration Step 2 — sort (Name/Stock).
-// ✅ NEW — isHistorical prop: dynamic theme. When false (viewing
-//    today), adopts the SAME colors as Live InventoryTableView.tsx
-//    (green category headers, purple Batch QTY, green Total QTY,
-//    dark-slate active chips). When true (viewing a past date),
-//    uses the navy/slate Historical theme. This is a color-only
-//    switch — data/logic/layout are completely unaffected — applied
-//    here (rather than switching table components) so Full Screen
-//    always retains the date navigator and full Historical feature
-//    set regardless of which date it's currently on.
+// ✅ Migration Step 3 — isHistorical prop for dynamic theming.
+// ✅ NEW — "Received Qty" column. Shows batch.originalQuantity ONLY
+//    when batch.receivedDate === selectedDate (i.e. this batch was
+//    ACTUALLY received on the date being viewed) — otherwise shows
+//    "—". This is DELIBERATELY separate from "Lot/Batch QTY"
+//    (closing quantity): originalQuantity is a historical fact fixed
+//    at receipt time, closing quantity is a point-in-time snapshot
+//    that decreases as movements are replayed — conflating the two
+//    would lose "how much was originally received" information the
+//    moment any issue/waste touched the batch.
+// ✅ onOpenFullScreen — optional "Full Screen" button in the sort
+//    row (omitted when this component renders INSIDE
+//    InventoryFullScreenTableModal itself).
 // ✅ Multi-line Issue column (>2 entries -> one per line, dynamic
 //    row height).
-// ✅ Category chips wrap (flexWrap, full width) instead of
-//    horizontal-scrolling.
+// ✅ Category chips AND sort/full-screen row both use full page
+//    width (no maxWidth constraint).
 // FROZEN
 // ============================================
 
@@ -40,6 +44,7 @@ interface HistoricalInventoryTableViewProps {
   sort:           HistoricalSortOption;
   setSort:        (s: HistoricalSortOption) => void;
   isHistorical:   boolean;
+  onOpenFullScreen?: () => void;
 }
 
 interface HistoricalCategoryGroup {
@@ -51,10 +56,12 @@ interface HistoricalCategoryGroup {
 
 const ROW_HEIGHT = 26;
 const LEFT_COLS = { sn: 40, item: 170 };
-const RIGHT_COLS = { date: 90, batch: 110, issue: 160, stock: 90, unit: 70, expiry: 90, total: 122 };
+// ✅ NEW — "receivedQty" column added between "batch" (Lot/Batch No.)
+// and "issue".
+const RIGHT_COLS = { date: 90, batch: 110, receivedQty: 76, issue: 160, stock: 90, unit: 70, expiry: 90, total: 122 };
 const LEFT_WIDTH = LEFT_COLS.sn + LEFT_COLS.item;
 const RIGHT_WIDTH =
-  RIGHT_COLS.date + RIGHT_COLS.batch + RIGHT_COLS.issue + RIGHT_COLS.stock +
+  RIGHT_COLS.date + RIGHT_COLS.batch + RIGHT_COLS.receivedQty + RIGHT_COLS.issue + RIGHT_COLS.stock +
   RIGHT_COLS.unit + RIGHT_COLS.expiry + RIGHT_COLS.total;
 const TABLE_WIDTH = LEFT_WIDTH + RIGHT_WIDTH;
 
@@ -67,9 +74,8 @@ function getBatchRowHeight(issueCount: number): number {
 export function HistoricalInventoryTableView({
   restaurantId, selectedDate, categories, inventoryItems,
   searchQuery, setSearchQuery, categoryId, setCategoryId,
-  onItemPress, sort, setSort, isHistorical,
+  onItemPress, sort, setSort, isHistorical, onOpenFullScreen,
 }: HistoricalInventoryTableViewProps) {
-  // ✅ NEW — dynamic theme colors.
   const theme = isHistorical
     ? { headerBg: "#1e3a5f", batchQty: "#1e3a5f", total: "#1e3a5f", chipActive: "#1e3a5f" }
     : { headerBg: "#059669", batchQty: "#6d28d9", total: "#059669", chipActive: "#1e293b" };
@@ -144,7 +150,7 @@ export function HistoricalInventoryTableView({
           style={styles.searchInput}
           value={searchQuery}
           onChangeText={setSearchQuery}
-          placeholder="Search historical items..."
+          placeholder="Search items..."
           placeholderTextColor="#94a3b8"
         />
       </View>
@@ -195,6 +201,12 @@ export function HistoricalInventoryTableView({
           <MaterialIcons name="trending-up" size={13} color={sort === "stock-asc" ? "#fff" : "#64748b"} />
           <Text style={[styles.sortChipText, sort === "stock-asc" && styles.sortChipTextActive]}>Stock</Text>
         </TouchableOpacity>
+        {onOpenFullScreen && (
+          <TouchableOpacity style={styles.fullScreenBtn} onPress={onOpenFullScreen}>
+            <MaterialIcons name="fullscreen" size={14} color="#fff" />
+            <Text style={styles.fullScreenBtnText}>Full Screen</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {error && (
@@ -231,6 +243,7 @@ export function HistoricalInventoryTableView({
                   <View style={styles.rightHeaderGroup}>
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.date }]}>Received</Text>
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
+                    <Text style={[styles.tableHeaderCell, styles.tableHeaderCellRight, { width: RIGHT_COLS.receivedQty }]}>Received Qty</Text>
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.issue }]}>Issue</Text>
                     <Text style={[styles.tableHeaderCell, styles.tableHeaderCellRight, { width: RIGHT_COLS.stock }]}>Lot/Batch QTY</Text>
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
@@ -275,6 +288,10 @@ export function HistoricalInventoryTableView({
                         {item.batches.map((batch, batchIndex) => {
                           const useMultiLineIssue = batch.issues.length > 2;
                           const batchRowHeight = getBatchRowHeight(batch.issues.length);
+                          // ✅ NEW — only show originalQuantity when
+                          // this batch was ACTUALLY received on the
+                          // date being viewed; otherwise "—".
+                          const wasReceivedToday = batch.receivedDate === selectedDate;
 
                           return (
                             <View
@@ -287,6 +304,9 @@ export function HistoricalInventoryTableView({
                             >
                               <Text style={[styles.tableCell, { width: RIGHT_COLS.date }]}>{batch.receivedDate}</Text>
                               <Text style={[styles.tableCell, { width: RIGHT_COLS.batch }]} numberOfLines={1}>{batch.batchNo}</Text>
+                              <Text style={[styles.tableCell, styles.numericCell, styles.receivedQtyCell, { width: RIGHT_COLS.receivedQty }]}>
+                                {wasReceivedToday ? String(batch.originalQuantity) : "—"}
+                              </Text>
                               <View style={{ width: RIGHT_COLS.issue }}>
                                 {batch.issues.length === 0 ? (
                                   <Text style={[styles.tableCell, styles.issueCell]}>—</Text>
@@ -346,7 +366,7 @@ const styles = StyleSheet.create({
   categoryChipTextActive: { color: "#fff" },
   sortRow: {
     flexDirection: "row", alignItems: "center", gap: 6,
-    width: "100%", maxWidth: 500, marginBottom: 10,
+    width: "100%", marginBottom: 10,
   },
   sortLabel: { fontSize: 11, fontWeight: "700", color: "#94a3b8", marginRight: 2 },
   sortChip: {
@@ -356,6 +376,12 @@ const styles = StyleSheet.create({
   },
   sortChipText: { fontSize: 11, fontWeight: "700", color: "#64748b" },
   sortChipTextActive: { color: "#fff" },
+  fullScreenBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 4,
+    backgroundColor: "#0369a1", marginLeft: "auto",
+  },
+  fullScreenBtnText: { fontSize: 11, fontWeight: "700", color: "#fff" },
   errorBanner: {
     backgroundColor: "#fef2f2", padding: 10, borderRadius: 6, marginBottom: 10, width: "100%", maxWidth: 500,
     borderWidth: 1, borderColor: "#fecaca",
@@ -398,6 +424,7 @@ const styles = StyleSheet.create({
   batchRowDivider: { borderBottomWidth: 1, borderBottomColor: "#cbd5e1" },
   tableCell: { fontSize: 9, color: "#334155", paddingHorizontal: 4 },
   numericCell: { textAlign: "right" },
+  receivedQtyCell: { color: "#475569", fontWeight: "700" },
   issueCell: { color: "#b91c1c", fontWeight: "600" },
   issueMultiLine: { marginBottom: 1 },
   batchQtyCell: { fontWeight: "800", fontSize: 10, paddingRight: 6 },
