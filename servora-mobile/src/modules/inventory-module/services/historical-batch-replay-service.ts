@@ -1,35 +1,44 @@
 // ============================================
 // SERVORA ERP — Historical Batch Replay Service
 // ✅ PURE FUNCTION — no Firestore calls, no React, no side effects.
-// ✅ CONFIRMED FINAL REPLAY RULES:
-//    - "quantity" (Batch QTY / Lot/Batch QTY) is the CLOSING quantity
-//      as of selectedDate — movements dated selectedDate OR EARLIER
-//      (inclusive) are applied.
-//    - depletedDate detected within the SAME replay loop as quantity.
-//      A batch depleted ON selectedDate is still VISIBLE that day
-//      (quantity=0); hidden only starting the day AFTER depletedDate.
-//    - originalQuantity is EXPOSED on the returned state (previously
-//      internal-only) — this is the batch's RECEIPT quantity, fixed
-//      at creation time, and NEVER changes based on selectedDate.
-//      Callers (e.g. the "Received Qty" column in
-//      HistoricalInventoryTableView.tsx) use this alongside
-//      receivedDate to show "how much came in" ONLY on the date it
-//      was actually received — originalQuantity is a historical
-//      fact, quantity is a point-in-time snapshot; they answer
-//      different questions and must never be confused with each
-//      other (batch.quantity alone cannot answer "how much was
-//      originally received," since it decreases as movements are
-//      replayed).
+// ✅ CONFIRMED FINAL SEMANTICS —
+//    - "quantity" (Lot/Batch QTY, per-row) is the OPENING quantity
+//      for selectedDate: movements dated STRICTLY BEFORE selectedDate
+//      are applied (`dateKey >= selectedDate` breaks the loop,
+//      excluding that day's own movements). This is what each
+//      batch's individual row displays.
+//    - Total QTY (item-level, computed in useHistoricalInventory.ts,
+//      NOT here) is the CLOSING quantity — opening minus that same
+//      date's own real deductions, computed separately using the
+//      SAME isRealStockDeduction() rule and toJsDate()/toDateKey()
+//      helpers exported below.
+//    - depletedDate is detected within the replay loop as before, but
+//      since same-date movements are now excluded from replay, a
+//      batch that becomes fully depleted ON selectedDate itself will
+//      NOT have depletedDate set to selectedDate by this function —
+//      that is expected and correct under opening-quantity semantics:
+//      this function no longer controls same-day visibility the way
+//      it did under the earlier (now reverted) closing-quantity
+//      design. Visibility (`visible`) still correctly reflects
+//      whether the batch had already been fully depleted on some
+//      PRIOR date, per this same opening-quantity replay.
 // ✅ CRITICAL — relevantMovements filters to an explicit
 //    DEDUCTING_MOVEMENT_TYPES allowlist (KITCHEN_ISSUE, WASTE,
 //    TRANSFER_OUT) BEFORE checking batchAllocations.
-// ✅ isRealStockDeduction(): excludes DATA_CORRECTION-tagged
-//    TRANSFER_OUT (moveBatchToItem()) from being treated as a real
-//    stock deduction/issue.
+// ✅ isRealStockDeduction() — EXPORTED (was private) so
+//    useHistoricalInventory.ts can reuse the EXACT SAME deduction
+//    rule when computing each batch's same-date closing quantity —
+//    never re-derived or duplicated.
+// ✅ toJsDate()/toDateKey() — EXPORTED (were private) for the same
+//    reason: useHistoricalInventory.ts needs identical date-parsing
+//    behavior (Firestore Timestamp vs JS Date, local-timezone date
+//    key) when checking "did this movement happen on selectedDate."
+// ✅ originalQuantity is EXPOSED on the returned state — the batch's
+//    original receipt quantity, fixed at creation, independent of
+//    selectedDate. Used by the "Received Qty" column (shown only
+//    when receivedDate === selectedDate).
 // ✅ SAFETY — quantity is NEVER allowed to go negative. Malformed
 //    allocation quantities are caught and flagged inconsistent.
-// ✅ Local-timezone date key. Firestore Timestamp vs JS Date handled
-//    via toJsDate().
 // FROZEN
 // ============================================
 
@@ -43,16 +52,14 @@ export interface HistoricalBatchState {
   unit:             string;
   receivedDate:     string;    // YYYY-MM-DD
   expiryDate:       string | null;
-  // ✅ NEW — exposed. The batch's original receipt quantity, fixed
-  // at creation, independent of selectedDate.
   originalQuantity: number;
-  quantity:         number;    // CLOSING quantity as of selectedDate
+  quantity:         number;    // OPENING quantity as of selectedDate
   visible:          boolean;
   depletedDate:     string | null;
   inconsistent:     boolean;
 }
 
-function toJsDate(value: unknown): Date | null {
+export function toJsDate(value: unknown): Date | null {
   if (!value) return null;
   const anyVal = value as any;
   if (typeof anyVal.toDate === "function") return anyVal.toDate();
@@ -60,7 +67,7 @@ function toJsDate(value: unknown): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-function toDateKey(date: Date): string {
+export function toDateKey(date: Date): string {
   const yyyy = date.getFullYear();
   const mm = String(date.getMonth() + 1).padStart(2, "0");
   const dd = String(date.getDate()).padStart(2, "0");
@@ -69,7 +76,7 @@ function toDateKey(date: Date): string {
 
 const DEDUCTING_MOVEMENT_TYPES = new Set(["KITCHEN_ISSUE", "WASTE", "TRANSFER_OUT"]);
 
-function isRealStockDeduction(movement: StockMovement): boolean {
+export function isRealStockDeduction(movement: StockMovement): boolean {
   if (!DEDUCTING_MOVEMENT_TYPES.has(movement.movementType)) return false;
   if (movement.movementType === "TRANSFER_OUT" && movement.reasonCategory === "DATA_CORRECTION") {
     return false;
@@ -110,8 +117,12 @@ export function replayBatchAsOfDate(
   let depletedDate: string | null = null;
   let inconsistent = false;
 
+  // ✅ CONFIRMED FINAL SEMANTICS — opening quantity: excludes
+  // selectedDate's own movements (`dateKey >= selectedDate` breaks).
+  // See FROZEN header for the full rationale and for how Total QTY
+  // (closing) is computed separately in useHistoricalInventory.ts.
   for (const { dateKey, movement } of relevantMovements) {
-    if (dateKey > selectedDate) break;
+    if (dateKey >= selectedDate) break;
 
     const allocation = (movement.batchAllocations ?? []).find((a) => a.batchId === batch.id);
     if (!allocation) continue;

@@ -9,29 +9,23 @@
 // ✅ Archived items never excluded from historical results.
 // ✅ CONFIRMED ARCHITECTURE — Option A: full movement history loaded
 //    ONCE via a single live subscription, kept in memory.
-// ⚠️ KNOWN SCALING LIMIT (intentionally deferred).
-// ✅ For selectedDate === today, replayed result is EXPECTED (not
-//    guaranteed) to match InventoryItem.currentStock.
-// ✅ HistoricalBatchWithIssues extends HistoricalBatchState with an
-//    `issues` field (HistoricalIssueEntry[]), computed via
-//    getIssuesForDate() (historical-batch-replay-service.ts) —
-//    composed here using the SAME movements array already loaded for
-//    replay, no additional Firestore query, pre-grouped by batchId
-//    for O(n) performance instead of re-scanning per batch.
-// ✅ FIX — historicalStock (Total QTY) now sums state.quantity
-//    DIRECTLY, with NO further subtraction of that day's issues.
-//    replayBatchAsOfDate() was updated (CONFIRMED FINAL semantics)
-//    to return the CLOSING quantity as of selectedDate — i.e.
-//    state.quantity ALREADY reflects that day's own deductions. The
-//    previous version here additionally subtracted
-//    state.issues.reduce(...) from state.quantity, which was correct
-//    ONLY under the prior "opening quantity" semantics — under the
-//    new closing semantics, that same subtraction double-deducts the
-//    day's issues (once inside replayBatchAsOfDate(), a second time
-//    here). Lot/Batch QTY (per-row) and Total QTY (item-level) are
-//    now the SAME closing-quantity concept, just at different
-//    granularities (per-batch vs summed-per-item) — no longer two
-//    deliberately different figures.
+// ✅ CONFIRMED FINAL SEMANTICS —
+//    - HistoricalBatchState.quantity (from replayBatchAsOfDate) =
+//      OPENING quantity for selectedDate (movements dated STRICTLY
+//      BEFORE selectedDate applied). This is what "Lot/Batch QTY"
+//      displays per-row.
+//    - HistoricalItemStock.historicalStock (Total QTY, item-level) =
+//      CLOSING quantity — computed HERE by further subtracting each
+//      batch's OWN same-date real deductions from its opening value,
+//      using the EXACT SAME isRealStockDeduction() rule
+//      (historical-batch-replay-service.ts) and toDateKey()/
+//      toJsDate() date-parsing helpers as the replay service and
+//      getIssuesForDate() — never re-derived from the Issue column's
+//      formatted display strings, which are presentation output, not
+//      a calculation source.
+//    - batchStates and closingQuantityByBatchId are computed in ONE
+//      useMemo, sharing the SAME pre-grouped movementsByBatchId map
+//      (built once) — no duplicate O(movements) scan per batch.
 // FROZEN
 // ============================================
 
@@ -44,7 +38,8 @@ import { InventoryBatch } from "../types/inventory-batch";
 import { InventoryItem } from "../types/inventory";
 import { useAllInventoryBatches } from "./useAllInventoryBatches";
 import {
-  replayBatchesAsOfDate, getIssuesForDate,
+  replayBatchesAsOfDate, getIssuesForDate, isRealStockDeduction,
+  toJsDate, toDateKey,
   HistoricalBatchState, HistoricalIssueEntry,
 } from "../services/historical-batch-replay-service";
 
@@ -110,7 +105,11 @@ export function useHistoricalInventory(
     return unsubscribe;
   }, [restaurantId]);
 
-  const batchStates = useMemo<HistoricalBatchWithIssues[]>(() => {
+  // ✅ batchStates (opening quantity, per replayBatchAsOfDate) and
+  // closingQuantityByBatchId (opening minus THIS DATE's own real
+  // deductions) computed together, sharing one pre-grouped
+  // movementsByBatchId map.
+  const { batchStates, closingQuantityByBatchId } = useMemo(() => {
     const movementsByBatchId = new Map<string, StockMovement[]>();
     for (const movement of movements) {
       for (const allocation of movement.batchAllocations ?? []) {
@@ -121,7 +120,8 @@ export function useHistoricalInventory(
     }
 
     const replayed = replayBatchesAsOfDate(batches, movements, selectedDate);
-    return replayed.map((state) => ({
+
+    const states: HistoricalBatchWithIssues[] = replayed.map((state) => ({
       ...state,
       issues: getIssuesForDate(
         state.batchId,
@@ -129,6 +129,29 @@ export function useHistoricalInventory(
         selectedDate
       ),
     }));
+
+    const closingMap = new Map<string, number>();
+    for (const state of states) {
+      const batchMovements = movementsByBatchId.get(state.batchId) ?? [];
+      let sameDayDeductedQty = 0;
+
+      for (const movement of batchMovements) {
+        if (!isRealStockDeduction(movement)) continue;
+
+        const jsDate = toJsDate(movement.createdAt);
+        if (!jsDate) continue;
+        if (toDateKey(jsDate) !== selectedDate) continue;
+
+        const allocation = (movement.batchAllocations ?? []).find((a) => a.batchId === state.batchId);
+        if (allocation && Number.isFinite(allocation.quantity) && allocation.quantity > 0) {
+          sameDayDeductedQty += allocation.quantity;
+        }
+      }
+
+      closingMap.set(state.batchId, Math.max(0, state.quantity - sameDayDeductedQty));
+    }
+
+    return { batchStates: states, closingQuantityByBatchId: closingMap };
   }, [batches, movements, selectedDate]);
 
   const itemsWithHistoricalStock = useMemo(() => {
@@ -160,9 +183,8 @@ export function useHistoricalInventory(
       if (state.inconsistent) entry.hasInconsistency = true;
 
       if (state.visible) {
-        // ✅ FIX — state.quantity is already the CLOSING quantity.
-        // No further subtraction of that day's issues here.
-        entry.historicalStock += state.quantity;
+        const closingQuantity = closingQuantityByBatchId.get(state.batchId) ?? state.quantity;
+        entry.historicalStock += closingQuantity;
         entry.batches.push(state);
       }
 
@@ -170,7 +192,7 @@ export function useHistoricalInventory(
     }
 
     return Array.from(byItem.values()).filter((item) => item.batches.length > 0);
-  }, [batchStates, batches, inventoryItems]);
+  }, [batchStates, batches, inventoryItems, closingQuantityByBatchId]);
 
   return {
     batchStates,
