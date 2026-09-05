@@ -2,6 +2,14 @@
 // SERVORA ERP — InventoryScreen
 // ✅ COMPOSITION ONLY — data-fetching hooks, filtering logic,
 //    permissions, business-logic handlers, top-level JSX wiring.
+// ✅ Migration Step 5 (FINAL) — Today and Historical now share ONE
+//    table component: HistoricalInventoryTableView. The old
+//    isHistorical ? <HistoricalInventoryTableView/> :
+//    <InventoryTableView/> branch, InventoryFilters.tsx, and
+//    InventoryTableView.tsx usage are REMOVED from this screen.
+//    stockStatus (from useInventoryFilters, driven by InventoryStats'
+//    card clicks) is wired directly into HistoricalInventoryTableView,
+//    which applies it ONLY in Today mode (isHistorical === false).
 // ✅ UI/modal state → useInventoryScreenState.
 // ✅ Date navigation → useInventoryDateNavigation.
 // ✅ "New Supplier" detour timing/return → useSupplierDetourNavigation.
@@ -9,24 +17,13 @@
 // ✅ All other modal/drawer rendering → InventoryModalsGroup.
 // ✅ handleSubmit branches on InventoryFormSubmitPayload's
 //    discriminated union: newItem/existingItem/edit — UNCHANGED.
-// ✅ NEW (Migration Step 4) — InventoryStats now renders above BOTH
-//    the Today table AND the Historical table. In Historical mode,
-//    stats are computed via useHistoricalInventoryStats() (from
-//    itemsWithHistoricalStock — the SAME data
-//    HistoricalInventoryTableView itself displays, fetched once here
-//    via useHistoricalInventory() and NOT duplicated inside that
-//    component) and passed to InventoryStats via the statsOverride
-//    prop, which renders those pre-computed stats display-only (no
-//    click-to-filter — Historical has no stock-status filter
-//    concept) and omits the Total Value card (no per-date unitCost
-//    tracking).
 // ✅ ARCHITECTURE NOTE — purchaseDate is currently set equal to
 //    receivedDate for the "existingItem" (Receive Batch) path.
 // FROZEN
 // ============================================
 
 import React, { useMemo, useCallback, useEffect } from "react";
-import { View, Text, StyleSheet, Platform, Alert, TouchableOpacity, TextInput } from "react-native";
+import { View, Text, StyleSheet, Platform, Alert, TouchableOpacity } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useApp } from "../../../context/AppContext";
@@ -36,7 +33,6 @@ import { useInventory } from "../hooks/useInventory";
 import { useInventoryFilters } from "../hooks/useInventoryFilters";
 import { useCategoriesForPicker } from "../hooks/useCategoriesForPicker";
 import { useSuppliers } from "../../supplier-module/hooks/useSuppliers";
-import { useAllInventoryBatches } from "../hooks/useAllInventoryBatches";
 import { useInventoryDateNavigation } from "../hooks/useInventoryDateNavigation";
 import { useInventoryScreenState } from "../hooks/useInventoryScreenState";
 import { useSupplierDetourNavigation } from "../hooks/useSupplierDetourNavigation";
@@ -53,8 +49,6 @@ import { seedDefaultStoreTaxonomy } from "../../store-module/services/seed-store
 import { todayISO } from "../../../utils/date-utils";
 import { InventoryToolbar } from "../components/InventoryToolbar";
 import { InventoryStats } from "../components/InventoryStats";
-import { InventoryFilters } from "../components/InventoryFilters";
-import { InventoryTableView } from "../components/InventoryTableView";
 import { HistoricalInventoryTableView } from "../components/HistoricalInventoryTableView";
 import { InventoryModalsGroup } from "../components/InventoryModalsGroup";
 import { InventoryFullScreenTableModal } from "../components/InventoryFullScreenTableModal";
@@ -71,7 +65,6 @@ export default function InventoryScreen() {
   const { items, loading: itemsLoading, error: itemsError } = useInventory(restaurantId);
   const { groups: categoryGroups, categories, loading: categoriesLoading } = useCategoriesForPicker(restaurantId);
   const { suppliers } = useSuppliers(restaurantId);
-  const { batches: allBatches, loading: batchesLoading } = useAllInventoryBatches(restaurantId);
 
   const categoryMap = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
   const today = useMemo(() => todayISO(), []);
@@ -81,17 +74,11 @@ export default function InventoryScreen() {
     goToPreviousDay, goToNextDay, isNextDisabled,
   } = useInventoryDateNavigation(today);
 
-  const [historicalSearchQuery, setHistoricalSearchQuery] = React.useState("");
-  const [historicalCategoryId, setHistoricalCategoryId] = React.useState<string | null>(null);
-  const [historicalSort, setHistoricalSort] = React.useState<"name-asc" | "stock-asc">("name-asc");
+  const [tableSearchQuery, setTableSearchQuery] = React.useState("");
+  const [tableCategoryId, setTableCategoryId] = React.useState<string | null>(null);
+  const [tableSort, setTableSort] = React.useState<"name-asc" | "stock-asc">("name-asc");
   const [showFullScreenTable, setShowFullScreenTable] = React.useState(false);
 
-  // ✅ NEW — fetched ONCE here (a SEPARATE onSnapshot subscription
-  // from the one HistoricalInventoryTableView creates internally via
-  // its own useHistoricalInventory() call) solely to compute the
-  // stats row above the table. Keeping HistoricalInventoryTableView
-  // self-contained (it still fetches its own data) avoids a
-  // prop-drilling refactor of that already-FROZEN component.
   const { itemsWithHistoricalStock } = useHistoricalInventory(restaurantId, selectedDate, items);
   const historicalStats = useHistoricalInventoryStats(
     itemsWithHistoricalStock,
@@ -102,8 +89,7 @@ export default function InventoryScreen() {
   );
 
   const {
-    filters, filteredItems,
-    setSearchQuery, setCategoryId, setStockStatus, setSort,
+    filters, setStockStatus,
   } = useInventoryFilters(items, {
     todayISO: today,
     categoryMap,
@@ -236,7 +222,7 @@ export default function InventoryScreen() {
     }
   }, [restaurantId, seeding, setSeeding]);
 
-  const loading = itemsLoading || categoriesLoading || batchesLoading;
+  const loading = itemsLoading || categoriesLoading;
   const shouldShowSeedBanner = !categoriesLoading && categories.length === 0 && canEditInventory;
 
   return (
@@ -274,61 +260,34 @@ export default function InventoryScreen() {
             onStatusPress={handleStatusPress}
             statsOverride={isHistorical ? historicalStats : undefined}
           />
-          {!isHistorical && (
-            <View style={styles.compactSearchRow}>
-              <MaterialIcons name="search" size={16} color="#94a3b8" />
-              <TextInput
-                style={styles.compactSearchInput}
-                value={filters.searchQuery}
-                onChangeText={setSearchQuery}
-                placeholder="Search items..."
-              />
-            </View>
-          )}
         </View>
       )}
 
-      {isHistorical ? (
-        <HistoricalInventoryTableView
-          restaurantId={safeRestaurantId}
-          selectedDate={selectedDate}
-          categories={categories}
-          inventoryItems={items}
-          searchQuery={historicalSearchQuery}
-          setSearchQuery={setHistoricalSearchQuery}
-          categoryId={historicalCategoryId}
-          setCategoryId={setHistoricalCategoryId}
-          onItemPress={openDrawer}
-          sort={historicalSort}
-          setSort={setHistoricalSort}
-          isHistorical={isHistorical}
-        />
-      ) : (
-        <>
-          <InventoryFilters
-            filters={filters}
-            categories={categories}
-            setCategoryId={setCategoryId}
-            setSort={setSort}
-            onOpenFullScreen={() => setShowFullScreenTable(true)}
-          />
-
-          {itemsError && (
-            <View style={styles.errorBanner}>
-              <Text style={styles.errorBannerText}>{itemsError}</Text>
-            </View>
-          )}
-
-          <InventoryTableView
-            filteredItems={filteredItems}
-            allItemsCount={items.length}
-            categories={categories}
-            batches={allBatches}
-            loading={loading}
-            onItemPress={openDrawer}
-          />
-        </>
+      {itemsError && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>{itemsError}</Text>
+        </View>
       )}
+
+      <HistoricalInventoryTableView
+        restaurantId={safeRestaurantId}
+        selectedDate={selectedDate}
+        categories={categories}
+        inventoryItems={items}
+        searchQuery={tableSearchQuery}
+        setSearchQuery={setTableSearchQuery}
+        categoryId={tableCategoryId}
+        setCategoryId={setTableCategoryId}
+        onItemPress={openDrawer}
+        sort={tableSort}
+        setSort={setTableSort}
+        isHistorical={isHistorical}
+        onOpenFullScreen={() => setShowFullScreenTable(true)}
+        stockStatus={filters.stockStatus}
+        todayISO={today}
+        categoryMapForExpiry={categoryMap}
+        restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
+      />
 
       <InventoryModalsGroup
         drawerItem={drawerItem}
@@ -374,6 +333,7 @@ export default function InventoryScreen() {
         initialDate={selectedDate}
         today={today}
         onItemPress={openDrawer}
+        restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
       />
     </View>
   );
@@ -388,12 +348,6 @@ const styles = StyleSheet.create({
   dateNavArrow: { padding: 4 },
   dateNavLabel: { fontSize: 14, fontWeight: "800", color: "#1e293b", minWidth: 160, textAlign: "center" },
   statsSearchRow: { paddingHorizontal: 16, marginTop: 8, gap: 6 },
-  compactSearchRow: {
-    flexDirection: "row", alignItems: "center", gap: 6,
-    backgroundColor: "#fff", paddingHorizontal: 10, paddingVertical: 6,
-    borderRadius: 8, borderWidth: 1, borderColor: "#e2e8f0", height: 32,
-  },
-  compactSearchInput: { flex: 1, fontSize: 13, color: "#1e293b" },
   errorBanner: {
     backgroundColor: "#fef2f2", margin: 16, padding: 10, borderRadius: 8,
   },

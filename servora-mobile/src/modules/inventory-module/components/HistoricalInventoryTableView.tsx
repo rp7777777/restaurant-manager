@@ -3,18 +3,27 @@
 // ✅ Migration Step 1 — onItemPress (real InventoryItem lookup).
 // ✅ Migration Step 2 — sort (Name/Stock).
 // ✅ Migration Step 3 — isHistorical prop for dynamic theming.
-// ✅ NEW — "Received Qty" column. Shows batch.originalQuantity ONLY
-//    when batch.receivedDate === selectedDate (i.e. this batch was
-//    ACTUALLY received on the date being viewed) — otherwise shows
-//    "—". This is DELIBERATELY separate from "Lot/Batch QTY"
-//    (closing quantity): originalQuantity is a historical fact fixed
-//    at receipt time, closing quantity is a point-in-time snapshot
-//    that decreases as movements are replayed — conflating the two
-//    would lose "how much was originally received" information the
-//    moment any issue/waste touched the batch.
-// ✅ onOpenFullScreen — optional "Full Screen" button in the sort
-//    row (omitted when this component renders INSIDE
-//    InventoryFullScreenTableModal itself).
+// ✅ Migration Step 5 (FINAL) — this is now THE single Inventory
+//    table for BOTH Today and Historical dates.
+//    stockStatus prop (Today-mode-only filter: all/lowStock/
+//    outOfStock/expiringSoon) is IGNORED entirely when isHistorical
+//    is true — Historical has no equivalent "as of this past date"
+//    concept for these categories (inherently live-item-field-based:
+//    currentStock, isLowStock, expiryDate). Reuses the EXACT SAME
+//    classifyExpiry()/resolveExpiryAlertDays() helpers (from
+//    ../types/inventory) InventoryStats.tsx's internal calculation
+//    uses — never re-derived — so stat card counts and this filter's
+//    results can never silently disagree. todayISO and
+//    categoryMapForExpiry are REQUIRED (not optional) specifically so
+//    a caller can never silently forget to wire them, which would
+//    otherwise make the Expiring Soon filter return an empty table
+//    with no visible error. IMPORTANT: todayISO must be the actual
+//    current date, NOT selectedDate — expiringSoon classification is
+//    always evaluated against real "today," even when viewing a
+//    historical date (though the filter itself is a no-op in that
+//    mode).
+// ✅ "Received Qty" column — batch.originalQuantity ONLY when
+//    batch.receivedDate === selectedDate, otherwise "—".
 // ✅ Multi-line Issue column (>2 entries -> one per line, dynamic
 //    row height).
 // ✅ Category chips AND sort/full-screen row both use full page
@@ -26,10 +35,13 @@ import React, { useMemo } from "react";
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TextInput, TouchableOpacity, Platform } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { Category } from "../types/category";
-import { InventoryItem } from "../types/inventory";
+import {
+  InventoryItem, classifyExpiry, resolveExpiryAlertDays,
+} from "../types/inventory";
 import { useHistoricalInventory, HistoricalItemStock } from "../hooks/useHistoricalInventory";
 
 type HistoricalSortOption = "name-asc" | "stock-asc";
+type StockStatusFilter = "all" | "lowStock" | "outOfStock" | "expiringSoon";
 
 interface HistoricalInventoryTableViewProps {
   restaurantId:   string;
@@ -45,6 +57,10 @@ interface HistoricalInventoryTableViewProps {
   setSort:        (s: HistoricalSortOption) => void;
   isHistorical:   boolean;
   onOpenFullScreen?: () => void;
+  stockStatus?:    StockStatusFilter;
+  todayISO:        string;
+  categoryMapForExpiry: Map<string, Category>;
+  restaurantDefaultExpiryAlertDays?: number;
 }
 
 interface HistoricalCategoryGroup {
@@ -56,8 +72,6 @@ interface HistoricalCategoryGroup {
 
 const ROW_HEIGHT = 26;
 const LEFT_COLS = { sn: 40, item: 170 };
-// ✅ NEW — "receivedQty" column added between "batch" (Lot/Batch No.)
-// and "issue".
 const RIGHT_COLS = { date: 90, batch: 110, receivedQty: 76, issue: 160, stock: 90, unit: 70, expiry: 90, total: 122 };
 const LEFT_WIDTH = LEFT_COLS.sn + LEFT_COLS.item;
 const RIGHT_WIDTH =
@@ -75,6 +89,7 @@ export function HistoricalInventoryTableView({
   restaurantId, selectedDate, categories, inventoryItems,
   searchQuery, setSearchQuery, categoryId, setCategoryId,
   onItemPress, sort, setSort, isHistorical, onOpenFullScreen,
+  stockStatus, todayISO, categoryMapForExpiry, restaurantDefaultExpiryAlertDays,
 }: HistoricalInventoryTableViewProps) {
   const theme = isHistorical
     ? { headerBg: "#1e3a5f", batchQty: "#1e3a5f", total: "#1e3a5f", chipActive: "#1e3a5f" }
@@ -101,6 +116,31 @@ export function HistoricalInventoryTableView({
 
   const filteredItems = useMemo(() => {
     let result = itemsWithHistoricalStock;
+
+    if (!isHistorical && stockStatus && stockStatus !== "all") {
+      result = result.filter((histItem) => {
+        const liveItem = inventoryItemById.get(histItem.inventoryId);
+        if (!liveItem) return false;
+
+        if (stockStatus === "lowStock") {
+          return liveItem.currentStock > 0 && liveItem.isLowStock;
+        }
+        if (stockStatus === "outOfStock") {
+          return liveItem.currentStock <= 0;
+        }
+        if (stockStatus === "expiringSoon") {
+          const category = categoryMapForExpiry.get(liveItem.categoryId);
+          const resolvedDays = resolveExpiryAlertDays(
+            liveItem.expiryAlertDaysOverride,
+            category?.expiryAlertDays,
+            restaurantDefaultExpiryAlertDays
+          );
+          return classifyExpiry(liveItem.expiryDate, todayISO, resolvedDays) === "expiringSoon";
+        }
+        return true;
+      });
+    }
+
     if (categoryId) {
       result = result.filter((it) => it.categoryId === categoryId);
     }
@@ -109,7 +149,10 @@ export function HistoricalInventoryTableView({
       result = result.filter((it) => it.itemName.toLowerCase().includes(q));
     }
     return result;
-  }, [itemsWithHistoricalStock, searchQuery, categoryId]);
+  }, [
+    itemsWithHistoricalStock, searchQuery, categoryId, isHistorical, stockStatus,
+    inventoryItemById, todayISO, categoryMapForExpiry, restaurantDefaultExpiryAlertDays,
+  ]);
 
   const categoryGroups = useMemo<HistoricalCategoryGroup[]>(() => {
     const categoryById = new Map(categories.map((c) => [c.id, c]));
@@ -288,9 +331,6 @@ export function HistoricalInventoryTableView({
                         {item.batches.map((batch, batchIndex) => {
                           const useMultiLineIssue = batch.issues.length > 2;
                           const batchRowHeight = getBatchRowHeight(batch.issues.length);
-                          // ✅ NEW — only show originalQuantity when
-                          // this batch was ACTUALLY received on the
-                          // date being viewed; otherwise "—".
                           const wasReceivedToday = batch.receivedDate === selectedDate;
 
                           return (

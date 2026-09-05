@@ -1,21 +1,25 @@
 // ============================================
 // SERVORA ERP — InventoryFullScreenTableModal Component
-// ✅ Migration Step 3 — now wraps HistoricalInventoryTableView,
-//    reusing that component's full feature set (search, category
-//    wrap-filter, sort, Issue column, closing-quantity semantics,
-//    onItemPress -> real InventoryItem) instead of duplicating
-//    filter/search logic here.
+// ✅ Migration Step 3 — wraps HistoricalInventoryTableView, with its
+//    own independent date navigator.
+// ✅ Migration Step 5 — since HistoricalInventoryTableView now
+//    REQUIRES todayISO and categoryMapForExpiry props (needed for
+//    the Today-mode stockStatus filter's "expiringSoon"
+//    classification), this modal now builds its own categoryMap
+//    (from the categories it already receives) and forwards
+//    restaurantDefaultExpiryAlertDays through from its caller.
+//    stockStatus is deliberately NOT wired here — opening Full
+//    Screen does not carry over the underlying screen's currently-
+//    active stock-status card filter (a UX choice, not a bug: Full
+//    Screen is a fresh, unfiltered view of the selected date; if
+//    carrying the filter forward is wanted later, that can be added
+//    as an additional prop without further architecture change).
 // ✅ Independent selectedDate state, re-synced to initialDate + reset
-//    search/category/sort EVERY time the modal opens (visible
-//    becomes true) — a stale search/category/sort or date from a
-//    PREVIOUS Full Screen session never silently persists into a new
-//    one.
-// ✅ handleItemPress closes THIS modal before delegating to the
-//    parent's onItemPress — avoids nested-Modal layering risk.
+//    search/category/sort EVERY time the modal opens.
 // FROZEN
 // ============================================
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Modal, Platform } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { InventoryItem } from "../types/inventory";
@@ -50,10 +54,14 @@ interface InventoryFullScreenTableModalProps {
   initialDate:     string;
   today:           string;
   onItemPress:     (item: InventoryItem) => void;
+  // ✅ NEW — forwarded to HistoricalInventoryTableView's required
+  // expiry-classification props.
+  restaurantDefaultExpiryAlertDays?: number;
 }
 
 export function InventoryFullScreenTableModal({
   visible, onClose, restaurantId, items, categories, initialDate, today, onItemPress,
+  restaurantDefaultExpiryAlertDays,
 }: InventoryFullScreenTableModalProps) {
   const [selectedDate, setSelectedDate] = useState(initialDate);
   const [searchQuery, setSearchQuery] = useState("");
@@ -67,6 +75,13 @@ export function InventoryFullScreenTableModal({
     setCategoryId(null);
     setSort("name-asc");
   }, [visible, initialDate]);
+
+  // ✅ NEW — required by HistoricalInventoryTableView's
+  // categoryMapForExpiry prop.
+  const categoryMapForExpiry = useMemo(
+    () => new Map(categories.map((c) => [c.id, c])),
+    [categories]
+  );
 
   const handleItemPress = (item: InventoryItem) => {
     onClose();
@@ -112,6 +127,9 @@ export function InventoryFullScreenTableModal({
           sort={sort}
           setSort={setSort}
           isHistorical={selectedDate !== today}
+          todayISO={today}
+          categoryMapForExpiry={categoryMapForExpiry}
+          restaurantDefaultExpiryAlertDays={restaurantDefaultExpiryAlertDays}
         />
       </View>
     </Modal>
