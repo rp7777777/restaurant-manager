@@ -3,15 +3,17 @@
 // ✅ Migration Steps 1-5 — single table for Today and Historical,
 //    real InventoryItem onItemPress, Sort, Full Screen, isHistorical
 //    dynamic theming, Today-mode-only stockStatus filter.
-// ✅ NEW — "Out of Stock" dedicated display: when stockStatus ===
-//    "outOfStock" (Today mode only), renders depletedItems (from
-//    useHistoricalInventory) instead of the normal batch table — an
-//    item with EVERY batch depleted has no batch rows worth showing,
-//    so this shows just the item name + "Out of stock since
-//    [date]." This fixes the earlier regression where such items
-//    were entirely absent from itemsWithHistoricalStock (which only
-//    includes items with at least one VISIBLE batch) and therefore
-//    never appeared when the Out of Stock stat card was clicked.
+// ✅ Out of Stock dedicated display (Today mode only) —
+//    membership ("WHO is out of stock") comes from
+//    liveItem.currentStock <= 0, the SAME source of truth as the
+//    stat card and the main stockStatus filter above — never from
+//    depletedItems' "ALL batches historically depleted" rule alone,
+//    which can disagree for multi-batch items (e.g. 2 batches where
+//    only ONE registers as depleted in replay, yet currentStock is
+//    genuinely 0). "WHEN did it become out of stock" (date
+//    attribution) is looked up from depletedItems when available;
+//    if not found, a neutral "Out of stock" (no date) is shown
+//    instead of hiding the item.
 // ✅ "Received Qty" column — batch.originalQuantity ONLY when
 //    batch.receivedDate === selectedDate, otherwise "—".
 // ✅ Multi-line Issue column (>2 entries -> one per line, dynamic
@@ -175,26 +177,24 @@ export function HistoricalInventoryTableView({
     return <ActivityIndicator size="large" color={theme.headerBg} style={styles.loadingIndicator} />;
   }
 
-  // ✅ NEW — dedicated Out-of-Stock display (Today mode only).
   const isShowingOutOfStock = !isHistorical && stockStatus === "outOfStock";
 
   if (isShowingOutOfStock) {
-    // ✅ FIX — category filter now applied here too (was previously
-    // ignored — selecting a category chip while viewing Out of Stock
-    // showed ALL depleted items regardless of category). Looks up
-    // each depleted item's categoryId from the live InventoryItem
-    // (inventoryItemById), since DepletedItemInfo itself doesn't
-    // carry categoryId.
-    const filteredDepleted = depletedItems.filter((d) => {
-      if (categoryId) {
-        const liveItem = inventoryItemById.get(d.inventoryId);
-        if (!liveItem || liveItem.categoryId !== categoryId) return false;
-      }
-      if (searchQuery.trim()) {
-        return d.itemName.toLowerCase().includes(searchQuery.trim().toLowerCase());
-      }
-      return true;
-    });
+    const depletedSinceByInventoryId = new Map(depletedItems.map((d) => [d.inventoryId, d.depletedSince]));
+
+    const outOfStockItems = inventoryItems.filter((item) => item.currentStock <= 0);
+
+    const filteredOutOfStockItems = outOfStockItems
+      .filter((item) => {
+        if (categoryId && item.categoryId !== categoryId) return false;
+        if (searchQuery.trim() && !item.itemName.toLowerCase().includes(searchQuery.trim().toLowerCase())) return false;
+        return true;
+      })
+      .map((item) => ({
+        inventoryId:   item.id,
+        itemName:      item.itemName,
+        depletedSince: depletedSinceByInventoryId.get(item.id) ?? null,
+      }));
 
     return (
       <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
@@ -209,17 +209,19 @@ export function HistoricalInventoryTableView({
           />
         </View>
 
-        {filteredDepleted.length === 0 ? (
+        {filteredOutOfStockItems.length === 0 ? (
           <View style={styles.emptyState}>
             <MaterialIcons name="check-circle" size={40} color="#cbd5e1" />
             <Text style={styles.emptyStateText}>No out-of-stock items</Text>
           </View>
         ) : (
           <View style={styles.depletedList}>
-            {filteredDepleted.map((d) => (
+            {filteredOutOfStockItems.map((d) => (
               <View key={d.inventoryId} style={styles.depletedRow}>
                 <Text style={styles.depletedItemName}>{d.itemName}</Text>
-                <Text style={styles.depletedSinceText}>Out of stock since {d.depletedSince}</Text>
+                <Text style={styles.depletedSinceText}>
+                  {d.depletedSince ? `Out of stock since ${d.depletedSince}` : "Out of stock"}
+                </Text>
               </View>
             ))}
           </View>
