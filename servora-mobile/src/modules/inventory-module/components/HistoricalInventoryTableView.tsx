@@ -1,27 +1,17 @@
 // ============================================
 // SERVORA ERP — HistoricalInventoryTableView Component
-// ✅ Migration Step 1 — onItemPress (real InventoryItem lookup).
-// ✅ Migration Step 2 — sort (Name/Stock).
-// ✅ Migration Step 3 — isHistorical prop for dynamic theming.
-// ✅ Migration Step 5 (FINAL) — this is now THE single Inventory
-//    table for BOTH Today and Historical dates.
-//    stockStatus prop (Today-mode-only filter: all/lowStock/
-//    outOfStock/expiringSoon) is IGNORED entirely when isHistorical
-//    is true — Historical has no equivalent "as of this past date"
-//    concept for these categories (inherently live-item-field-based:
-//    currentStock, isLowStock, expiryDate). Reuses the EXACT SAME
-//    classifyExpiry()/resolveExpiryAlertDays() helpers (from
-//    ../types/inventory) InventoryStats.tsx's internal calculation
-//    uses — never re-derived — so stat card counts and this filter's
-//    results can never silently disagree. todayISO and
-//    categoryMapForExpiry are REQUIRED (not optional) specifically so
-//    a caller can never silently forget to wire them, which would
-//    otherwise make the Expiring Soon filter return an empty table
-//    with no visible error. IMPORTANT: todayISO must be the actual
-//    current date, NOT selectedDate — expiringSoon classification is
-//    always evaluated against real "today," even when viewing a
-//    historical date (though the filter itself is a no-op in that
-//    mode).
+// ✅ Migration Steps 1-5 — single table for Today and Historical,
+//    real InventoryItem onItemPress, Sort, Full Screen, isHistorical
+//    dynamic theming, Today-mode-only stockStatus filter.
+// ✅ NEW — "Out of Stock" dedicated display: when stockStatus ===
+//    "outOfStock" (Today mode only), renders depletedItems (from
+//    useHistoricalInventory) instead of the normal batch table — an
+//    item with EVERY batch depleted has no batch rows worth showing,
+//    so this shows just the item name + "Out of stock since
+//    [date]." This fixes the earlier regression where such items
+//    were entirely absent from itemsWithHistoricalStock (which only
+//    includes items with at least one VISIBLE batch) and therefore
+//    never appeared when the Out of Stock stat card was clicked.
 // ✅ "Received Qty" column — batch.originalQuantity ONLY when
 //    batch.receivedDate === selectedDate, otherwise "—".
 // ✅ Multi-line Issue column (>2 entries -> one per line, dynamic
@@ -95,7 +85,7 @@ export function HistoricalInventoryTableView({
     ? { headerBg: "#1e3a5f", batchQty: "#1e3a5f", total: "#1e3a5f", chipActive: "#1e3a5f" }
     : { headerBg: "#059669", batchQty: "#6d28d9", total: "#059669", chipActive: "#1e293b" };
 
-  const { itemsWithHistoricalStock, loading, error } =
+  const { itemsWithHistoricalStock, depletedItems, loading, error } =
     useHistoricalInventory(restaurantId, selectedDate, inventoryItems);
 
   const inventoryItemById = useMemo(() => {
@@ -183,6 +173,59 @@ export function HistoricalInventoryTableView({
 
   if (loading) {
     return <ActivityIndicator size="large" color={theme.headerBg} style={styles.loadingIndicator} />;
+  }
+
+  // ✅ NEW — dedicated Out-of-Stock display (Today mode only).
+  const isShowingOutOfStock = !isHistorical && stockStatus === "outOfStock";
+
+  if (isShowingOutOfStock) {
+    // ✅ FIX — category filter now applied here too (was previously
+    // ignored — selecting a category chip while viewing Out of Stock
+    // showed ALL depleted items regardless of category). Looks up
+    // each depleted item's categoryId from the live InventoryItem
+    // (inventoryItemById), since DepletedItemInfo itself doesn't
+    // carry categoryId.
+    const filteredDepleted = depletedItems.filter((d) => {
+      if (categoryId) {
+        const liveItem = inventoryItemById.get(d.inventoryId);
+        if (!liveItem || liveItem.categoryId !== categoryId) return false;
+      }
+      if (searchQuery.trim()) {
+        return d.itemName.toLowerCase().includes(searchQuery.trim().toLowerCase());
+      }
+      return true;
+    });
+
+    return (
+      <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
+        <View style={styles.searchRow}>
+          <MaterialIcons name="search" size={18} color="#64748b" />
+          <TextInput
+            style={styles.searchInput}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search items..."
+            placeholderTextColor="#94a3b8"
+          />
+        </View>
+
+        {filteredDepleted.length === 0 ? (
+          <View style={styles.emptyState}>
+            <MaterialIcons name="check-circle" size={40} color="#cbd5e1" />
+            <Text style={styles.emptyStateText}>No out-of-stock items</Text>
+          </View>
+        ) : (
+          <View style={styles.depletedList}>
+            {filteredDepleted.map((d) => (
+              <View key={d.inventoryId} style={styles.depletedRow}>
+                <Text style={styles.depletedItemName}>{d.itemName}</Text>
+                <Text style={styles.depletedSinceText}>Out of stock since {d.depletedSince}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+      </ScrollView>
+    );
   }
 
   return (
@@ -469,4 +512,14 @@ const styles = StyleSheet.create({
   issueMultiLine: { marginBottom: 1 },
   batchQtyCell: { fontWeight: "800", fontSize: 10, paddingRight: 6 },
   totalCell: { fontWeight: "800", fontSize: 10, paddingRight: 6 },
+  depletedList: {
+    width: "100%", maxWidth: 500, backgroundColor: "#fff",
+    borderRadius: 8, borderWidth: 1, borderColor: "#cbd5e1", overflow: "hidden",
+  },
+  depletedRow: {
+    paddingVertical: 12, paddingHorizontal: 14,
+    borderBottomWidth: 1, borderBottomColor: "#f1f5f9",
+  },
+  depletedItemName: { fontSize: 13, fontWeight: "700", color: "#0f172a" },
+  depletedSinceText: { fontSize: 11, color: "#dc2626", fontWeight: "600", marginTop: 2 },
 });
