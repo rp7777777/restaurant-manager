@@ -11,21 +11,26 @@
 //    ONCE via a single live subscription, kept in memory.
 // ✅ CONFIRMED FINAL SEMANTICS —
 //    - HistoricalBatchState.quantity (from replayBatchAsOfDate) =
-//      OPENING quantity for selectedDate (movements dated STRICTLY
-//      BEFORE selectedDate applied). This is what "Lot/Batch QTY"
-//      displays per-row.
-//    - HistoricalItemStock.historicalStock (Total QTY, item-level) =
-//      CLOSING quantity — computed HERE by further subtracting each
-//      batch's OWN same-date real deductions from its opening value,
-//      using the EXACT SAME isRealStockDeduction() rule
-//      (historical-batch-replay-service.ts) and toDateKey()/
-//      toJsDate() date-parsing helpers as the replay service and
-//      getIssuesForDate() — never re-derived from the Issue column's
-//      formatted display strings, which are presentation output, not
-//      a calculation source.
-//    - batchStates and closingQuantityByBatchId are computed in ONE
-//      useMemo, sharing the SAME pre-grouped movementsByBatchId map
-//      (built once) — no duplicate O(movements) scan per batch.
+//      OPENING quantity for selectedDate.
+//    - HistoricalItemStock.historicalStock (Total QTY) = CLOSING
+//      quantity — computed HERE via same-date deduction subtraction.
+//    - itemsWithHistoricalStock excludes items whose batches are ALL
+//      invisible (depleted before selectedDate) — this is CORRECT
+//      for the normal table view (nothing to show), but means an
+//      "Out of Stock" item disappears from this array entirely. See
+//      depletedItems below for how the Out-of-Stock filter surfaces
+//      these items separately.
+// ✅ NEW — depletedItems: items where EVERY one of their batches is
+//    depleted (invisible) as of selectedDate — i.e. the item itself
+//    is genuinely Out of Stock on this date, not merely "has some
+//    depleted batches." An item with even ONE batch still holding
+//    stock is NOT included here. depletedSince is the LATEST (max)
+//    depletedDate among the item's batches — the date its last
+//    remaining batch ran out, which is when the item itself became
+//    fully out of stock. A batch depleted ON selectedDate itself is
+//    still visible=true that day (per replayBatchAsOfDate()'s
+//    opening-quantity semantics) — it only becomes invisible, and
+//    thus counted here, from the day AFTER its depletion.
 // FROZEN
 // ============================================
 
@@ -61,9 +66,16 @@ export interface HistoricalItemStock {
   hasInconsistency: boolean;
 }
 
+export interface DepletedItemInfo {
+  inventoryId:   string;
+  itemName:      string;
+  depletedSince: string; // YYYY-MM-DD
+}
+
 export interface UseHistoricalInventoryResult {
   batchStates:              HistoricalBatchWithIssues[];
   itemsWithHistoricalStock: HistoricalItemStock[];
+  depletedItems:            DepletedItemInfo[];
   loading:                  boolean;
   error:                    string | null;
 }
@@ -105,10 +117,6 @@ export function useHistoricalInventory(
     return unsubscribe;
   }, [restaurantId]);
 
-  // ✅ batchStates (opening quantity, per replayBatchAsOfDate) and
-  // closingQuantityByBatchId (opening minus THIS DATE's own real
-  // deductions) computed together, sharing one pre-grouped
-  // movementsByBatchId map.
   const { batchStates, closingQuantityByBatchId } = useMemo(() => {
     const movementsByBatchId = new Map<string, StockMovement[]>();
     for (const movement of movements) {
@@ -194,9 +202,49 @@ export function useHistoricalInventory(
     return Array.from(byItem.values()).filter((item) => item.batches.length > 0);
   }, [batchStates, batches, inventoryItems, closingQuantityByBatchId]);
 
+  // ✅ NEW — items where ALL batches are depleted (invisible) as of
+  // selectedDate. See FROZEN header for full rationale.
+  const depletedItems = useMemo(() => {
+    const batchById = new Map<string, InventoryBatch>();
+    for (const b of batches) batchById.set(b.id, b);
+
+    const byItem = new Map<string, { itemName: string; batchDepletionInfo: Array<{ visible: boolean; depletedDate: string | null }> }>();
+
+    for (const state of batchStates) {
+      const batch = batchById.get(state.batchId);
+      if (!batch) continue;
+
+      const existing = byItem.get(batch.inventoryId);
+      const entry = existing ?? { itemName: state.itemName, batchDepletionInfo: [] };
+      entry.batchDepletionInfo.push({ visible: state.visible, depletedDate: state.depletedDate });
+      byItem.set(batch.inventoryId, entry);
+    }
+
+    const result: DepletedItemInfo[] = [];
+
+    for (const [inventoryId, entry] of byItem.entries()) {
+      if (entry.batchDepletionInfo.length === 0) continue;
+
+      const allDepleted = entry.batchDepletionInfo.every((b) => !b.visible);
+      if (!allDepleted) continue;
+
+      const depletedDates = entry.batchDepletionInfo
+        .map((b) => b.depletedDate)
+        .filter((d): d is string => d !== null);
+      if (depletedDates.length === 0) continue;
+
+      const depletedSince = depletedDates.reduce((max, d) => (d > max ? d : max), depletedDates[0]);
+
+      result.push({ inventoryId, itemName: entry.itemName, depletedSince });
+    }
+
+    return result;
+  }, [batchStates, batches]);
+
   return {
     batchStates,
     itemsWithHistoricalStock,
+    depletedItems,
     loading: batchesLoading || movementsLoading,
     error: batchesError ?? movementsError,
   };
