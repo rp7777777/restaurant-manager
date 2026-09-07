@@ -477,7 +477,7 @@ export function HistoricalInventoryTableView({
                     })}
                   </View>
 
-                  <View style={[{ width: TOTAL_COL, minHeight: groupHeight, justifyContent: "center", alignItems: "flex-start", paddingLeft: 4 }, styles.colDivider]}>
+                  <View style={[{ width: TOTAL_COL, minHeight: groupHeight, justifyContent: "center", alignItems: "center" }, styles.colDivider]}>
                     <Text style={styles.totalCell}>{String(item.historicalStock)}</Text>
                   </View>
 
@@ -557,7 +557,7 @@ const styles = StyleSheet.create({
   itemGroupRow: { flexDirection: "row", borderBottomWidth: 2, borderBottomColor: "#1e293b" },
   itemGroupRowAlt: { backgroundColor: "#f8fafc" },
   leftStrip: {
-    flexDirection: "row", alignItems: "flex-start",
+    flexDirection: "row", alignItems: "center",
     backgroundColor: "#fff", paddingVertical: 4,
   },
   leftStripAlt: { backgroundColor: "#f8fafc" },
@@ -576,7 +576,7 @@ const styles = StyleSheet.create({
   issueCell: { color: "#b91c1c", fontWeight: "600" },
   issueMultiLine: { marginBottom: 1 },
   batchQtyCell: { fontWeight: "800", fontSize: 10, color: "#0f172a", textAlign: "left" },
-  totalCell: { fontWeight: "800", fontSize: 10, color: "#0f172a", textAlign: "left" },
+  totalCell: { fontWeight: "800", fontSize: 10, color: "#0f172a", textAlign: "center" },
   oosTableHeaderRow: {
     flexDirection: "row", backgroundColor: "#f1f5f9",
     borderBottomWidth: 2, borderBottomColor: "#1e293b", paddingVertical: 8, paddingHorizontal: 10,
