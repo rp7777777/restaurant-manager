@@ -2,25 +2,25 @@
 // SERVORA ERP — HistoricalInventoryTableView Component
 // ✅ Migration Steps 1-5 — single table for Today and Historical.
 // ✅ Out of Stock dedicated table display (Today mode only).
-// ✅ NEW — Total QTY and Edit arrow are now ITEM-LEVEL columns
-//    (siblings of leftStrip/rightBatchRows within itemGroupRow), NOT
-//    inside each batch row. Each spans the full groupHeight and is
-//    vertically centered (justifyContent: "center") — regardless of
-//    how many batches an item has (1 or 10), Total QTY appears
-//    exactly once, centered across the whole item's row-block,
-//    matching Item Name's own layout. This replaces the previous
-//    `batchIndex === 0 ? value : ""` workaround, which rendered
-//    Total QTY inside the FIRST batch row specifically, making it
-//    look misaligned (pinned to the top) whenever an item had
-//    multiple batches or any batch had multi-line Issue content.
-// ✅ Column order preserved: S.N. / Item Name / Received / Lot/Batch
-//    No. / Received Qty / Issue / Lot/Batch QTY / Unit / Expiry /
-//    Total QTY / Edit.
-// ✅ Column widths tightened to fit within 900px without horizontal
-//    scrolling. Text wrapping (no numberOfLines truncation) on Item
-//    Name/Batch No.
-// ✅ oosRow uses minHeight so wrapped Item Name text in the Out of
-//    Stock table never clips.
+// ✅ Total QTY and Edit arrow are item-level columns (siblings of
+//    leftStrip/rightBatchRows), vertically centered across groupHeight.
+// ✅ NEW — Received Qty, Lot/Batch QTY, Total QTY are left-aligned
+//    (not right-aligned) to sit close to their neighboring column
+//    without an oversized gap. tableHeaderCellRight removed from
+//    these three headers to match.
+// ✅ NEW — vertical column dividers (borderRightWidth) between every
+//    column except the last, for clearer visual separation — applied
+//    consistently across both the header row and data rows.
+// ✅ NEW — Edit arrow icon is now red (#dc2626), fixed regardless of
+//    theme. Lot/Batch QTY and Total QTY numbers are now fixed black
+//    (#0f172a), no longer using theme.batchQty/theme.total (those
+//    theme fields were removed — isHistorical now only drives
+//    headerBg and chipActive colors).
+//    Total QTY numbers are now black (#0f172a) instead of the
+//    theme-dependent green/purple/navy color.
+// ✅ Column widths fit within 900px without horizontal scrolling.
+//    Text wrapping (no numberOfLines truncation) on Item Name/Batch No.
+// ✅ oosRow uses minHeight so wrapped text never clips.
 // ✅ Header/row divider borders darkened (#1e293b, 2px).
 // FROZEN
 // ============================================
@@ -80,7 +80,7 @@ interface OutOfStockGroup {
 
 const ROW_HEIGHT = 26;
 const LEFT_COLS = { sn: 35, item: 130 };
-const RIGHT_COLS = { date: 75, batch: 85, receivedQty: 60, issue: 175, stock: 70, unit: 50, expiry: 75 };
+const RIGHT_COLS = { date: 75, batch: 85, receivedQty: 70, issue: 175, stock: 70, unit: 50, expiry: 75 };
 const TOTAL_COL = 75;
 const ARROW_COL = 35;
 const LEFT_WIDTH = LEFT_COLS.sn + LEFT_COLS.item;
@@ -107,8 +107,8 @@ export function HistoricalInventoryTableView({
   stockStatus, todayISO, categoryMapForExpiry, restaurantDefaultExpiryAlertDays,
 }: HistoricalInventoryTableViewProps) {
   const theme = isHistorical
-    ? { headerBg: "#1e3a5f", batchQty: "#1e3a5f", total: "#1e3a5f", chipActive: "#1e3a5f" }
-    : { headerBg: "#059669", batchQty: "#6d28d9", total: "#059669", chipActive: "#1e293b" };
+    ? { headerBg: "#1e3a5f", chipActive: "#1e3a5f" }
+    : { headerBg: "#059669", chipActive: "#1e293b" };
 
   const { itemsWithHistoricalStock, depletedItems, loading, error } =
     useHistoricalInventory(restaurantId, selectedDate, inventoryItems);
@@ -272,9 +272,9 @@ export function HistoricalInventoryTableView({
                 </Text>
               </View>
               <View style={styles.oosTableHeaderRow}>
-                <Text style={[styles.tableHeaderCell, { width: OOS_COLS.sn }]}>S.N.</Text>
-                <Text style={[styles.tableHeaderCell, { width: OOS_COLS.item }]}>Item Name</Text>
-                <Text style={[styles.tableHeaderCell, { width: OOS_COLS.date }]}>Date</Text>
+                <Text style={[styles.tableHeaderCell, styles.colDivider, { width: OOS_COLS.sn }]}>S.N.</Text>
+                <Text style={[styles.tableHeaderCell, styles.colDivider, { width: OOS_COLS.item }]}>Item Name</Text>
+                <Text style={[styles.tableHeaderCell, styles.colDivider, { width: OOS_COLS.date }]}>Date</Text>
                 <Text style={[styles.tableHeaderCell, { width: OOS_COLS.note }]}>Note</Text>
               </View>
               {group.items.map((item, itemIndex) => (
@@ -282,9 +282,9 @@ export function HistoricalInventoryTableView({
                   key={item.inventoryId}
                   style={[styles.oosRow, itemIndex % 2 === 1 && styles.itemGroupRowAlt]}
                 >
-                  <Text style={[styles.leftStripCell, { width: OOS_COLS.sn }]}>{itemIndex + 1}</Text>
-                  <Text style={[styles.itemNameCell, { width: OOS_COLS.item }]}>{item.itemName}</Text>
-                  <Text style={[styles.leftStripCell, { width: OOS_COLS.date }]}>{item.depletedSince ?? "—"}</Text>
+                  <Text style={[styles.leftStripCell, styles.colDivider, { width: OOS_COLS.sn }]}>{itemIndex + 1}</Text>
+                  <Text style={[styles.itemNameCell, styles.colDivider, { width: OOS_COLS.item }]}>{item.itemName}</Text>
+                  <Text style={[styles.leftStripCell, styles.colDivider, { width: OOS_COLS.date }]}>{item.depletedSince ?? "—"}</Text>
                   <Text style={[styles.oosNoteText, { width: OOS_COLS.note }]}>Out of stock</Text>
                 </View>
               ))}
@@ -384,19 +384,19 @@ export function HistoricalInventoryTableView({
 
             <View style={styles.tableHeaderRow}>
               <View style={[styles.leftHeaderGroup, { width: LEFT_WIDTH }]}>
-                <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.sn }]}>S.N.</Text>
-                <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.item }]}>Item Name</Text>
+                <Text style={[styles.tableHeaderCell, styles.colDivider, { width: LEFT_COLS.sn }]}>S.N.</Text>
+                <Text style={[styles.tableHeaderCell, styles.colDivider, { width: LEFT_COLS.item }]}>Item Name</Text>
               </View>
               <View style={styles.rightHeaderGroup}>
-                <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.date }]}>Received</Text>
-                <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
-                <Text style={[styles.tableHeaderCell, styles.tableHeaderCellRight, { width: RIGHT_COLS.receivedQty }]}>Received Qty</Text>
-                <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.issue }]}>Issue</Text>
-                <Text style={[styles.tableHeaderCell, styles.tableHeaderCellRight, { width: RIGHT_COLS.stock }]}>Lot/Batch QTY</Text>
-                <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
-                <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry</Text>
+                <Text style={[styles.tableHeaderCell, styles.colDivider, { width: RIGHT_COLS.date }]}>Received</Text>
+                <Text style={[styles.tableHeaderCell, styles.colDivider, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
+                <Text style={[styles.tableHeaderCell, styles.colDivider, { width: RIGHT_COLS.receivedQty }]}>Received Qty</Text>
+                <Text style={[styles.tableHeaderCell, styles.colDivider, { width: RIGHT_COLS.issue }]}>Issue</Text>
+                <Text style={[styles.tableHeaderCell, styles.colDivider, { width: RIGHT_COLS.stock }]}>Lot/Batch QTY</Text>
+                <Text style={[styles.tableHeaderCell, styles.colDivider, { width: RIGHT_COLS.unit }]}>Unit</Text>
+                <Text style={[styles.tableHeaderCell, styles.colDivider, { width: RIGHT_COLS.expiry }]}>Expiry</Text>
               </View>
-              <Text style={[styles.tableHeaderCell, styles.tableHeaderCellRight, { width: TOTAL_COL }]}>Total QTY</Text>
+              <Text style={[styles.tableHeaderCell, styles.colDivider, { width: TOTAL_COL }]}>Total QTY</Text>
               {!isHistorical && (
                 <Text style={[styles.tableHeaderCell, { width: ARROW_COL, textAlign: "center" }]}>Edit</Text>
               )}
@@ -421,7 +421,7 @@ export function HistoricalInventoryTableView({
                   activeOpacity={0.7}
                   disabled={!realItem}
                 >
-                  <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }, isEvenRow && styles.leftStripAlt]}>
+                  <View style={[styles.leftStrip, styles.colDivider, { width: LEFT_WIDTH, minHeight: groupHeight }, isEvenRow && styles.leftStripAlt]}>
                     <Text style={[styles.leftStripCell, { width: LEFT_COLS.sn }]}>{itemIndex + 1}</Text>
                     <View style={{ width: LEFT_COLS.item }}>
                       <Text style={[styles.leftStripCell, styles.itemNameCell]}>{item.itemName}</Text>
@@ -449,12 +449,12 @@ export function HistoricalInventoryTableView({
                             batchIndex < item.batches.length - 1 && styles.batchRowDivider,
                           ]}
                         >
-                          <Text style={[styles.tableCell, { width: RIGHT_COLS.date }]}>{batch.receivedDate}</Text>
-                          <Text style={[styles.tableCell, { width: RIGHT_COLS.batch }]}>{batch.batchNo}</Text>
-                          <Text style={[styles.tableCell, styles.numericCell, styles.receivedQtyCell, { width: RIGHT_COLS.receivedQty }]}>
+                          <Text style={[styles.tableCell, styles.colDivider, { width: RIGHT_COLS.date }]}>{batch.receivedDate}</Text>
+                          <Text style={[styles.tableCell, styles.colDivider, { width: RIGHT_COLS.batch }]}>{batch.batchNo}</Text>
+                          <Text style={[styles.tableCell, styles.colDivider, styles.receivedQtyCell, { width: RIGHT_COLS.receivedQty }]}>
                             {wasReceivedToday ? String(batch.originalQuantity) : "—"}
                           </Text>
-                          <View style={{ width: RIGHT_COLS.issue }}>
+                          <View style={[{ width: RIGHT_COLS.issue }, styles.colDivider]}>
                             {batch.issues.length === 0 ? (
                               <Text style={[styles.tableCell, styles.issueCell]}>—</Text>
                             ) : useMultiLineIssue ? (
@@ -469,21 +469,21 @@ export function HistoricalInventoryTableView({
                               </Text>
                             )}
                           </View>
-                          <Text style={[styles.tableCell, styles.numericCell, styles.batchQtyCell, { width: RIGHT_COLS.stock, color: theme.batchQty }]}>{batch.quantity}</Text>
-                          <Text style={[styles.tableCell, { width: RIGHT_COLS.unit }]}>{batch.unit}</Text>
-                          <Text style={[styles.tableCell, { width: RIGHT_COLS.expiry }]}>{batch.expiryDate ?? "—"}</Text>
+                          <Text style={[styles.tableCell, styles.colDivider, styles.batchQtyCell, { width: RIGHT_COLS.stock }]}>{batch.quantity}</Text>
+                          <Text style={[styles.tableCell, styles.colDivider, { width: RIGHT_COLS.unit }]}>{batch.unit}</Text>
+                          <Text style={[styles.tableCell, styles.colDivider, { width: RIGHT_COLS.expiry }]}>{batch.expiryDate ?? "—"}</Text>
                         </View>
                       );
                     })}
                   </View>
 
-                  <View style={{ width: TOTAL_COL, minHeight: groupHeight, justifyContent: "center", alignItems: "flex-end", paddingRight: 6 }}>
-                    <Text style={[styles.totalCell, { color: theme.total }]}>{String(item.historicalStock)}</Text>
+                  <View style={[{ width: TOTAL_COL, minHeight: groupHeight, justifyContent: "center", alignItems: "flex-start", paddingLeft: 4 }, styles.colDivider]}>
+                    <Text style={styles.totalCell}>{String(item.historicalStock)}</Text>
                   </View>
 
                   <View style={{ width: ARROW_COL, minHeight: groupHeight, justifyContent: "center", alignItems: "center" }}>
                     {!isHistorical && (
-                      <MaterialIcons name="chevron-right" size={16} color="#94a3b8" />
+                      <MaterialIcons name="chevron-right" size={16} color="#dc2626" />
                     )}
                   </View>
                 </TouchableOpacity>
@@ -553,12 +553,12 @@ const styles = StyleSheet.create({
   leftHeaderGroup: { flexDirection: "row" },
   rightHeaderGroup: { flexDirection: "row" },
   tableHeaderCell: { fontSize: 9, fontWeight: "800", color: "#334155", paddingHorizontal: 4, letterSpacing: 0.3 },
-  tableHeaderCellRight: { textAlign: "right" },
+  colDivider: { borderRightWidth: 1, borderRightColor: "#cbd5e1" },
   itemGroupRow: { flexDirection: "row", borderBottomWidth: 2, borderBottomColor: "#1e293b" },
   itemGroupRowAlt: { backgroundColor: "#f8fafc" },
   leftStrip: {
     flexDirection: "row", alignItems: "flex-start",
-    borderRightWidth: 1, borderRightColor: "#e2e8f0", backgroundColor: "#fff", paddingVertical: 4,
+    backgroundColor: "#fff", paddingVertical: 4,
   },
   leftStripAlt: { backgroundColor: "#f8fafc" },
   leftStripCell: { fontSize: 9, color: "#475569", paddingHorizontal: 4 },
@@ -572,12 +572,11 @@ const styles = StyleSheet.create({
   batchRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: 2 },
   batchRowDivider: { borderBottomWidth: 1, borderBottomColor: "#cbd5e1" },
   tableCell: { fontSize: 9, color: "#334155", paddingHorizontal: 4 },
-  numericCell: { textAlign: "right" },
-  receivedQtyCell: { color: "#475569", fontWeight: "700" },
+  receivedQtyCell: { color: "#475569", fontWeight: "700", textAlign: "left" },
   issueCell: { color: "#b91c1c", fontWeight: "600" },
   issueMultiLine: { marginBottom: 1 },
-  batchQtyCell: { fontWeight: "800", fontSize: 10, paddingRight: 6 },
-  totalCell: { fontWeight: "800", fontSize: 10 },
+  batchQtyCell: { fontWeight: "800", fontSize: 10, color: "#0f172a", textAlign: "left" },
+  totalCell: { fontWeight: "800", fontSize: 10, color: "#0f172a", textAlign: "left" },
   oosTableHeaderRow: {
     flexDirection: "row", backgroundColor: "#f1f5f9",
     borderBottomWidth: 2, borderBottomColor: "#1e293b", paddingVertical: 8, paddingHorizontal: 10,
