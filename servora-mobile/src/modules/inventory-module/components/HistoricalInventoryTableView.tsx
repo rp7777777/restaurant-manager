@@ -1,33 +1,32 @@
 // ============================================
 // SERVORA ERP — HistoricalInventoryTableView Component
-// ✅ Migration Steps 1-5 — single table for Today and Historical,
-//    real InventoryItem onItemPress, Sort, Full Screen, isHistorical
-//    dynamic theming, Today-mode-only stockStatus filter.
-// ✅ Out of Stock dedicated display (Today mode only) — table-style
-//    layout (S.N./Item Name/Date/Note columns, category grouping,
-//    900px width, darkened dividers).
-// ✅ NEW — "Edit" arrow column (chevron-right icon) at the end of
-//    each item row, shown ONLY in Today mode (isHistorical === false)
-//    — clicking a row in Historical mode still opens
-//    ItemDetailsDrawer, but that drawer always shows CURRENT/live
-//    item data, not a reconstruction of the selected historical
-//    date, so the arrow (a "this is editable/actionable" affordance)
-//    is intentionally omitted there to avoid implying otherwise.
-//    Column width is always reserved in TABLE_WIDTH (kept constant
-//    regardless of mode) so the table's overall layout doesn't shift
-//    between Today and Historical — only the header text and icon
-//    are conditionally rendered within that reserved space.
-// ✅ "Received Qty" column — batch.originalQuantity ONLY when
-//    batch.receivedDate === selectedDate, otherwise "—".
-// ✅ Multi-line Issue column (>2 entries -> one per line, dynamic
-//    row height).
-// ✅ Category chips AND sort/full-screen row both use full page
-//    width (no maxWidth constraint).
+// ✅ Migration Steps 1-5 — single table for Today and Historical.
+// ✅ Out of Stock dedicated table display (Today mode only).
+// ✅ NEW — Total QTY and Edit arrow are now ITEM-LEVEL columns
+//    (siblings of leftStrip/rightBatchRows within itemGroupRow), NOT
+//    inside each batch row. Each spans the full groupHeight and is
+//    vertically centered (justifyContent: "center") — regardless of
+//    how many batches an item has (1 or 10), Total QTY appears
+//    exactly once, centered across the whole item's row-block,
+//    matching Item Name's own layout. This replaces the previous
+//    `batchIndex === 0 ? value : ""` workaround, which rendered
+//    Total QTY inside the FIRST batch row specifically, making it
+//    look misaligned (pinned to the top) whenever an item had
+//    multiple batches or any batch had multi-line Issue content.
+// ✅ Column order preserved: S.N. / Item Name / Received / Lot/Batch
+//    No. / Received Qty / Issue / Lot/Batch QTY / Unit / Expiry /
+//    Total QTY / Edit.
+// ✅ Column widths tightened to fit within 900px without horizontal
+//    scrolling. Text wrapping (no numberOfLines truncation) on Item
+//    Name/Batch No.
+// ✅ oosRow uses minHeight so wrapped Item Name text in the Out of
+//    Stock table never clips.
+// ✅ Header/row divider borders darkened (#1e293b, 2px).
 // FROZEN
 // ============================================
 
 import React, { useMemo } from "react";
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TextInput, TouchableOpacity, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TextInput, TouchableOpacity } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { Category } from "../types/category";
 import {
@@ -80,13 +79,17 @@ interface OutOfStockGroup {
 }
 
 const ROW_HEIGHT = 26;
-const LEFT_COLS = { sn: 40, item: 170 };
-const RIGHT_COLS = { date: 90, batch: 110, receivedQty: 76, issue: 160, stock: 90, unit: 70, expiry: 90, total: 122, arrow: 40 };
+const LEFT_COLS = { sn: 35, item: 130 };
+const RIGHT_COLS = { date: 75, batch: 85, receivedQty: 60, issue: 175, stock: 70, unit: 50, expiry: 75 };
+const TOTAL_COL = 75;
+const ARROW_COL = 35;
 const LEFT_WIDTH = LEFT_COLS.sn + LEFT_COLS.item;
-const RIGHT_WIDTH =
+const BATCH_COLS_WIDTH =
   RIGHT_COLS.date + RIGHT_COLS.batch + RIGHT_COLS.receivedQty + RIGHT_COLS.issue + RIGHT_COLS.stock +
-  RIGHT_COLS.unit + RIGHT_COLS.expiry + RIGHT_COLS.total + RIGHT_COLS.arrow;
-const TABLE_WIDTH = LEFT_WIDTH + RIGHT_WIDTH;
+  RIGHT_COLS.unit + RIGHT_COLS.expiry;
+const TABLE_WIDTH = LEFT_WIDTH + BATCH_COLS_WIDTH + TOTAL_COL + ARROW_COL;
+
+const OUTER_BLOCK_WIDTH = 900;
 
 const OOS_TABLE_WIDTH = 900;
 const OOS_COLS = { sn: 50, item: 260, date: 160, note: 180 };
@@ -280,7 +283,7 @@ export function HistoricalInventoryTableView({
                   style={[styles.oosRow, itemIndex % 2 === 1 && styles.itemGroupRowAlt]}
                 >
                   <Text style={[styles.leftStripCell, { width: OOS_COLS.sn }]}>{itemIndex + 1}</Text>
-                  <Text style={[styles.itemNameCell, { width: OOS_COLS.item }]} numberOfLines={1}>{item.itemName}</Text>
+                  <Text style={[styles.itemNameCell, { width: OOS_COLS.item }]}>{item.itemName}</Text>
                   <Text style={[styles.leftStripCell, { width: OOS_COLS.date }]}>{item.depletedSince ?? "—"}</Text>
                   <Text style={[styles.oosNoteText, { width: OOS_COLS.note }]}>Out of stock</Text>
                 </View>
@@ -373,125 +376,119 @@ export function HistoricalInventoryTableView({
       ) : (
         categoryGroups.map((group) => (
           <View key={group.categoryId} style={[styles.categoryBlock, { width: TABLE_WIDTH }]}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.horizontalScroll}
-            >
-              <View style={{ width: TABLE_WIDTH }}>
-                <View style={[styles.categoryHeader, { backgroundColor: theme.headerBg }]}>
-                  <Text style={styles.categoryHeaderText}>
-                    {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
-                  </Text>
-                </View>
+            <View style={[styles.categoryHeader, { backgroundColor: theme.headerBg }]}>
+              <Text style={styles.categoryHeaderText}>
+                {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
+              </Text>
+            </View>
 
-                <View style={styles.tableHeaderRow}>
-                  <View style={[styles.leftHeaderGroup, { width: LEFT_WIDTH }]}>
-                    <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.sn }]}>S.N.</Text>
-                    <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.item }]}>Item Name</Text>
+            <View style={styles.tableHeaderRow}>
+              <View style={[styles.leftHeaderGroup, { width: LEFT_WIDTH }]}>
+                <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.sn }]}>S.N.</Text>
+                <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.item }]}>Item Name</Text>
+              </View>
+              <View style={styles.rightHeaderGroup}>
+                <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.date }]}>Received</Text>
+                <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
+                <Text style={[styles.tableHeaderCell, styles.tableHeaderCellRight, { width: RIGHT_COLS.receivedQty }]}>Received Qty</Text>
+                <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.issue }]}>Issue</Text>
+                <Text style={[styles.tableHeaderCell, styles.tableHeaderCellRight, { width: RIGHT_COLS.stock }]}>Lot/Batch QTY</Text>
+                <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
+                <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry</Text>
+              </View>
+              <Text style={[styles.tableHeaderCell, styles.tableHeaderCellRight, { width: TOTAL_COL }]}>Total QTY</Text>
+              {!isHistorical && (
+                <Text style={[styles.tableHeaderCell, { width: ARROW_COL, textAlign: "center" }]}>Edit</Text>
+              )}
+            </View>
+
+            {group.items.map((item, itemIndex) => {
+              const groupHeight = item.batches.reduce(
+                (sum, b) => sum + getBatchRowHeight(b.issues.length), 0
+              );
+              const realItem = inventoryItemById.get(item.inventoryId);
+              const isEvenRow = itemIndex % 2 === 1;
+
+              return (
+                <TouchableOpacity
+                  key={item.inventoryId}
+                  style={[
+                    styles.itemGroupRow,
+                    { minHeight: groupHeight },
+                    isEvenRow && styles.itemGroupRowAlt,
+                  ]}
+                  onPress={() => { if (realItem) onItemPress(realItem); }}
+                  activeOpacity={0.7}
+                  disabled={!realItem}
+                >
+                  <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }, isEvenRow && styles.leftStripAlt]}>
+                    <Text style={[styles.leftStripCell, { width: LEFT_COLS.sn }]}>{itemIndex + 1}</Text>
+                    <View style={{ width: LEFT_COLS.item }}>
+                      <Text style={[styles.leftStripCell, styles.itemNameCell]}>{item.itemName}</Text>
+                      {item.hasInconsistency && (
+                        <View style={styles.inconsistencyBadge}>
+                          <MaterialIcons name="warning" size={10} color="#b45309" />
+                          <Text style={styles.inconsistencyText}>data issue</Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
-                  <View style={styles.rightHeaderGroup}>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.date }]}>Received</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
-                    <Text style={[styles.tableHeaderCell, styles.tableHeaderCellRight, { width: RIGHT_COLS.receivedQty }]}>Received Qty</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.issue }]}>Issue</Text>
-                    <Text style={[styles.tableHeaderCell, styles.tableHeaderCellRight, { width: RIGHT_COLS.stock }]}>Lot/Batch QTY</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry</Text>
-                    <Text style={[styles.tableHeaderCell, styles.tableHeaderCellRight, { width: RIGHT_COLS.total }]}>Total QTY</Text>
+
+                  <View style={styles.rightBatchRows}>
+                    {item.batches.map((batch, batchIndex) => {
+                      const useMultiLineIssue = batch.issues.length > 2;
+                      const batchRowHeight = getBatchRowHeight(batch.issues.length);
+                      const wasReceivedToday = batch.receivedDate === selectedDate;
+
+                      return (
+                        <View
+                          key={batch.batchId}
+                          style={[
+                            styles.batchRow,
+                            { minHeight: batchRowHeight },
+                            batchIndex < item.batches.length - 1 && styles.batchRowDivider,
+                          ]}
+                        >
+                          <Text style={[styles.tableCell, { width: RIGHT_COLS.date }]}>{batch.receivedDate}</Text>
+                          <Text style={[styles.tableCell, { width: RIGHT_COLS.batch }]}>{batch.batchNo}</Text>
+                          <Text style={[styles.tableCell, styles.numericCell, styles.receivedQtyCell, { width: RIGHT_COLS.receivedQty }]}>
+                            {wasReceivedToday ? String(batch.originalQuantity) : "—"}
+                          </Text>
+                          <View style={{ width: RIGHT_COLS.issue }}>
+                            {batch.issues.length === 0 ? (
+                              <Text style={[styles.tableCell, styles.issueCell]}>—</Text>
+                            ) : useMultiLineIssue ? (
+                              batch.issues.map((iss, i) => (
+                                <Text key={i} style={[styles.tableCell, styles.issueCell, styles.issueMultiLine]} numberOfLines={1}>
+                                  {iss.quantity} {batch.unit} {iss.source}
+                                </Text>
+                              ))
+                            ) : (
+                              <Text style={[styles.tableCell, styles.issueCell]} numberOfLines={1}>
+                                {batch.issues.map((iss) => `${iss.quantity} ${batch.unit} ${iss.source}`).join(" • ")}
+                              </Text>
+                            )}
+                          </View>
+                          <Text style={[styles.tableCell, styles.numericCell, styles.batchQtyCell, { width: RIGHT_COLS.stock, color: theme.batchQty }]}>{batch.quantity}</Text>
+                          <Text style={[styles.tableCell, { width: RIGHT_COLS.unit }]}>{batch.unit}</Text>
+                          <Text style={[styles.tableCell, { width: RIGHT_COLS.expiry }]}>{batch.expiryDate ?? "—"}</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+
+                  <View style={{ width: TOTAL_COL, minHeight: groupHeight, justifyContent: "center", alignItems: "flex-end", paddingRight: 6 }}>
+                    <Text style={[styles.totalCell, { color: theme.total }]}>{String(item.historicalStock)}</Text>
+                  </View>
+
+                  <View style={{ width: ARROW_COL, minHeight: groupHeight, justifyContent: "center", alignItems: "center" }}>
                     {!isHistorical && (
-                      <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.arrow, textAlign: "center" }]}>Edit</Text>
+                      <MaterialIcons name="chevron-right" size={16} color="#94a3b8" />
                     )}
                   </View>
-                </View>
-
-                {group.items.map((item, itemIndex) => {
-                  const groupHeight = item.batches.reduce(
-                    (sum, b) => sum + getBatchRowHeight(b.issues.length), 0
-                  );
-                  const realItem = inventoryItemById.get(item.inventoryId);
-                  const isEvenRow = itemIndex % 2 === 1;
-
-                  return (
-                    <TouchableOpacity
-                      key={item.inventoryId}
-                      style={[
-                        styles.itemGroupRow,
-                        { minHeight: groupHeight },
-                        isEvenRow && styles.itemGroupRowAlt,
-                      ]}
-                      onPress={() => { if (realItem) onItemPress(realItem); }}
-                      activeOpacity={0.7}
-                      disabled={!realItem}
-                    >
-                      <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }, isEvenRow && styles.leftStripAlt]}>
-                        <Text style={[styles.leftStripCell, { width: LEFT_COLS.sn }]}>{itemIndex + 1}</Text>
-                        <View style={{ width: LEFT_COLS.item }}>
-                          <Text style={[styles.leftStripCell, styles.itemNameCell]} numberOfLines={2}>{item.itemName}</Text>
-                          {item.hasInconsistency && (
-                            <View style={styles.inconsistencyBadge}>
-                              <MaterialIcons name="warning" size={10} color="#b45309" />
-                              <Text style={styles.inconsistencyText}>data issue</Text>
-                            </View>
-                          )}
-                        </View>
-                      </View>
-
-                      <View style={styles.rightBatchRows}>
-                        {item.batches.map((batch, batchIndex) => {
-                          const useMultiLineIssue = batch.issues.length > 2;
-                          const batchRowHeight = getBatchRowHeight(batch.issues.length);
-                          const wasReceivedToday = batch.receivedDate === selectedDate;
-
-                          return (
-                            <View
-                              key={batch.batchId}
-                              style={[
-                                styles.batchRow,
-                                { minHeight: batchRowHeight },
-                                batchIndex < item.batches.length - 1 && styles.batchRowDivider,
-                              ]}
-                            >
-                              <Text style={[styles.tableCell, { width: RIGHT_COLS.date }]}>{batch.receivedDate}</Text>
-                              <Text style={[styles.tableCell, { width: RIGHT_COLS.batch }]} numberOfLines={1}>{batch.batchNo}</Text>
-                              <Text style={[styles.tableCell, styles.numericCell, styles.receivedQtyCell, { width: RIGHT_COLS.receivedQty }]}>
-                                {wasReceivedToday ? String(batch.originalQuantity) : "—"}
-                              </Text>
-                              <View style={{ width: RIGHT_COLS.issue }}>
-                                {batch.issues.length === 0 ? (
-                                  <Text style={[styles.tableCell, styles.issueCell]}>—</Text>
-                                ) : useMultiLineIssue ? (
-                                  batch.issues.map((iss, i) => (
-                                    <Text key={i} style={[styles.tableCell, styles.issueCell, styles.issueMultiLine]} numberOfLines={1}>
-                                      {iss.quantity} {batch.unit} {iss.source}
-                                    </Text>
-                                  ))
-                                ) : (
-                                  <Text style={[styles.tableCell, styles.issueCell]} numberOfLines={1}>
-                                    {batch.issues.map((iss) => `${iss.quantity} ${batch.unit} ${iss.source}`).join(" • ")}
-                                  </Text>
-                                )}
-                              </View>
-                              <Text style={[styles.tableCell, styles.numericCell, styles.batchQtyCell, { width: RIGHT_COLS.stock, color: theme.batchQty }]}>{batch.quantity}</Text>
-                              <Text style={[styles.tableCell, { width: RIGHT_COLS.unit }]}>{batch.unit}</Text>
-                              <Text style={[styles.tableCell, { width: RIGHT_COLS.expiry }]}>{batch.expiryDate ?? "—"}</Text>
-                              <Text style={[styles.tableCell, styles.numericCell, styles.totalCell, { width: RIGHT_COLS.total, color: theme.total }]}>
-                                {batchIndex === 0 ? String(item.historicalStock) : ""}
-                              </Text>
-                              <View style={{ width: RIGHT_COLS.arrow, alignItems: "center" }}>
-                                {batchIndex === 0 && !isHistorical && (
-                                  <MaterialIcons name="chevron-right" size={16} color="#94a3b8" />
-                                )}
-                              </View>
-                            </View>
-                          );
-                        })}
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            </ScrollView>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         ))
       )}
@@ -547,20 +544,17 @@ const styles = StyleSheet.create({
   categoryBlock: {
     marginBottom: 16, borderWidth: 1, borderColor: "#cbd5e1", borderRadius: 4, overflow: "hidden",
   },
-  horizontalScroll: {
-    ...(Platform.OS === "web" ? ({ scrollbarWidth: "thin" } as any) : {}),
-  },
   categoryHeader: { paddingVertical: 7, paddingHorizontal: 10 },
   categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 11, letterSpacing: 0.6 },
   tableHeaderRow: {
     flexDirection: "row", backgroundColor: "#f1f5f9",
-    borderBottomWidth: 1, borderBottomColor: "#cbd5e1", paddingVertical: 8, marginTop: 2,
+    borderBottomWidth: 2, borderBottomColor: "#1e293b", paddingVertical: 8, marginTop: 2,
   },
   leftHeaderGroup: { flexDirection: "row" },
   rightHeaderGroup: { flexDirection: "row" },
   tableHeaderCell: { fontSize: 9, fontWeight: "800", color: "#334155", paddingHorizontal: 4, letterSpacing: 0.3 },
   tableHeaderCellRight: { textAlign: "right" },
-  itemGroupRow: { flexDirection: "row", borderBottomWidth: 1.5, borderBottomColor: "#94a3b8" },
+  itemGroupRow: { flexDirection: "row", borderBottomWidth: 2, borderBottomColor: "#1e293b" },
   itemGroupRowAlt: { backgroundColor: "#f8fafc" },
   leftStrip: {
     flexDirection: "row", alignItems: "flex-start",
@@ -583,16 +577,17 @@ const styles = StyleSheet.create({
   issueCell: { color: "#b91c1c", fontWeight: "600" },
   issueMultiLine: { marginBottom: 1 },
   batchQtyCell: { fontWeight: "800", fontSize: 10, paddingRight: 6 },
-  totalCell: { fontWeight: "800", fontSize: 10, paddingRight: 6 },
+  totalCell: { fontWeight: "800", fontSize: 10 },
   oosTableHeaderRow: {
     flexDirection: "row", backgroundColor: "#f1f5f9",
     borderBottomWidth: 2, borderBottomColor: "#1e293b", paddingVertical: 8, paddingHorizontal: 10,
   },
   oosRow: {
     flexDirection: "row", alignItems: "center",
-    height: ROW_HEIGHT,
+    minHeight: ROW_HEIGHT,
+    paddingVertical: 6,
     paddingHorizontal: 10,
-    borderBottomWidth: 1.5, borderBottomColor: "#94a3b8",
+    borderBottomWidth: 2, borderBottomColor: "#1e293b",
   },
   oosNoteText: { fontSize: 10, color: "#dc2626", fontWeight: "700" },
 });
