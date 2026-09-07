@@ -3,17 +3,14 @@
 // ✅ Migration Steps 1-5 — single table for Today and Historical,
 //    real InventoryItem onItemPress, Sort, Full Screen, isHistorical
 //    dynamic theming, Today-mode-only stockStatus filter.
-// ✅ Out of Stock dedicated display (Today mode only) —
-//    membership ("WHO is out of stock") comes from
-//    liveItem.currentStock <= 0, the SAME source of truth as the
-//    stat card and the main stockStatus filter above — never from
-//    depletedItems' "ALL batches historically depleted" rule alone,
-//    which can disagree for multi-batch items (e.g. 2 batches where
-//    only ONE registers as depleted in replay, yet currentStock is
-//    genuinely 0). "WHEN did it become out of stock" (date
-//    attribution) is looked up from depletedItems when available;
-//    if not found, a neutral "Out of stock" (no date) is shown
-//    instead of hiding the item.
+// ✅ Out of Stock dedicated display (Today mode only) — table-style
+//    layout (S.N. / Item Name / Date / Note columns, category
+//    grouping) instead of a plain list, matching the normal table's
+//    visual structure. Membership ("WHO is out of stock") comes from
+//    liveItem.currentStock <= 0 — the SAME source of truth as the
+//    stat card and the main stockStatus filter above. "Date"/"Note"
+//    (WHEN it became out of stock) is looked up from depletedItems;
+//    falls back to "—"/"Out of stock" if not found.
 // ✅ "Received Qty" column — batch.originalQuantity ONLY when
 //    batch.receivedDate === selectedDate, otherwise "—".
 // ✅ Multi-line Issue column (>2 entries -> one per line, dynamic
@@ -62,6 +59,20 @@ interface HistoricalCategoryGroup {
   items:        HistoricalItemStock[];
 }
 
+interface OutOfStockRow {
+  inventoryId:   string;
+  itemName:      string;
+  categoryId:    string;
+  depletedSince: string | null;
+}
+
+interface OutOfStockGroup {
+  categoryId:   string;
+  categoryName: string;
+  categoryIcon: string | undefined;
+  items:        OutOfStockRow[];
+}
+
 const ROW_HEIGHT = 26;
 const LEFT_COLS = { sn: 40, item: 170 };
 const RIGHT_COLS = { date: 90, batch: 110, receivedQty: 76, issue: 160, stock: 90, unit: 70, expiry: 90, total: 122 };
@@ -70,6 +81,9 @@ const RIGHT_WIDTH =
   RIGHT_COLS.date + RIGHT_COLS.batch + RIGHT_COLS.receivedQty + RIGHT_COLS.issue + RIGHT_COLS.stock +
   RIGHT_COLS.unit + RIGHT_COLS.expiry + RIGHT_COLS.total;
 const TABLE_WIDTH = LEFT_WIDTH + RIGHT_WIDTH;
+
+const OOS_TABLE_WIDTH = 900;
+const OOS_COLS = { sn: 50, item: 260, date: 160, note: 180 };
 
 const UNCATEGORIZED_ID = "__uncategorized__";
 
@@ -173,18 +187,13 @@ export function HistoricalInventoryTableView({
     return groups;
   }, [filteredItems, categories, sort]);
 
-  if (loading) {
-    return <ActivityIndicator size="large" color={theme.headerBg} style={styles.loadingIndicator} />;
-  }
-
-  const isShowingOutOfStock = !isHistorical && stockStatus === "outOfStock";
-
-  if (isShowingOutOfStock) {
+  // ✅ NEW — Out of Stock grouped rows (S.N./Item Name/Date/Note),
+  // computed only when needed.
+  const outOfStockGroups = useMemo<OutOfStockGroup[]>(() => {
     const depletedSinceByInventoryId = new Map(depletedItems.map((d) => [d.inventoryId, d.depletedSince]));
-
     const outOfStockItems = inventoryItems.filter((item) => item.currentStock <= 0);
 
-    const filteredOutOfStockItems = outOfStockItems
+    const rows: OutOfStockRow[] = outOfStockItems
       .filter((item) => {
         if (categoryId && item.categoryId !== categoryId) return false;
         if (searchQuery.trim() && !item.itemName.toLowerCase().includes(searchQuery.trim().toLowerCase())) return false;
@@ -193,9 +202,42 @@ export function HistoricalInventoryTableView({
       .map((item) => ({
         inventoryId:   item.id,
         itemName:      item.itemName,
+        categoryId:    item.categoryId,
         depletedSince: depletedSinceByInventoryId.get(item.id) ?? null,
       }));
 
+    const categoryById = new Map(categories.map((c) => [c.id, c]));
+    const byCategory = new Map<string, OutOfStockRow[]>();
+    for (const row of rows) {
+      const key = row.categoryId && categoryById.has(row.categoryId) ? row.categoryId : UNCATEGORIZED_ID;
+      const list = byCategory.get(key) ?? [];
+      list.push(row);
+      byCategory.set(key, list);
+    }
+
+    const groups: OutOfStockGroup[] = [];
+    for (const category of categories) {
+      const items = byCategory.get(category.id);
+      if (!items || items.length === 0) continue;
+      items.sort((a, b) => a.itemName.localeCompare(b.itemName));
+      groups.push({ categoryId: category.id, categoryName: category.name, categoryIcon: category.icon, items });
+    }
+    const uncategorized = byCategory.get(UNCATEGORIZED_ID);
+    if (uncategorized && uncategorized.length > 0) {
+      uncategorized.sort((a, b) => a.itemName.localeCompare(b.itemName));
+      groups.push({ categoryId: UNCATEGORIZED_ID, categoryName: "Uncategorized", categoryIcon: undefined, items: uncategorized });
+    }
+    groups.sort((a, b) => a.categoryName.localeCompare(b.categoryName));
+    return groups;
+  }, [depletedItems, inventoryItems, categories, categoryId, searchQuery]);
+
+  if (loading) {
+    return <ActivityIndicator size="large" color={theme.headerBg} style={styles.loadingIndicator} />;
+  }
+
+  const isShowingOutOfStock = !isHistorical && stockStatus === "outOfStock";
+
+  if (isShowingOutOfStock) {
     return (
       <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
         <View style={styles.searchRow}>
@@ -209,22 +251,38 @@ export function HistoricalInventoryTableView({
           />
         </View>
 
-        {filteredOutOfStockItems.length === 0 ? (
+        {outOfStockGroups.length === 0 ? (
           <View style={styles.emptyState}>
             <MaterialIcons name="check-circle" size={40} color="#cbd5e1" />
             <Text style={styles.emptyStateText}>No out-of-stock items</Text>
           </View>
         ) : (
-          <View style={styles.depletedList}>
-            {filteredOutOfStockItems.map((d) => (
-              <View key={d.inventoryId} style={styles.depletedRow}>
-                <Text style={styles.depletedItemName}>{d.itemName}</Text>
-                <Text style={styles.depletedSinceText}>
-                  {d.depletedSince ? `Out of stock since ${d.depletedSince}` : "Out of stock"}
+          outOfStockGroups.map((group) => (
+            <View key={group.categoryId} style={[styles.categoryBlock, { width: OOS_TABLE_WIDTH }]}>
+              <View style={[styles.categoryHeader, { backgroundColor: theme.headerBg }]}>
+                <Text style={styles.categoryHeaderText}>
+                  {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
                 </Text>
               </View>
-            ))}
-          </View>
+              <View style={styles.oosTableHeaderRow}>
+                <Text style={[styles.tableHeaderCell, { width: OOS_COLS.sn }]}>S.N.</Text>
+                <Text style={[styles.tableHeaderCell, { width: OOS_COLS.item }]}>Item Name</Text>
+                <Text style={[styles.tableHeaderCell, { width: OOS_COLS.date }]}>Date</Text>
+                <Text style={[styles.tableHeaderCell, { width: OOS_COLS.note }]}>Note</Text>
+              </View>
+              {group.items.map((item, itemIndex) => (
+                <View
+                  key={item.inventoryId}
+                  style={[styles.oosRow, itemIndex % 2 === 1 && styles.itemGroupRowAlt]}
+                >
+                  <Text style={[styles.leftStripCell, { width: OOS_COLS.sn }]}>{itemIndex + 1}</Text>
+                  <Text style={[styles.itemNameCell, { width: OOS_COLS.item }]} numberOfLines={1}>{item.itemName}</Text>
+                  <Text style={[styles.leftStripCell, { width: OOS_COLS.date }]}>{item.depletedSince ?? "—"}</Text>
+                  <Text style={[styles.oosNoteText, { width: OOS_COLS.note }]}>Out of stock</Text>
+                </View>
+              ))}
+            </View>
+          ))
         )}
       </ScrollView>
     );
@@ -514,14 +572,15 @@ const styles = StyleSheet.create({
   issueMultiLine: { marginBottom: 1 },
   batchQtyCell: { fontWeight: "800", fontSize: 10, paddingRight: 6 },
   totalCell: { fontWeight: "800", fontSize: 10, paddingRight: 6 },
-  depletedList: {
-    width: "100%", maxWidth: 500, backgroundColor: "#fff",
-    borderRadius: 8, borderWidth: 1, borderColor: "#cbd5e1", overflow: "hidden",
+  oosTableHeaderRow: {
+    flexDirection: "row", backgroundColor: "#f1f5f9",
+    borderBottomWidth: 2, borderBottomColor: "#1e293b", paddingVertical: 8, paddingHorizontal: 10,
   },
-  depletedRow: {
-    paddingVertical: 12, paddingHorizontal: 14,
-    borderBottomWidth: 1, borderBottomColor: "#f1f5f9",
+  oosRow: {
+    flexDirection: "row", alignItems: "center",
+    height: ROW_HEIGHT,
+    paddingHorizontal: 10,
+    borderBottomWidth: 1.5, borderBottomColor: "#94a3b8",
   },
-  depletedItemName: { fontSize: 13, fontWeight: "700", color: "#0f172a" },
-  depletedSinceText: { fontSize: 11, color: "#dc2626", fontWeight: "600", marginTop: 2 },
+  oosNoteText: { fontSize: 10, color: "#dc2626", fontWeight: "700" },
 });
