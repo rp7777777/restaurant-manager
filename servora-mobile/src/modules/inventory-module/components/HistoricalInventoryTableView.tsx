@@ -4,13 +4,19 @@
 //    real InventoryItem onItemPress, Sort, Full Screen, isHistorical
 //    dynamic theming, Today-mode-only stockStatus filter.
 // ✅ Out of Stock dedicated display (Today mode only) — table-style
-//    layout (S.N. / Item Name / Date / Note columns, category
-//    grouping) instead of a plain list, matching the normal table's
-//    visual structure. Membership ("WHO is out of stock") comes from
-//    liveItem.currentStock <= 0 — the SAME source of truth as the
-//    stat card and the main stockStatus filter above. "Date"/"Note"
-//    (WHEN it became out of stock) is looked up from depletedItems;
-//    falls back to "—"/"Out of stock" if not found.
+//    layout (S.N./Item Name/Date/Note columns, category grouping,
+//    900px width, darkened dividers).
+// ✅ NEW — "Edit" arrow column (chevron-right icon) at the end of
+//    each item row, shown ONLY in Today mode (isHistorical === false)
+//    — clicking a row in Historical mode still opens
+//    ItemDetailsDrawer, but that drawer always shows CURRENT/live
+//    item data, not a reconstruction of the selected historical
+//    date, so the arrow (a "this is editable/actionable" affordance)
+//    is intentionally omitted there to avoid implying otherwise.
+//    Column width is always reserved in TABLE_WIDTH (kept constant
+//    regardless of mode) so the table's overall layout doesn't shift
+//    between Today and Historical — only the header text and icon
+//    are conditionally rendered within that reserved space.
 // ✅ "Received Qty" column — batch.originalQuantity ONLY when
 //    batch.receivedDate === selectedDate, otherwise "—".
 // ✅ Multi-line Issue column (>2 entries -> one per line, dynamic
@@ -75,11 +81,11 @@ interface OutOfStockGroup {
 
 const ROW_HEIGHT = 26;
 const LEFT_COLS = { sn: 40, item: 170 };
-const RIGHT_COLS = { date: 90, batch: 110, receivedQty: 76, issue: 160, stock: 90, unit: 70, expiry: 90, total: 122 };
+const RIGHT_COLS = { date: 90, batch: 110, receivedQty: 76, issue: 160, stock: 90, unit: 70, expiry: 90, total: 122, arrow: 40 };
 const LEFT_WIDTH = LEFT_COLS.sn + LEFT_COLS.item;
 const RIGHT_WIDTH =
   RIGHT_COLS.date + RIGHT_COLS.batch + RIGHT_COLS.receivedQty + RIGHT_COLS.issue + RIGHT_COLS.stock +
-  RIGHT_COLS.unit + RIGHT_COLS.expiry + RIGHT_COLS.total;
+  RIGHT_COLS.unit + RIGHT_COLS.expiry + RIGHT_COLS.total + RIGHT_COLS.arrow;
 const TABLE_WIDTH = LEFT_WIDTH + RIGHT_WIDTH;
 
 const OOS_TABLE_WIDTH = 900;
@@ -187,8 +193,6 @@ export function HistoricalInventoryTableView({
     return groups;
   }, [filteredItems, categories, sort]);
 
-  // ✅ NEW — Out of Stock grouped rows (S.N./Item Name/Date/Note),
-  // computed only when needed.
   const outOfStockGroups = useMemo<OutOfStockGroup[]>(() => {
     const depletedSinceByInventoryId = new Map(depletedItems.map((d) => [d.inventoryId, d.depletedSince]));
     const outOfStockItems = inventoryItems.filter((item) => item.currentStock <= 0);
@@ -395,6 +399,9 @@ export function HistoricalInventoryTableView({
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
                     <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry</Text>
                     <Text style={[styles.tableHeaderCell, styles.tableHeaderCellRight, { width: RIGHT_COLS.total }]}>Total QTY</Text>
+                    {!isHistorical && (
+                      <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.arrow, textAlign: "center" }]}>Edit</Text>
+                    )}
                   </View>
                 </View>
 
@@ -471,6 +478,11 @@ export function HistoricalInventoryTableView({
                               <Text style={[styles.tableCell, styles.numericCell, styles.totalCell, { width: RIGHT_COLS.total, color: theme.total }]}>
                                 {batchIndex === 0 ? String(item.historicalStock) : ""}
                               </Text>
+                              <View style={{ width: RIGHT_COLS.arrow, alignItems: "center" }}>
+                                {batchIndex === 0 && !isHistorical && (
+                                  <MaterialIcons name="chevron-right" size={16} color="#94a3b8" />
+                                )}
+                              </View>
                             </View>
                           );
                         })}
