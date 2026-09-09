@@ -16,20 +16,21 @@
 // ✅ batchAllocationsByRequestId (from useStoreRequests) passed
 //    through to KitchenRequestTable for the Lot/Batch No. column.
 // ✅ FIX — actorName fallback changed from `??` to `.trim() || ...`.
-//    Root cause: a real user's Firestore document was found to have
-//    name: "" (an empty string, not null/undefined) — `??` treats
-//    "" as a valid value and never falls through to email/"Store",
-//    so Approve/Reject/Issue actions were silently recording an
-//    EMPTY actor name. `.trim() || ...` treats any empty-or-
-//    whitespace-only name as falsy, correctly falling back to email,
-//    then "Store" if even that's unavailable.
 // 🔒 CONFIRMED BUSINESS RULE — Partial Issue: issuing less than
 //    orderQuantity still marks the request ISSUED (no
 //    PARTIALLY_ISSUED status, no remainder tracking).
+// ✅ categories fetched via useCategoriesForPicker, passed to
+//    KitchenRequestTable for category-wise grouping.
+// ✅ NEW — StoreStats cards are now clickable. statusFilter state
+//    here filters displayRequests by req.status BEFORE passing to
+//    KitchenRequestTable — the stat COUNTS themselves stay
+//    restaurant-wide (unfiltered `requests`), only the TABLE content
+//    is filtered. Clicking the already-active card's status again
+//    clears the filter (toggle), handled by passing null.
 // FROZEN
 // ============================================
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   ScrollView, StyleSheet, ActivityIndicator, Text, View,
   RefreshControl, Platform, Alert,
@@ -42,9 +43,10 @@ import {
 } from "../kitchen-module/services/kitchen-request-service";
 import { IngredientRequest } from "../kitchen-module/types/kitchen-types";
 import { useInventory } from "../../modules/inventory-module/hooks/useInventory";
+import { useCategoriesForPicker } from "../../modules/inventory-module/hooks/useCategoriesForPicker";
 import { useStoreRequests } from "./hooks/useStoreRequests";
 import { StoreHeader } from "./components/StoreHeader";
-import { StoreStats } from "./components/StoreStats";
+import { StoreStats, StoreStatusFilter } from "./components/StoreStats";
 import { StoreDateNavigator } from "./components/StoreDateNavigator";
 import { KitchenRequestTable } from "./components/KitchenRequestTable";
 import { PendingActionModal } from "./components/PendingActionModal";
@@ -55,6 +57,7 @@ import { shiftDate } from "./utils/store-formatters";
 export default function StoreScreen() {
   const { theme, restaurantId, userProfile } = useApp();
   const { items: inventoryItems } = useInventory(restaurantId);
+  const { categories } = useCategoriesForPicker(restaurantId);
 
   const {
     requests, displayRequests, loading, refreshing, onRefresh,
@@ -62,6 +65,7 @@ export default function StoreScreen() {
   } = useStoreRequests(restaurantId);
 
   const [processing, setProcessing] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<StoreStatusFilter>(null);
 
   const [pendingTarget, setPendingTarget] = useState<IngredientRequest | null>(null);
   const [issueTarget, setIssueTarget] = useState<IngredientRequest | null>(null);
@@ -138,6 +142,12 @@ export default function StoreScreen() {
   const issuedCount   = requests.filter((r) => r.status === "ISSUED").length;
   const rejectedCount = requests.filter((r) => r.status === "REJECTED").length;
 
+  // ✅ NEW — table-only filter; stat counts above stay unfiltered.
+  const filteredDisplayRequests = useMemo(() => {
+    if (!statusFilter) return displayRequests;
+    return displayRequests.filter((r) => r.status === statusFilter);
+  }, [displayRequests, statusFilter]);
+
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: theme.bg }]}
@@ -154,6 +164,8 @@ export default function StoreScreen() {
           rejectedCount={rejectedCount}
           cardBg={theme.card}
           textSecondary={theme.textSecondary}
+          activeStatus={statusFilter}
+          onStatusPress={setStatusFilter}
         />
 
         <StoreDateNavigator
@@ -166,7 +178,7 @@ export default function StoreScreen() {
 
         {loading ? (
           <ActivityIndicator color={theme.primary} style={{ marginTop: 20 }} />
-        ) : displayRequests.length === 0 ? (
+        ) : filteredDisplayRequests.length === 0 ? (
           <View style={[styles.emptyBox, { backgroundColor: theme.card }]}>
             <MaterialIcons name="inventory" size={40} color={theme.textSecondary} />
             <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
@@ -175,8 +187,9 @@ export default function StoreScreen() {
           </View>
         ) : (
           <KitchenRequestTable
-            requests={displayRequests}
+            requests={filteredDisplayRequests}
             batchAllocationsByRequestId={batchAllocationsByRequestId}
+            categories={categories}
             onRowPress={handleRowPress}
           />
         )}

@@ -1,25 +1,20 @@
 // ============================================
 // SERVORA ERP — StoreStats Component
-// ✅ EVOLUTIONARY EXTRACTION — the 4-stat horizontal scroll strip
-//    moved verbatim from index.tsx. Pure presentation — receives
-//    pre-computed counts as props, computes nothing itself.
-// ✅ FIX — textSecondary is now a prop (matching the original
-//    index.tsx's theme.textSecondary usage exactly), not a
-//    hardcoded color. The previous version silently dropped
-//    dark/light theme responsiveness for the stat labels — a real
-//    visual regression against the "verbatim extraction, behavior
-//    unchanged" rule. Now the caller (index.tsx) passes
-//    theme.textSecondary through, exactly as the original inline
-//    JSX did.
+// ✅ NEW — cards are now clickable (TouchableOpacity), filtering the
+//    table below by status via onStatusPress. activeStatus highlights
+//    the currently-selected filter's card. Clicking the SAME
+//    already-active status again clears the filter (toggle behavior),
+//    handled in the parent (index.tsx).
 // ✅ These counts are ALWAYS restaurant-wide totals (computed from
-//    the full `requests` array, not displayRequests) — matches
-//    original index.tsx behavior exactly, unchanged.
+//    the full `requests` array, not displayRequests) — unchanged.
 // FROZEN
 // ============================================
 
 import React from "react";
-import { View, Text, StyleSheet, ScrollView } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
+
+export type StoreStatusFilter = "PENDING" | "APPROVED" | "ISSUED" | "REJECTED" | null;
 
 interface StoreStatsProps {
   pendingCount:   number;
@@ -28,34 +23,50 @@ interface StoreStatsProps {
   rejectedCount:  number;
   cardBg:         string;
   textSecondary:  string;
+  activeStatus:   StoreStatusFilter;
+  onStatusPress:  (status: StoreStatusFilter) => void;
 }
 
 interface StatDef {
-  label: string;
-  value: number;
-  color: string;
-  icon:  keyof typeof MaterialIcons.glyphMap;
+  label:  string;
+  value:  number;
+  color:  string;
+  icon:   keyof typeof MaterialIcons.glyphMap;
+  status: NonNullable<StoreStatusFilter>;
 }
 
 export function StoreStats({
   pendingCount, approvedCount, issuedCount, rejectedCount, cardBg, textSecondary,
+  activeStatus, onStatusPress,
 }: StoreStatsProps) {
   const stats: StatDef[] = [
-    { label: "Pending",  value: pendingCount,  color: "#f59e0b", icon: "schedule" },
-    { label: "Approved", value: approvedCount, color: "#3b82f6", icon: "check-circle" },
-    { label: "Issued",   value: issuedCount,   color: "#10b981", icon: "done-all" },
-    { label: "Rejected", value: rejectedCount, color: "#ef4444", icon: "cancel" },
+    { label: "Pending",  value: pendingCount,  color: "#f59e0b", icon: "schedule",      status: "PENDING" },
+    { label: "Approved", value: approvedCount, color: "#3b82f6", icon: "check-circle",  status: "APPROVED" },
+    { label: "Issued",   value: issuedCount,   color: "#10b981", icon: "done-all",      status: "ISSUED" },
+    { label: "Rejected", value: rejectedCount, color: "#ef4444", icon: "cancel",        status: "REJECTED" },
   ];
 
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.statsScroll} contentContainerStyle={styles.statsRow}>
-      {stats.map(({ label, value, color, icon }) => (
-        <View key={label} style={[styles.statCard, { backgroundColor: cardBg }]}>
-          <MaterialIcons name={icon} size={13} color={color} />
-          <Text style={[styles.statValue, { color }]}>{value}</Text>
-          <Text style={[styles.statLabel, { color: textSecondary }]}>{label}</Text>
-        </View>
-      ))}
+      {stats.map(({ label, value, color, icon, status }) => {
+        const isActive = activeStatus === status;
+        return (
+          <TouchableOpacity
+            key={label}
+            style={[
+              styles.statCard,
+              { backgroundColor: cardBg },
+              isActive && { borderColor: color, borderWidth: 2 },
+            ]}
+            onPress={() => onStatusPress(isActive ? null : status)}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name={icon} size={13} color={color} />
+            <Text style={[styles.statValue, { color }]}>{value}</Text>
+            <Text style={[styles.statLabel, { color: textSecondary }]}>{label}</Text>
+          </TouchableOpacity>
+        );
+      })}
     </ScrollView>
   );
 }
