@@ -10,39 +10,25 @@
 // ✅ Category-grouped layout, alphabetical by category name.
 // ✅ Batch Allocation display — per-batch row-span breakdown, with
 //    "Before" on the first sub-row and "Stock After" on the last.
-// ✅ FIX — categoryBlock's outer bordered box is now explicitly
-//    sized to TABLE_WIDTH (via an inline style,
-//    [styles.categoryBlock, { width: TABLE_WIDTH }]), not left to
-//    stretch to its parent (pageContainer, ~850px). Previously the
-//    outer box's border extended the FULL page width regardless of
-//    how wide the inner table's actual content was — for a table
-//    with few/short columns, this left a visible strip of empty
-//    space to the right of the table INSIDE the bordered box, with
-//    the box's own right border sitting far past where the table's
-//    content actually ended. Now the outer box's border hugs
-//    exactly the table's real width, so the border only ever
-//    appears where content actually is.
-// ✅ Row-border fix (previous pass) — rightBatchRows uses only
-//    flex:1; batchRow carries no border itself; batchRowDivider is
-//    applied only to interior batch sub-rows so a multi-batch
-//    group's last row gets exactly one border (from
-//    movementGroupRow), not a doubled one.
+// ✅ categoryBlock's outer bordered box is explicitly sized to
+//    TABLE_WIDTH, not stretched to pageContainer's full width.
 // ✅ Content-aware dynamic column widths (Item/Notes capped at
-//    180/220px) — TABLE_WIDTH is always derived from the same
-//    dynamic COLS object, so this box-width fix can never drift out
-//    of sync with the actual rendered columns.
+//    180/220px).
 // ✅ "Before" / "Stock After" — historical audit-log terminology.
 // ✅ Notes column — movement.reason, shown once per movement group.
-// ✅ A4-ish centered page container (~850px max width) as a soft
-//    outer boundary; each category's own box now sizes itself to
-//    its own content width within that boundary, scrolling
-//    horizontally per-category if content exceeds it.
-// ✅ Compact rows (Excel-default-row-height sizing).
+// ✅ A4-ish centered page container (~850px max width).
 // ✅ Read-only — no actions on this screen.
+// ✅ NEW — visual consistency pass matching
+//    HistoricalInventoryTableView.tsx's design language: larger text
+//    (category header 13px, column headers 12px, row data 11px),
+//    darkened row/divider borders (#94a3b8/#475569 instead of the
+//    lighter originals), stockAfterCell recolored to fixed black
+//    (#0f172a) instead of green, matching Inventory's convention of
+//    quantity numbers being neutral black rather than
+//    semantically-colored.
 // ⚠️ SCALE NOTE (documented, not addressed here): movements are
 //    loaded live restaurant-wide, then filtered client-side by
-//    date/type. Fine at current scale; a future date-ranged query
-//    could optimize this if movement volume grows substantially.
+//    date/type.
 // FROZEN
 // ============================================
 
@@ -129,14 +115,14 @@ interface CategoryGroup {
   movements: StockMovement[];
 }
 
-const ROW_HEIGHT = 24;
+const ROW_HEIGHT = 26;
 
-const PX_PER_CHAR = 6.2;
+const PX_PER_CHAR = 6.5;
 const HEADER_LABELS = {
   sn: "S.N.", item: "Item", type: "Type", time: "Time",
   batch: "Batch", qty: "Qty", before: "Before", stockAfter: "Stock After", notes: "Notes",
 };
-const COL_MIN = { sn: 26, item: 78, type: 68, time: 44, batch: 56, qty: 44, before: 44, stockAfter: 60, notes: 100 };
+const COL_MIN = { sn: 28, item: 82, type: 72, time: 48, batch: 60, qty: 48, before: 48, stockAfter: 66, notes: 105 };
 const COL_MAX = { item: 180, notes: 220 };
 
 function widthFor(key: keyof typeof COL_MIN, longestChars: number): number {
@@ -299,8 +285,6 @@ export function MovementHistoryModal({ visible, restaurantId, items, categories,
               </View>
             ) : (
               categoryGroups.map((group) => (
-                // ✅ FIX — outer box explicitly sized to TABLE_WIDTH,
-                // not stretched to pageContainer's full width.
                 <View key={group.category.id} style={[styles.categoryBlock, { width: TABLE_WIDTH }]}>
                   <ScrollView horizontal showsHorizontalScrollIndicator={true}>
                     <View style={{ width: TABLE_WIDTH }}>
@@ -426,37 +410,37 @@ const styles = StyleSheet.create({
   emptyStateText: { color: "#94a3b8", fontSize: 13, fontWeight: "600" },
   categoryBlock: {
     marginBottom: 16,
-    borderWidth: 1, borderColor: "#1e293b", borderRadius: 6,
+    borderWidth: 1.5, borderColor: "#475569", borderRadius: 4,
     overflow: "hidden",
   },
-  categoryHeader: { backgroundColor: "#059669", paddingVertical: 6, paddingHorizontal: 10 },
-  categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 11, letterSpacing: 0.5 },
+  categoryHeader: { backgroundColor: "#059669", paddingVertical: 7, paddingHorizontal: 10 },
+  categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.5 },
   tableHeaderRow: {
     flexDirection: "row",
-    backgroundColor: "#fef9c3",
+    backgroundColor: "#f1f5f9",
     borderBottomWidth: 2, borderBottomColor: "#1e293b",
-    paddingVertical: 4,
+    paddingVertical: 8,
   },
-  tableHeaderCell: { fontSize: 9, fontWeight: "800", color: "#1e293b", paddingHorizontal: 3 },
+  tableHeaderCell: { fontSize: 12, fontWeight: "800", color: "#1e293b", paddingHorizontal: 3 },
   movementGroupRow: {
     flexDirection: "row",
     width: "100%",
-    borderBottomWidth: 1, borderBottomColor: "#94a3b8",
+    borderBottomWidth: 1.5, borderBottomColor: "#475569",
   },
   leftStrip: {
     flexDirection: "row", alignItems: "center",
-    borderRightWidth: 1, borderRightColor: "#cbd5e1",
+    borderRightWidth: 1, borderRightColor: "#94a3b8",
     backgroundColor: "#f8fafc",
   },
-  leftStripCell: { fontSize: 10, color: "#334155", paddingHorizontal: 3 },
+  leftStripCell: { fontSize: 11, color: "#334155", paddingHorizontal: 3 },
   rightBatchRows: { flex: 1 },
   batchRow: {
     flexDirection: "row", alignItems: "center",
     width: "100%",
   },
   batchRowDivider: {
-    borderBottomWidth: 1, borderBottomColor: "#f1f5f9",
+    borderBottomWidth: 1, borderBottomColor: "#94a3b8",
   },
-  cell: { fontSize: 10, color: "#334155", paddingHorizontal: 3 },
-  stockAfterCell: { fontWeight: "800", color: "#059669" },
+  cell: { fontSize: 11, color: "#334155", paddingHorizontal: 3 },
+  stockAfterCell: { fontWeight: "800", color: "#0f172a" },
 });
