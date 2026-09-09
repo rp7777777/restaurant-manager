@@ -14,7 +14,9 @@
 // ✅ Does not touch setShowForm/setEditingItem directly.
 // ✅ checkForReturnAndReopen() is meant to be called from exactly
 //    ONE useFocusEffect in InventoryScreen.tsx.
-// 🔧 Debug logs retained for now — remove once fix is fully verified.
+// ✅ Debug logging removed — the fix has been verified in production
+//    use for some time.
+// FROZEN
 // ============================================
 
 import { useState, useEffect, useCallback } from "react";
@@ -41,30 +43,21 @@ export function useSupplierDetourNavigation({
   const [pendingNav, setPendingNav] = useState(false);
 
   useEffect(() => {
-    console.log("[detour] effect fired. pendingNav:", pendingNav, "showForm:", showForm);
     if (pendingNav && !showForm) {
-      console.log("[detour] navigating to /suppliers now");
       setPendingNav(false);
       router.push("/suppliers");
     }
   }, [pendingNav, showForm, router]);
 
   const triggerSupplierDetour = useCallback(() => {
-    console.log("[detour] triggerSupplierDetour called");
     closeForm();
     setPendingNav(true);
   }, [closeForm]);
 
   const checkForReturnAndReopen = useCallback(() => {
-    console.log(
-      "[detour] checkForReturnAndReopen called. isDetourActive:", isDetourActive(),
-      "hasPendingDraft:", hasPendingDraft(),
-      "showForm:", showForm
-    );
     // ✅ FIX — Context-level guard, not a component-local ref.
     if (isDetourActive()) return;
     if (hasPendingDraft() && !showForm) {
-      console.log("[detour] reopening modal");
       onReopen();
     }
   }, [hasPendingDraft, isDetourActive, showForm, onReopen]);

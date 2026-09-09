@@ -25,6 +25,8 @@
 //    deliberately DEFERRED to a separate DatePickerField.tsx task).
 // ✅ Edit mode is otherwise COMPLETELY UNCHANGED.
 // ✅ Minimum Stock field only shown for "newItem" mode.
+// ✅ Debug logging removed from handleAddSupplierWithDraft — the
+//    New Supplier detour flow has been verified in production use.
 // FROZEN
 // ============================================
 
@@ -125,7 +127,6 @@ export function InventoryForm({
   // ✅ Saves the current form state as a draft, requests the
   // Context-level auto-open flag, then triggers actual navigation.
   const handleAddSupplierWithDraft = () => {
-    console.log("[inventoryform] handleAddSupplierWithDraft called");
     saveDraft({
       supplierId:              form.supplierId,
       categoryId:              form.categoryId,
@@ -144,9 +145,7 @@ export function InventoryForm({
       barcode:                 form.barcode,
       notes:                   form.notes,
     });
-    console.log("[inventoryform] draft saved, calling requestAutoOpenSupplierForm");
     requestAutoOpenSupplierForm();
-    console.log("[inventoryform] requestAutoOpenSupplierForm called, calling onAddSupplier");
     onAddSupplier();
   };
 
