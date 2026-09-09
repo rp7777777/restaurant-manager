@@ -1,34 +1,20 @@
 // ============================================
 // SERVORA ERP — MovementHistoryModal Component
 // ✅ Full-screen Modal, restaurant-wide movement log.
-// ✅ Wraps useStockMovements() (restaurant-wide, live).
-// ✅ Movement-type filter chips (All + all 7 StockMovementType
-//    values, including RETURN).
-// ✅ Attendance-style single-day date navigator — UTC-based
-//    shiftDate()/formatDateLabel() and LOCAL-timezone
-//    movementDateKey().
 // ✅ Category-grouped layout, alphabetical by category name.
-// ✅ Batch Allocation display — per-batch row-span breakdown, with
-//    "Before" on the first sub-row and "Stock After" on the last.
-// ✅ categoryBlock's outer bordered box is explicitly sized to
-//    TABLE_WIDTH, not stretched to pageContainer's full width.
-// ✅ Content-aware dynamic column widths (Item/Notes capped at
-//    180/220px).
-// ✅ "Before" / "Stock After" — historical audit-log terminology.
-// ✅ Notes column — movement.reason, shown once per movement group.
-// ✅ A4-ish centered page container (~850px max width).
-// ✅ Read-only — no actions on this screen.
-// ✅ NEW — visual consistency pass matching
-//    HistoricalInventoryTableView.tsx's design language: larger text
-//    (category header 13px, column headers 12px, row data 11px),
-//    darkened row/divider borders (#94a3b8/#475569 instead of the
-//    lighter originals), stockAfterCell recolored to fixed black
-//    (#0f172a) instead of green, matching Inventory's convention of
-//    quantity numbers being neutral black rather than
-//    semantically-colored.
-// ⚠️ SCALE NOTE (documented, not addressed here): movements are
-//    loaded live restaurant-wide, then filtered client-side by
-//    date/type.
+// ✅ THREE-level grouping (category -> item -> movements[]). ONLY
+//    the "Item" column is merged/vertically-centered per item —
+//    Type/Time/Lot-Batch-No/Qty/Before/Stock After/Unit/Notes each
+//    remain on their OWN row per movement, since each movement is a
+//    genuinely distinct event.
+// ✅ Fixed column widths (900px total, no horizontal scroll).
+// ✅ Centralized absolute-positioned vertical column dividers.
+// ✅ Live date shown on category header (right side).
+// ✅ NEW — "Lot/Batch" header renamed to "Lot/Batch No." for full
+//    consistency with Inventory table's naming.
+// ✅ NEW — Qty, Before, Stock After, Unit columns are center-aligned.
+// ⚠️ SCALE NOTE: movements are loaded live restaurant-wide, then
+//    filtered client-side.
 // FROZEN
 // ============================================
 
@@ -110,27 +96,47 @@ function formatDateLabel(dateISO: string, today: string): string {
   });
 }
 
+function formatCategoryHeaderDate(dateISO: string): string {
+  const [year, month, day] = dateISO.split("-").map(Number);
+  const d = new Date(Date.UTC(year, month - 1, day));
+  return d.toLocaleDateString(undefined, {
+    weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
+  });
+}
+
+interface ItemGroup {
+  inventoryId: string;
+  itemName:    string;
+  movements:   StockMovement[];
+}
+
 interface CategoryGroup {
-  category:  Category;
-  movements: StockMovement[];
+  category: Category;
+  items:    ItemGroup[];
 }
 
 const ROW_HEIGHT = 26;
 
-const PX_PER_CHAR = 6.5;
-const HEADER_LABELS = {
-  sn: "S.N.", item: "Item", type: "Type", time: "Time",
-  batch: "Batch", qty: "Qty", before: "Before", stockAfter: "Stock After", notes: "Notes",
-};
-const COL_MIN = { sn: 28, item: 82, type: 72, time: 48, batch: 60, qty: 48, before: 48, stockAfter: 66, notes: 105 };
-const COL_MAX = { item: 180, notes: 220 };
+const COLS = { sn: 35, item: 120, type: 90, time: 55, batch: 90, qty: 60, before: 65, stockAfter: 75, unit: 50, notes: 260 };
+const TABLE_WIDTH = COLS.sn + COLS.item + COLS.type + COLS.time + COLS.batch + COLS.qty + COLS.before + COLS.stockAfter + COLS.unit + COLS.notes;
 
-function widthFor(key: keyof typeof COL_MIN, longestChars: number): number {
-  const contentWidth = Math.ceil(longestChars * PX_PER_CHAR) + 8;
-  const min = COL_MIN[key];
-  const max = (COL_MAX as any)[key] as number | undefined;
-  const width = Math.max(min, contentWidth);
-  return max ? Math.min(width, max) : width;
+const DIVIDER_X_POSITIONS = (() => {
+  const positions: number[] = [];
+  let x = 0;
+  x += COLS.sn; positions.push(x);
+  x += COLS.item; positions.push(x);
+  x += COLS.type; positions.push(x);
+  x += COLS.time; positions.push(x);
+  x += COLS.batch; positions.push(x);
+  x += COLS.qty; positions.push(x);
+  x += COLS.before; positions.push(x);
+  x += COLS.stockAfter; positions.push(x);
+  x += COLS.unit; positions.push(x);
+  return positions;
+})();
+
+function getMovementRowHeight(): number {
+  return ROW_HEIGHT;
 }
 
 export function MovementHistoryModal({ visible, restaurantId, items, categories, onClose }: MovementHistoryModalProps) {
@@ -144,84 +150,58 @@ export function MovementHistoryModal({ visible, restaurantId, items, categories,
     if (visible) setSelectedDate(today);
   }, [visible, today]);
 
+  const [tableAreaHeights, setTableAreaHeights] = useState<Record<string, number>>({});
+
   const itemById = useMemo(() => new Map(items.map((i) => [i.id, i])), [items]);
 
   const categoryGroups = useMemo<CategoryGroup[]>(() => {
     const filtered = (filter === "ALL" ? movements : movements.filter((m) => m.movementType === filter))
       .filter((m) => movementDateKey(m) === selectedDate);
 
-    const byCategory = new Map<string, StockMovement[]>();
+    const byCategory = new Map<string, Map<string, StockMovement[]>>();
     for (const movement of filtered) {
       const item = itemById.get(movement.inventoryId);
       const categoryId = item?.categoryId;
       if (!categoryId) continue;
-      const list = byCategory.get(categoryId) ?? [];
-      list.push(movement);
-      byCategory.set(categoryId, list);
+
+      const byItem = byCategory.get(categoryId) ?? new Map<string, StockMovement[]>();
+      const itemMovements = byItem.get(movement.inventoryId) ?? [];
+      itemMovements.push(movement);
+      byItem.set(movement.inventoryId, itemMovements);
+      byCategory.set(categoryId, byItem);
     }
 
     const groups: CategoryGroup[] = [];
     for (const category of categories) {
-      const list = byCategory.get(category.id);
-      if (!list || list.length === 0) continue;
-      groups.push({ category, movements: list });
+      const byItem = byCategory.get(category.id);
+      if (!byItem || byItem.size === 0) continue;
+
+      const itemGroups: ItemGroup[] = [];
+      for (const [inventoryId, itemMovements] of byItem.entries()) {
+        // ✅ NEW — sort each item's movements chronologically
+        // (oldest first) using createdAt, instead of relying on
+        // useStockMovements()'s fetch order (which can be newest-
+        // first depending on the underlying Firestore query).
+        const sortedMovements = [...itemMovements].sort((a, b) => {
+          const dateA = (a.createdAt as any)?.toDate ? (a.createdAt as any).toDate() : new Date(a.createdAt as any);
+          const dateB = (b.createdAt as any)?.toDate ? (b.createdAt as any).toDate() : new Date(b.createdAt as any);
+          return dateA.getTime() - dateB.getTime();
+        });
+
+        itemGroups.push({
+          inventoryId,
+          itemName: sortedMovements[0].itemName,
+          movements: sortedMovements,
+        });
+      }
+      itemGroups.sort((a, b) => a.itemName.localeCompare(b.itemName));
+
+      groups.push({ category, items: itemGroups });
     }
 
     groups.sort((a, b) => a.category.name.localeCompare(b.category.name));
     return groups;
   }, [movements, filter, selectedDate, itemById, categories]);
-
-  const COLS = useMemo(() => {
-    let longest = {
-      sn: HEADER_LABELS.sn.length,
-      item: HEADER_LABELS.item.length,
-      type: HEADER_LABELS.type.length,
-      time: HEADER_LABELS.time.length,
-      batch: HEADER_LABELS.batch.length,
-      qty: HEADER_LABELS.qty.length,
-      before: HEADER_LABELS.before.length,
-      stockAfter: HEADER_LABELS.stockAfter.length,
-      notes: HEADER_LABELS.notes.length,
-    };
-
-    for (const group of categoryGroups) {
-      for (let i = 0; i < group.movements.length; i++) {
-        const m = group.movements[i];
-        longest.sn = Math.max(longest.sn, String(i + 1).length);
-        longest.item = Math.max(longest.item, m.itemName.length);
-        longest.type = Math.max(longest.type, m.movementType.replace("_", " ").length);
-        longest.time = Math.max(longest.time, movementTimeLabel(m).length);
-        longest.before = Math.max(longest.before, String(m.beforeQuantity).length);
-        longest.stockAfter = Math.max(longest.stockAfter, String(m.afterQuantity).length);
-        longest.notes = Math.max(longest.notes, (m.reason ?? "").length);
-
-        const allocations = m.batchAllocations ?? [];
-        if (allocations.length > 0) {
-          for (const a of allocations) {
-            longest.batch = Math.max(longest.batch, a.batchNo.length);
-            longest.qty = Math.max(longest.qty, String(a.quantity).length);
-          }
-        } else {
-          longest.batch = Math.max(longest.batch, 1);
-          longest.qty = Math.max(longest.qty, String(m.quantityChanged).length + 1);
-        }
-      }
-    }
-
-    return {
-      sn:         widthFor("sn", longest.sn),
-      item:       widthFor("item", longest.item),
-      type:       widthFor("type", longest.type),
-      time:       widthFor("time", longest.time),
-      batch:      widthFor("batch", longest.batch),
-      qty:        widthFor("qty", longest.qty),
-      before:     widthFor("before", longest.before),
-      stockAfter: widthFor("stockAfter", longest.stockAfter),
-      notes:      widthFor("notes", longest.notes),
-    };
-  }, [categoryGroups]);
-
-  const TABLE_WIDTH = COLS.sn + COLS.item + COLS.type + COLS.time + COLS.batch + COLS.qty + COLS.before + COLS.stockAfter + COLS.notes;
 
   const isEmpty = !loading && categoryGroups.length === 0;
 
@@ -284,88 +264,114 @@ export function MovementHistoryModal({ visible, restaurantId, items, categories,
                 <Text style={styles.emptyStateText}>No movements on this date</Text>
               </View>
             ) : (
-              categoryGroups.map((group) => (
-                <View key={group.category.id} style={[styles.categoryBlock, { width: TABLE_WIDTH }]}>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={true}>
-                    <View style={{ width: TABLE_WIDTH }}>
-                      <View style={styles.categoryHeader}>
-                        <Text style={styles.categoryHeaderText}>
-                          {group.category.icon ? `${group.category.icon} ` : ""}{group.category.name.toUpperCase()}
-                        </Text>
-                      </View>
+              categoryGroups.map((group) => {
+                const measuredHeight = tableAreaHeights[group.category.id] ?? 0;
 
+                return (
+                  <View key={group.category.id} style={[styles.categoryBlock, { width: TABLE_WIDTH }]}>
+                    <View style={styles.categoryHeader}>
+                      <Text style={styles.categoryHeaderText}>
+                        {group.category.icon ? `${group.category.icon} ` : ""}{group.category.name.toUpperCase()}
+                      </Text>
+                      <Text style={styles.categoryHeaderDate}>{formatCategoryHeaderDate(selectedDate)}</Text>
+                    </View>
+
+                    <View
+                      style={styles.tableArea}
+                      onLayout={(e) => {
+                        const h = e.nativeEvent.layout.height;
+                        setTableAreaHeights((prev) =>
+                          prev[group.category.id] === h ? prev : { ...prev, [group.category.id]: h }
+                        );
+                      }}
+                    >
                       <View style={styles.tableHeaderRow}>
-                        <Text style={[styles.tableHeaderCell, { width: COLS.sn }]}>{HEADER_LABELS.sn}</Text>
-                        <Text style={[styles.tableHeaderCell, { width: COLS.item }]}>{HEADER_LABELS.item}</Text>
-                        <Text style={[styles.tableHeaderCell, { width: COLS.type }]}>{HEADER_LABELS.type}</Text>
-                        <Text style={[styles.tableHeaderCell, { width: COLS.time }]}>{HEADER_LABELS.time}</Text>
-                        <Text style={[styles.tableHeaderCell, { width: COLS.batch }]}>{HEADER_LABELS.batch}</Text>
-                        <Text style={[styles.tableHeaderCell, { width: COLS.qty }]}>{HEADER_LABELS.qty}</Text>
-                        <Text style={[styles.tableHeaderCell, { width: COLS.before }]}>{HEADER_LABELS.before}</Text>
-                        <Text style={[styles.tableHeaderCell, { width: COLS.stockAfter }]}>{HEADER_LABELS.stockAfter}</Text>
-                        <Text style={[styles.tableHeaderCell, { width: COLS.notes }]}>{HEADER_LABELS.notes}</Text>
+                        <Text style={[styles.tableHeaderCell, { width: COLS.sn }]}>S.N.</Text>
+                        <Text style={[styles.tableHeaderCell, { width: COLS.item }]}>Item</Text>
+                        <Text style={[styles.tableHeaderCell, { width: COLS.type }]}>Type</Text>
+                        <Text style={[styles.tableHeaderCell, { width: COLS.time }]}>Time</Text>
+                        <Text style={[styles.tableHeaderCell, { width: COLS.batch }]}>Lot/Batch No.</Text>
+                        <Text style={[styles.tableHeaderCell, styles.centerCell, { width: COLS.qty }]}>Qty</Text>
+                        <Text style={[styles.tableHeaderCell, styles.centerCell, { width: COLS.before }]}>Before</Text>
+                        <Text style={[styles.tableHeaderCell, styles.centerCell, { width: COLS.stockAfter }]}>Stock After</Text>
+                        <Text style={[styles.tableHeaderCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
+                        <Text style={[styles.tableHeaderCell, { width: COLS.notes }]}>Notes</Text>
                       </View>
 
-                      {group.movements.map((movement, idx) => {
-                        const color = MOVEMENT_COLOR[movement.movementType];
-                        const allocations: BatchAllocationRecord[] = movement.batchAllocations ?? [];
-                        const rowCount = allocations.length > 0 ? allocations.length : 1;
-                        const groupHeight = ROW_HEIGHT * rowCount;
+                      {group.items.map((itemGroup, itemIndex) => {
+                        const itemGroupHeight = itemGroup.movements.reduce((sum) => sum + getMovementRowHeight(), 0);
+                        const isEvenRow = itemIndex % 2 === 1;
 
                         return (
-                          <View key={movement.id} style={[styles.movementGroupRow, { minHeight: groupHeight }]}>
-                            <View style={[styles.leftStrip, { minHeight: groupHeight }]}>
-                              <Text style={[styles.leftStripCell, { width: COLS.sn }]}>{idx + 1}</Text>
-                              <Text style={[styles.leftStripCell, { width: COLS.item }]} numberOfLines={1}>{movement.itemName}</Text>
-                              <Text style={[styles.leftStripCell, { width: COLS.type, color }]} numberOfLines={1}>
-                                {movement.movementType.replace("_", " ")}
-                              </Text>
-                              <Text style={[styles.leftStripCell, { width: COLS.time }]}>{movementTimeLabel(movement)}</Text>
+                          <View
+                            key={itemGroup.inventoryId}
+                            style={[
+                              styles.itemGroupRow,
+                              { minHeight: itemGroupHeight },
+                              isEvenRow && styles.itemGroupRowAlt,
+                            ]}
+                          >
+                            <View style={[styles.leftStrip, { width: COLS.sn + COLS.item, minHeight: itemGroupHeight }]}>
+                              <Text style={[styles.leftStripCell, { width: COLS.sn }]}>{itemIndex + 1}</Text>
+                              <Text style={[styles.leftStripCell, styles.itemNameCell, { width: COLS.item }]}>{itemGroup.itemName}</Text>
                             </View>
 
-                            <View style={styles.rightBatchRows}>
-                              {allocations.length > 0 ? (
-                                allocations.map((alloc, allocIdx) => (
+                            <View style={styles.rightMovementRows}>
+                              {itemGroup.movements.map((movement, moveIdx) => {
+                                const color = MOVEMENT_COLOR[movement.movementType];
+                                const allocations: BatchAllocationRecord[] = movement.batchAllocations ?? [];
+                                const batchLabel = allocations.length > 0
+                                  ? allocations.map((a) => a.batchNo).join(", ")
+                                  : "—";
+                                const qtyLabel = allocations.length > 0
+                                  ? allocations.reduce((sum, a) => sum + a.quantity, 0)
+                                  : Math.abs(movement.quantityChanged);
+
+                                return (
                                   <View
-                                    key={alloc.batchId}
+                                    key={movement.id}
                                     style={[
-                                      styles.batchRow,
+                                      styles.movementRow,
                                       { height: ROW_HEIGHT },
-                                      allocIdx < allocations.length - 1 && styles.batchRowDivider,
+                                      moveIdx < itemGroup.movements.length - 1 && styles.movementRowDivider,
                                     ]}
                                   >
-                                    <Text style={[styles.cell, { width: COLS.batch }]} numberOfLines={1}>{alloc.batchNo}</Text>
-                                    <Text style={[styles.cell, { width: COLS.qty, color }]}>{alloc.quantity}</Text>
-                                    <Text style={[styles.cell, { width: COLS.before }]}>
-                                      {allocIdx === 0 ? movement.beforeQuantity : ""}
+                                    <Text style={[styles.cell, { width: COLS.type, color }]}>
+                                      {movement.movementType.replace("_", " ")}
                                     </Text>
-                                    <Text style={[styles.cell, styles.stockAfterCell, { width: COLS.stockAfter }]}>
-                                      {allocIdx === allocations.length - 1 ? movement.afterQuantity : ""}
-                                    </Text>
-                                    <Text style={[styles.cell, { width: COLS.notes }]} numberOfLines={2}>
-                                      {allocIdx === 0 ? (movement.reason ?? "") : ""}
-                                    </Text>
+                                    <Text style={[styles.cell, { width: COLS.time }]}>{movementTimeLabel(movement)}</Text>
+                                    <Text style={[styles.cell, { width: COLS.batch }]}>{batchLabel}</Text>
+                                    <Text style={[styles.cell, styles.centerCell, { width: COLS.qty, color }]}>{qtyLabel}</Text>
+                                    <Text style={[styles.cell, styles.centerCell, { width: COLS.before }]}>{movement.beforeQuantity}</Text>
+                                    <Text style={[styles.cell, styles.stockAfterCell, styles.centerCell, { width: COLS.stockAfter }]}>{movement.afterQuantity}</Text>
+                                    <Text style={[styles.cell, styles.centerCell, { width: COLS.unit }]}>{movement.unit}</Text>
+                                    <Text style={[styles.cell, { width: COLS.notes }]}>{movement.reason ?? ""}</Text>
                                   </View>
-                                ))
-                              ) : (
-                                <View style={[styles.batchRow, { height: ROW_HEIGHT }]}>
-                                  <Text style={[styles.cell, { width: COLS.batch }]}>—</Text>
-                                  <Text style={[styles.cell, { width: COLS.qty, color }]}>
-                                    {movement.quantityChanged > 0 ? "+" : ""}{movement.quantityChanged}
-                                  </Text>
-                                  <Text style={[styles.cell, { width: COLS.before }]}>{movement.beforeQuantity}</Text>
-                                  <Text style={[styles.cell, styles.stockAfterCell, { width: COLS.stockAfter }]}>{movement.afterQuantity}</Text>
-                                  <Text style={[styles.cell, { width: COLS.notes }]} numberOfLines={2}>{movement.reason ?? ""}</Text>
-                                </View>
-                              )}
+                                );
+                              })}
                             </View>
                           </View>
                         );
                       })}
+
+                      {measuredHeight > 0 && DIVIDER_X_POSITIONS.map((x) => (
+                        <View
+                          key={x}
+                          pointerEvents="none"
+                          style={{
+                            position: "absolute",
+                            left: x,
+                            top: 0,
+                            height: measuredHeight + 4,
+                            width: 1,
+                            backgroundColor: "#94a3b8",
+                          }}
+                        />
+                      ))}
                     </View>
-                  </ScrollView>
-                </View>
-              ))
+                  </View>
+                );
+              })
             )}
           </View>
         </ScrollView>
@@ -410,11 +416,16 @@ const styles = StyleSheet.create({
   emptyStateText: { color: "#94a3b8", fontSize: 13, fontWeight: "600" },
   categoryBlock: {
     marginBottom: 16,
-    borderWidth: 1.5, borderColor: "#475569", borderRadius: 4,
+    borderWidth: 1, borderColor: "#475569", borderRadius: 4,
     overflow: "hidden",
   },
-  categoryHeader: { backgroundColor: "#059669", paddingVertical: 7, paddingHorizontal: 10 },
+  categoryHeader: {
+    backgroundColor: "#059669", paddingVertical: 7, paddingHorizontal: 10,
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+  },
   categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.5 },
+  categoryHeaderDate: { color: "#fff", fontWeight: "700", fontSize: 12 },
+  tableArea: { position: "relative" },
   tableHeaderRow: {
     flexDirection: "row",
     backgroundColor: "#f1f5f9",
@@ -422,23 +433,25 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   tableHeaderCell: { fontSize: 12, fontWeight: "800", color: "#1e293b", paddingHorizontal: 3 },
-  movementGroupRow: {
+  centerCell: { textAlign: "center" },
+  itemGroupRow: {
     flexDirection: "row",
     width: "100%",
     borderBottomWidth: 1.5, borderBottomColor: "#475569",
   },
+  itemGroupRowAlt: { backgroundColor: "#f8fafc" },
   leftStrip: {
     flexDirection: "row", alignItems: "center",
-    borderRightWidth: 1, borderRightColor: "#94a3b8",
     backgroundColor: "#f8fafc",
   },
   leftStripCell: { fontSize: 11, color: "#334155", paddingHorizontal: 3 },
-  rightBatchRows: { flex: 1 },
-  batchRow: {
+  itemNameCell: { fontWeight: "700", color: "#0f172a" },
+  rightMovementRows: { flex: 1 },
+  movementRow: {
     flexDirection: "row", alignItems: "center",
     width: "100%",
   },
-  batchRowDivider: {
+  movementRowDivider: {
     borderBottomWidth: 1, borderBottomColor: "#94a3b8",
   },
   cell: { fontSize: 11, color: "#334155", paddingHorizontal: 3 },
