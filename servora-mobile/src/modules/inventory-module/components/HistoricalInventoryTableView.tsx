@@ -434,16 +434,13 @@ export function HistoricalInventoryTableView({
                   const isEvenRow = itemIndex % 2 === 1;
 
                   return (
-                    <TouchableOpacity
+                    <View
                       key={item.inventoryId}
                       style={[
                         styles.itemGroupRow,
                         { minHeight: groupHeight },
                         isEvenRow && styles.itemGroupRowAlt,
                       ]}
-                      onPress={() => { if (realItem) onItemPress(realItem); }}
-                      activeOpacity={0.7}
-                      disabled={!realItem}
                     >
                       <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }, isEvenRow && styles.leftStripAlt]}>
                         <Text style={[styles.leftStripCell, { width: LEFT_COLS.sn }]}>{itemIndex + 1}</Text>
@@ -506,11 +503,13 @@ export function HistoricalInventoryTableView({
                       </View>
 
                       <View style={{ width: ARROW_COL, minHeight: groupHeight, justifyContent: "center", alignItems: "center" }}>
-                        {!isHistorical && (
-                          <MaterialIcons name="chevron-right" size={16} color="#dc2626" />
+                        {!isHistorical && realItem && (
+                          <TouchableOpacity onPress={() => onItemPress(realItem)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                            <MaterialIcons name="chevron-right" size={16} color="#dc2626" />
+                          </TouchableOpacity>
                         )}
                       </View>
-                    </TouchableOpacity>
+                    </View>
                   );
                 })}
 
