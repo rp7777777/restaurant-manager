@@ -12,28 +12,33 @@
 //      ISSUED   → RequestDetailModal (read-only)
 //      REJECTED → RequestDetailModal (read-only)
 // ✅ Single-date model (StoreDateNavigator) — no tab system.
-// ✅ Stats (StoreStats) are ALWAYS restaurant-wide totals.
+// ✅ Stats (StoreStats) reflect the CURRENTLY-VIEWED DATE only, with
+//    an "All" card and click-to-filter (StoreStatusFilter).
 // ✅ batchAllocationsByRequestId (from useStoreRequests) passed
 //    through to KitchenRequestTable for the Lot/Batch No. column.
-// ✅ FIX — actorName fallback changed from `??` to `.trim() || ...`.
-// 🔒 CONFIRMED BUSINESS RULE — Partial Issue: issuing less than
-//    orderQuantity still marks the request ISSUED (no
-//    PARTIALLY_ISSUED status, no remainder tracking).
 // ✅ categories fetched via useCategoriesForPicker, passed to
 //    KitchenRequestTable for category-wise grouping.
-// ✅ NEW — StoreStats cards are now clickable. statusFilter state
-//    here filters displayRequests by req.status BEFORE passing to
-//    KitchenRequestTable — the stat COUNTS themselves stay
-//    restaurant-wide (unfiltered `requests`), only the TABLE content
-//    is filtered. Clicking the already-active card's status again
-//    clears the filter (toggle), handled by passing null.
+// ✅ Monthly Report — opened as a full-screen overlay
+//    (StyleSheet.absoluteFill, zIndex/elevation 9999) from a button
+//    below StoreHeader, NOT via the separately-registered
+//    /monthly-report Expo route (left untouched — this is a
+//    same-screen overlay, a distinct access path). Passes `requests`
+//    (the full, unfiltered restaurant-wide subscription already
+//    provided by useStoreRequests — no new Firestore query) and
+//    `categories` straight through; MonthlyReportScreen owns all of
+//    its own month-filtering/aggregation logic.
+// ✅ container.overflow: "visible" (unconditional, all platforms) —
+//    prevents the outer ScrollView from clipping the Monthly Report
+//    absoluteFill overlay. zIndex/elevation both set to 9999 on the
+//    overlay wrapper for reliable stacking above Store content on
+//    both web and Android.
 // FROZEN
 // ============================================
 
 import React, { useState, useMemo } from "react";
 import {
   ScrollView, StyleSheet, ActivityIndicator, Text, View,
-  RefreshControl, Platform, Alert,
+  RefreshControl, Platform, Alert, TouchableOpacity,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useApp } from "../../context/AppContext";
@@ -52,6 +57,7 @@ import { KitchenRequestTable } from "./components/KitchenRequestTable";
 import { PendingActionModal } from "./components/PendingActionModal";
 import { IssueKitchenRequestModal } from "./components/IssueKitchenRequestModal";
 import { RequestDetailModal } from "./components/RequestDetailModal";
+import { MonthlyReportScreen } from "./components/MonthlyReportScreen";
 import { shiftDate } from "./utils/store-formatters";
 
 export default function StoreScreen() {
@@ -66,12 +72,12 @@ export default function StoreScreen() {
 
   const [processing, setProcessing] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StoreStatusFilter>(null);
+  const [showMonthlyReport, setShowMonthlyReport] = useState(false);
 
   const [pendingTarget, setPendingTarget] = useState<IngredientRequest | null>(null);
   const [issueTarget, setIssueTarget] = useState<IngredientRequest | null>(null);
   const [detailTarget, setDetailTarget] = useState<IngredientRequest | null>(null);
 
-  // ✅ FIX — .trim() || ... instead of ?? — see FROZEN header.
   const actorName = userProfile?.name?.trim() || auth.currentUser?.email || "Store";
 
   const showAlert = (title: string, msg: string) => {
@@ -143,7 +149,6 @@ export default function StoreScreen() {
   const issuedCount   = displayRequests.filter((r) => r.status === "ISSUED").length;
   const rejectedCount = displayRequests.filter((r) => r.status === "REJECTED").length;
 
-  // ✅ NEW — table-only filter; stat counts above stay unfiltered.
   const filteredDisplayRequests = useMemo(() => {
     if (!statusFilter) return displayRequests;
     return displayRequests.filter((r) => r.status === statusFilter);
@@ -156,6 +161,11 @@ export default function StoreScreen() {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.primary]} tintColor={theme.primary} />}
     >
       <StoreHeader pendingCount={pendingCount} />
+
+      <TouchableOpacity style={styles.monthlyReportBtn} onPress={() => setShowMonthlyReport(true)}>
+        <MaterialIcons name="bar-chart" size={16} color="#0369a1" />
+        <Text style={styles.monthlyReportBtnText}>Monthly Report</Text>
+      </TouchableOpacity>
 
       <View style={styles.body}>
         <StoreStats
@@ -223,13 +233,30 @@ export default function StoreScreen() {
         theme={theme}
         onClose={() => setDetailTarget(null)}
       />
+
+      {showMonthlyReport && (
+        <View style={[StyleSheet.absoluteFill, { zIndex: 9999, elevation: 9999 }]}>
+          <MonthlyReportScreen
+            requests={requests}
+            categories={categories}
+            onClose={() => setShowMonthlyReport(false)}
+          />
+        </View>
+      )}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, overflow: "visible" },
   body: { padding: 12 },
   emptyBox: { alignItems: "center", padding: 40, borderRadius: 10, gap: 8 },
   emptyText: { fontSize: 13, fontWeight: "600" },
+  monthlyReportBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start",
+    marginHorizontal: 12, marginTop: 8, marginBottom: 4,
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6,
+    borderWidth: 1, borderColor: "#0369a1", backgroundColor: "#eff6ff",
+  },
+  monthlyReportBtnText: { fontSize: 12, fontWeight: "700", color: "#0369a1" },
 });
