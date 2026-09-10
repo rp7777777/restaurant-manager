@@ -137,10 +137,11 @@ export default function StoreScreen() {
     }
   };
 
-  const pendingCount  = requests.filter((r) => r.status === "PENDING").length;
-  const approvedCount = requests.filter((r) => r.status === "APPROVED").length;
-  const issuedCount   = requests.filter((r) => r.status === "ISSUED").length;
-  const rejectedCount = requests.filter((r) => r.status === "REJECTED").length;
+  const totalCount    = displayRequests.length;
+  const pendingCount  = displayRequests.filter((r) => r.status === "PENDING").length;
+  const approvedCount = displayRequests.filter((r) => r.status === "APPROVED").length;
+  const issuedCount   = displayRequests.filter((r) => r.status === "ISSUED").length;
+  const rejectedCount = displayRequests.filter((r) => r.status === "REJECTED").length;
 
   // ✅ NEW — table-only filter; stat counts above stay unfiltered.
   const filteredDisplayRequests = useMemo(() => {
@@ -158,6 +159,7 @@ export default function StoreScreen() {
 
       <View style={styles.body}>
         <StoreStats
+          totalCount={totalCount}
           pendingCount={pendingCount}
           approvedCount={approvedCount}
           issuedCount={issuedCount}

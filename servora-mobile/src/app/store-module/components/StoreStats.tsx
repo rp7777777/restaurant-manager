@@ -1,12 +1,19 @@
 // ============================================
 // SERVORA ERP — StoreStats Component
-// ✅ NEW — cards are now clickable (TouchableOpacity), filtering the
-//    table below by status via onStatusPress. activeStatus highlights
-//    the currently-selected filter's card. Clicking the SAME
-//    already-active status again clears the filter (toggle behavior),
-//    handled in the parent (index.tsx).
-// ✅ These counts are ALWAYS restaurant-wide totals (computed from
-//    the full `requests` array, not displayRequests) — unchanged.
+// ✅ Cards are clickable (TouchableOpacity), filtering the table
+//    below by status via onStatusPress. activeStatus highlights the
+//    currently-selected filter's card.
+// ✅ NEW — "All" card added (leftmost), clicking it clears the
+//    filter (equivalent to null). Clicking the currently-active
+//    card again also clears the filter — both paths converge on the
+//    same toggle-off behavior.
+// ✅ FIX — counts are now for the CURRENTLY-VIEWED DATE only (caller
+//    passes date-filtered counts), not restaurant-wide totals. This
+//    was the root cause of the "click shows empty, click again
+//    shows data" bug: previously, stat counts included requests
+//    from OTHER dates, so a status with 0 requests on the current
+//    date but >0 total could show a non-zero count yet filter to an
+//    empty table.
 // FROZEN
 // ============================================
 
@@ -17,6 +24,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 export type StoreStatusFilter = "PENDING" | "APPROVED" | "ISSUED" | "REJECTED" | null;
 
 interface StoreStatsProps {
+  totalCount:     number;
   pendingCount:   number;
   approvedCount:  number;
   issuedCount:    number;
@@ -32,18 +40,19 @@ interface StatDef {
   value:  number;
   color:  string;
   icon:   keyof typeof MaterialIcons.glyphMap;
-  status: NonNullable<StoreStatusFilter>;
+  status: StoreStatusFilter;
 }
 
 export function StoreStats({
-  pendingCount, approvedCount, issuedCount, rejectedCount, cardBg, textSecondary,
+  totalCount, pendingCount, approvedCount, issuedCount, rejectedCount, cardBg, textSecondary,
   activeStatus, onStatusPress,
 }: StoreStatsProps) {
   const stats: StatDef[] = [
-    { label: "Pending",  value: pendingCount,  color: "#f59e0b", icon: "schedule",      status: "PENDING" },
-    { label: "Approved", value: approvedCount, color: "#3b82f6", icon: "check-circle",  status: "APPROVED" },
-    { label: "Issued",   value: issuedCount,   color: "#10b981", icon: "done-all",      status: "ISSUED" },
-    { label: "Rejected", value: rejectedCount, color: "#ef4444", icon: "cancel",        status: "REJECTED" },
+    { label: "All",       value: totalCount,    color: "#64748b", icon: "list",         status: null },
+    { label: "Pending",   value: pendingCount,  color: "#f59e0b", icon: "schedule",      status: "PENDING" },
+    { label: "Approved",  value: approvedCount, color: "#3b82f6", icon: "check-circle",  status: "APPROVED" },
+    { label: "Issued",    value: issuedCount,   color: "#10b981", icon: "done-all",      status: "ISSUED" },
+    { label: "Rejected",  value: rejectedCount, color: "#ef4444", icon: "cancel",        status: "REJECTED" },
   ];
 
   return (

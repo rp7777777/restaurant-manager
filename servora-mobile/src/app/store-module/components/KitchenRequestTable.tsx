@@ -36,7 +36,7 @@ import { Category } from "../../../modules/inventory-module/types/category";
 import { STATUS_COLORS } from "../utils/store-formatters";
 
 const ROW_HEIGHT = 26;
-const COLS = { sn: 30, item: 110, batch: 85, req: 55, issued: 55, unit: 45, date: 90, note: 165, status: 95, by: 90, chevron: 35 };
+const COLS = { sn: 30, item: 110, batch: 130, req: 55, issued: 55, unit: 45, date: 90, note: 150, status: 95, by: 90, chevron: 35 };
 const TABLE_WIDTH =
   COLS.sn + COLS.item + COLS.batch + COLS.req + COLS.issued + COLS.unit + COLS.date + COLS.note + COLS.status + COLS.by + COLS.chevron;
 
@@ -237,7 +237,7 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                                     rowIdx < rows.length - 1 && styles.batchRowDivider,
                                   ]}
                                 >
-                                  <Text style={styles.cell}>{alloc ? alloc.batchNo : "—"}</Text>
+                                  <Text style={styles.cell} numberOfLines={1} ellipsizeMode="tail">{alloc ? alloc.batchNo : "—"}</Text>
                                 </View>
                               ))}
                             </View>
