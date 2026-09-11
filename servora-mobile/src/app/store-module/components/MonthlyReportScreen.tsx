@@ -1,52 +1,29 @@
 // ============================================
 // SERVORA ERP — MonthlyReportScreen Component
-// ✅ Reuses useStoreRequests().requests (already a restaurant-wide,
-//    live, unfiltered subscription — see useStoreRequests.ts) — NO
-//    new Firestore subscription, hook, or repository query.
-// 🔒 CONFIRMED SEMANTICS — "month" here means req.requiredDate's
-//    month, NOT req.createdAt's month. A request created Aug 28 but
-//    required Sep 3 belongs to the SEPTEMBER report — this matches
-//    the daily Store screen's own requiredDate-based filtering
-//    exactly (useStoreRequests.ts's displayRequests).
-// ✅ Status counts (Pending/Approved/Issued/Rejected) are CURRENT
-//    SNAPSHOT counts — a request's status can have changed since its
-//    requiredDate (e.g. required in a past month, only issued
-//    today) — the report reflects status AS OF NOW, not a
-//    historical state-at-the-time record (no such history exists in
-//    this schema).
-// ✅ Requested Qty = sum(orderQuantity) — ALL requests in the month,
-//    any status.
-// ✅ Issued Qty = sum(issuedQuantity ?? 0) — ONLY status === "ISSUED"
-//    requests. Deliberately NOT orderQuantity, since partial issue
-//    is a confirmed business rule (issuing less than requested still
-//    marks ISSUED) — using orderQuantity here would silently inflate
-//    Issued Qty past what was actually given out.
-// ✅ Rejected Qty = sum(orderQuantity) — ONLY status === "REJECTED"
-//    requests (nothing was issued for a rejected request, so its
-//    full requested amount is the correct "lost" quantity).
-// ✅ Item grouping key = inventoryId (when present) — this is the
-//    real Inventory item identity and correctly separates two
-//    requests for the "same name, different unit" case (e.g. "Milk"
-//    in L vs "Milk" in bottle would be different Inventory items
-//    with different inventoryIds). Falls back to
-//    `itemName::unit` only when inventoryId is missing (older/
-//    legacy requests) — never itemName alone, to avoid merging
-//    genuinely different unit-tracked items.
+// ✅ Reuses useStoreRequests().requests (already restaurant-wide,
+//    live) — no new Firestore subscription.
+// 🔒 "month" = req.requiredDate's month (not createdAt).
+// ✅ Status counts are current-snapshot (not historical state).
+// ✅ Requested Qty = sum(orderQuantity), any status.
+// ✅ Issued Qty = sum(issuedQuantity ?? 0), ISSUED status only.
+// ✅ Rejected Qty = sum(orderQuantity), REJECTED status only.
+// ✅ Item grouping key = inventoryId when present, else
+//    `itemName::unit` fallback.
 // ✅ NOTE — item-wise aggregation groups by item across ALL requests
-// in the month (any status) — an item requested 3 separate times
-// (e.g. 2 issued, 1 rejected) shows as ONE row with combined
-// requestedQty/issuedQty/rejectedQty, not 3 separate rows. This
-// matches the confirmed design (item-wise SUMMARY, not a
-// request-by-request log — that's what the daily Store screen
-// already provides).
-// ✅ Category grouping — same "Uncategorized" fallback convention as
-//    KitchenRequestTable.tsx, for requests with no matching category.
-// ⚠️ DOCUMENTED SCALE TRADE-OFF — this reads from the SAME full,
-//    unbounded requests array the daily Store screen already
-//    subscribes to (see useStoreRequests.ts's own header) — no new
-//    scale problem introduced here, but also not solved. A future
-//    month-indexed query/pagination would be needed if this dataset
-//    grows very large.
+//    in the month (any status) — an item requested 3 separate times
+//    shows as ONE row with combined quantities, not 3 rows. This is
+//    the confirmed design (item-wise SUMMARY, not a request log).
+// ✅ NEW — header polish: 18px/700 title, ~50px height, 18-20px left
+//    padding, vertically centered.
+// ✅ NEW — category header shows a fixed "DD MON YYYY - DD MON YYYY"
+//    range for the selected month (first day to last day), matching
+//    HistoricalInventoryTableView.tsx's "date on the right side of
+//    the category header" convention exactly — NOT tied to any
+//    actual request date, purely the calendar month's own bounds.
+// ✅ NEW — category filter dropdown (chip row, same pattern as
+//    HistoricalInventoryTableView's "All Categories" chips) — filters
+//    which categories are shown in the breakdown below; does NOT
+//    affect the summary cards (which remain whole-month totals).
 // FROZEN
 // ============================================
 
@@ -109,6 +86,17 @@ function formatMonthLabel(monthKey: string): string {
   return d.toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
 }
 
+// ✅ NEW — fixed calendar-month range, "DD MON YYYY - DD MON YYYY",
+// always first-to-last day of the selected month.
+function formatMonthRange(monthKey: string): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  const firstDay = new Date(Date.UTC(year, month - 1, 1));
+  const lastDay = new Date(Date.UTC(year, month, 0));
+  const fmt = (d: Date) =>
+    d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).toUpperCase();
+  return `${fmt(firstDay)} - ${fmt(lastDay)}`;
+}
+
 function currentMonthKey(): string {
   const now = new Date();
   const yyyy = now.getFullYear();
@@ -119,6 +107,7 @@ function currentMonthKey(): string {
 export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyReportScreenProps) {
   const today = useMemo(() => currentMonthKey(), []);
   const [selectedMonth, setSelectedMonth] = useState(today);
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [tableAreaHeights, setTableAreaHeights] = useState<Record<string, number>>({});
 
   const monthlyRequests = useMemo(
@@ -177,6 +166,13 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
     return result;
   }, [monthlyRequests, categories]);
 
+  // ✅ NEW — category filter, applied AFTER aggregation (doesn't
+  // affect the whole-month summary cards above).
+  const visibleCategoryGroups = useMemo(() => {
+    if (!categoryFilter) return categoryGroups;
+    return categoryGroups.filter((g) => g.categoryId === categoryFilter);
+  }, [categoryGroups, categoryFilter]);
+
   const isNextDisabled = selectedMonth >= today;
 
   return (
@@ -212,13 +208,37 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
             <SummaryCard label="Rejected" value={summary.rejected} color="#ef4444" icon="cancel" />
           </ScrollView>
 
-          {categoryGroups.length === 0 ? (
+          {categories.length > 0 && (
+            <View style={styles.categoryWrap}>
+              <TouchableOpacity
+                style={[styles.categoryChip, categoryFilter === null && styles.categoryChipActive]}
+                onPress={() => setCategoryFilter(null)}
+              >
+                <Text style={[styles.categoryChipText, categoryFilter === null && styles.categoryChipTextActive]}>
+                  All Categories
+                </Text>
+              </TouchableOpacity>
+              {categories.map((cat) => (
+                <TouchableOpacity
+                  key={cat.id}
+                  style={[styles.categoryChip, categoryFilter === cat.id && styles.categoryChipActive]}
+                  onPress={() => setCategoryFilter(cat.id)}
+                >
+                  <Text style={[styles.categoryChipText, categoryFilter === cat.id && styles.categoryChipTextActive]}>
+                    {cat.icon} {cat.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {visibleCategoryGroups.length === 0 ? (
             <View style={styles.emptyState}>
               <MaterialIcons name="bar-chart" size={36} color="#cbd5e1" />
               <Text style={styles.emptyStateText}>No requests this month</Text>
             </View>
           ) : (
-            categoryGroups.map((group) => {
+            visibleCategoryGroups.map((group) => {
               const measuredHeight = tableAreaHeights[group.categoryId] ?? 0;
 
               return (
@@ -227,6 +247,7 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
                     <Text style={styles.categoryHeaderText}>
                       {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
                     </Text>
+                    <Text style={styles.categoryHeaderDate}>{formatMonthRange(selectedMonth)}</Text>
                   </View>
 
                   <View
@@ -300,19 +321,20 @@ const styles = StyleSheet.create({
   container: { flex: 1, width: "100%", backgroundColor: "#fff" },
   header: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    padding: 16, borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
+    height: 50, paddingLeft: 18, paddingRight: 16,
+    borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
   },
-  title: { fontSize: 18, fontWeight: "800", color: "#1e293b" },
+  title: { fontSize: 18, fontWeight: "700", color: "#1e293b" },
   monthNav: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12,
-    paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
+    paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
   },
   monthNavArrow: { padding: 4 },
   monthNavLabel: { fontSize: 15, fontWeight: "800", color: "#1e293b", minWidth: 170, textAlign: "center" },
   body: { flex: 1 },
   bodyContent: { padding: 12, alignItems: "center", flexGrow: 1 },
   pageContainer: { width: "100%", maxWidth: 900, alignItems: "center" },
-  summaryRow: { gap: 6, alignItems: "center", marginBottom: 14 },
+  summaryRow: { gap: 6, alignItems: "center", marginBottom: 10 },
   summaryCard: {
     flexDirection: "row", alignItems: "center", gap: 5, height: 32,
     borderRadius: 6, borderWidth: 1, borderColor: "#e2e8f0", paddingHorizontal: 10,
@@ -320,13 +342,28 @@ const styles = StyleSheet.create({
   },
   summaryValue: { fontSize: 13, fontWeight: "800" },
   summaryLabel: { fontSize: 10, fontWeight: "600", color: "#64748b" },
+  categoryWrap: {
+    flexDirection: "row", flexWrap: "wrap", gap: 6,
+    width: "100%", marginBottom: 14,
+  },
+  categoryChip: {
+    height: 24, justifyContent: "center", paddingHorizontal: 10, borderRadius: 4,
+    backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#cbd5e1",
+  },
+  categoryChipActive: { backgroundColor: "#0369a1", borderColor: "#0369a1" },
+  categoryChipText: { fontSize: 10, fontWeight: "600", color: "#475569" },
+  categoryChipTextActive: { color: "#fff" },
   emptyState: { alignItems: "center", marginTop: 60, gap: 8 },
   emptyStateText: { color: "#94a3b8", fontSize: 13, fontWeight: "600" },
   categoryBlock: {
     marginBottom: 16, borderWidth: 1, borderColor: "#475569", borderRadius: 4, overflow: "hidden",
   },
-  categoryHeader: { backgroundColor: "#0369a1", paddingVertical: 7, paddingHorizontal: 10 },
+  categoryHeader: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    backgroundColor: "#0369a1", paddingVertical: 7, paddingHorizontal: 10,
+  },
   categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.4 },
+  categoryHeaderDate: { color: "#dbeafe", fontWeight: "700", fontSize: 11 },
   tableArea: { position: "relative" },
   tableHeaderRow: {
     flexDirection: "row", backgroundColor: "#fef9c3",

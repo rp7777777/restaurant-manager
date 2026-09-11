@@ -18,20 +18,17 @@
 //    through to KitchenRequestTable for the Lot/Batch No. column.
 // ✅ categories fetched via useCategoriesForPicker, passed to
 //    KitchenRequestTable for category-wise grouping.
-// ✅ Monthly Report — opened as a full-screen overlay
-//    (StyleSheet.absoluteFill, zIndex/elevation 9999) from a button
-//    below StoreHeader, NOT via the separately-registered
-//    /monthly-report Expo route (left untouched — this is a
-//    same-screen overlay, a distinct access path). Passes `requests`
-//    (the full, unfiltered restaurant-wide subscription already
-//    provided by useStoreRequests — no new Firestore query) and
-//    `categories` straight through; MonthlyReportScreen owns all of
-//    its own month-filtering/aggregation logic.
-// ✅ container.overflow: "visible" (unconditional, all platforms) —
-//    prevents the outer ScrollView from clipping the Monthly Report
-//    absoluteFill overlay. zIndex/elevation both set to 9999 on the
-//    overlay wrapper for reliable stacking above Store content on
-//    both web and Android.
+// ✅ FIX — Monthly Report overlay moved OUTSIDE the main ScrollView
+//    (now a sibling inside a top-level Fragment, not nested inside
+//    it). Previously, StyleSheet.absoluteFill was applied to a View
+//    nested INSIDE the ScrollView — absoluteFill only fills its
+//    nearest positioned ancestor, and a ScrollView's content area is
+//    sized to its CONTENT height, not the full viewport, so the
+//    overlay was clipped to however tall the Store screen's content
+//    happened to be, leaving old Store content visible below it.
+//    Moving the overlay to be a sibling of the ScrollView (both
+//    direct children of the top-level Fragment) lets absoluteFill
+//    correctly fill the actual screen viewport.
 // FROZEN
 // ============================================
 
@@ -155,84 +152,86 @@ export default function StoreScreen() {
   }, [displayRequests, statusFilter]);
 
   return (
-    <ScrollView
-      style={[styles.container, { backgroundColor: theme.bg }]}
-      showsVerticalScrollIndicator={false}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.primary]} tintColor={theme.primary} />}
-    >
-      <StoreHeader pendingCount={pendingCount} />
+    <>
+      <ScrollView
+        style={[styles.container, { backgroundColor: theme.bg }]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.primary]} tintColor={theme.primary} />}
+      >
+        <StoreHeader pendingCount={pendingCount} />
 
-      <TouchableOpacity style={styles.monthlyReportBtn} onPress={() => setShowMonthlyReport(true)}>
-        <MaterialIcons name="bar-chart" size={16} color="#0369a1" />
-        <Text style={styles.monthlyReportBtnText}>Monthly Report</Text>
-      </TouchableOpacity>
+        <TouchableOpacity style={styles.monthlyReportBtn} onPress={() => setShowMonthlyReport(true)}>
+          <MaterialIcons name="bar-chart" size={16} color="#0369a1" />
+          <Text style={styles.monthlyReportBtnText}>Monthly Report</Text>
+        </TouchableOpacity>
 
-      <View style={styles.body}>
-        <StoreStats
-          totalCount={totalCount}
-          pendingCount={pendingCount}
-          approvedCount={approvedCount}
-          issuedCount={issuedCount}
-          rejectedCount={rejectedCount}
-          cardBg={theme.card}
-          textSecondary={theme.textSecondary}
-          activeStatus={statusFilter}
-          onStatusPress={setStatusFilter}
-        />
-
-        <StoreDateNavigator
-          selectedDate={selectedDate}
-          today={today}
-          textColor={theme.text}
-          onPrev={() => setSelectedDate((d) => shiftDate(d, -1))}
-          onNext={() => setSelectedDate((d) => shiftDate(d, 1))}
-        />
-
-        {loading ? (
-          <ActivityIndicator color={theme.primary} style={{ marginTop: 20 }} />
-        ) : filteredDisplayRequests.length === 0 ? (
-          <View style={[styles.emptyBox, { backgroundColor: theme.card }]}>
-            <MaterialIcons name="inventory" size={40} color={theme.textSecondary} />
-            <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-              No requests for this date
-            </Text>
-          </View>
-        ) : (
-          <KitchenRequestTable
-            requests={filteredDisplayRequests}
-            batchAllocationsByRequestId={batchAllocationsByRequestId}
-            categories={categories}
-            onRowPress={handleRowPress}
+        <View style={styles.body}>
+          <StoreStats
+            totalCount={totalCount}
+            pendingCount={pendingCount}
+            approvedCount={approvedCount}
+            issuedCount={issuedCount}
+            rejectedCount={rejectedCount}
+            cardBg={theme.card}
+            textSecondary={theme.textSecondary}
+            activeStatus={statusFilter}
+            onStatusPress={setStatusFilter}
           />
-        )}
-      </View>
 
-      <PendingActionModal
-        visible={!!pendingTarget}
-        request={pendingTarget}
-        processing={processing}
-        theme={theme}
-        onApprove={handleApprove}
-        onReject={handleReject}
-        onCancel={() => setPendingTarget(null)}
-      />
+          <StoreDateNavigator
+            selectedDate={selectedDate}
+            today={today}
+            textColor={theme.text}
+            onPrev={() => setSelectedDate((d) => shiftDate(d, -1))}
+            onNext={() => setSelectedDate((d) => shiftDate(d, 1))}
+          />
 
-      <IssueKitchenRequestModal
-        visible={!!issueTarget}
-        request={issueTarget}
-        inventoryItems={inventoryItems}
-        processing={processing}
-        theme={theme}
-        onClose={() => setIssueTarget(null)}
-        onConfirm={handleIssueConfirm}
-      />
+          {loading ? (
+            <ActivityIndicator color={theme.primary} style={{ marginTop: 20 }} />
+          ) : filteredDisplayRequests.length === 0 ? (
+            <View style={[styles.emptyBox, { backgroundColor: theme.card }]}>
+              <MaterialIcons name="inventory" size={40} color={theme.textSecondary} />
+              <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
+                No requests for this date
+              </Text>
+            </View>
+          ) : (
+            <KitchenRequestTable
+              requests={filteredDisplayRequests}
+              batchAllocationsByRequestId={batchAllocationsByRequestId}
+              categories={categories}
+              onRowPress={handleRowPress}
+            />
+          )}
+        </View>
 
-      <RequestDetailModal
-        visible={!!detailTarget}
-        request={detailTarget}
-        theme={theme}
-        onClose={() => setDetailTarget(null)}
-      />
+        <PendingActionModal
+          visible={!!pendingTarget}
+          request={pendingTarget}
+          processing={processing}
+          theme={theme}
+          onApprove={handleApprove}
+          onReject={handleReject}
+          onCancel={() => setPendingTarget(null)}
+        />
+
+        <IssueKitchenRequestModal
+          visible={!!issueTarget}
+          request={issueTarget}
+          inventoryItems={inventoryItems}
+          processing={processing}
+          theme={theme}
+          onClose={() => setIssueTarget(null)}
+          onConfirm={handleIssueConfirm}
+        />
+
+        <RequestDetailModal
+          visible={!!detailTarget}
+          request={detailTarget}
+          theme={theme}
+          onClose={() => setDetailTarget(null)}
+        />
+      </ScrollView>
 
       {showMonthlyReport && (
         <View style={[StyleSheet.absoluteFill, { zIndex: 9999, elevation: 9999 }]}>
@@ -243,12 +242,12 @@ export default function StoreScreen() {
           />
         </View>
       )}
-    </ScrollView>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, overflow: "visible" },
+  container: { flex: 1 },
   body: { padding: 12 },
   emptyBox: { alignItems: "center", padding: 40, borderRadius: 10, gap: 8 },
   emptyText: { fontSize: 13, fontWeight: "600" },
