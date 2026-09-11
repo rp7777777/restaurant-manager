@@ -297,7 +297,7 @@ function SummaryCard({ label, value, color, icon }: { label: string; value: numb
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
+  container: { flex: 1, width: "100%", backgroundColor: "#fff" },
   header: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
     padding: 16, borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
@@ -310,7 +310,7 @@ const styles = StyleSheet.create({
   monthNavArrow: { padding: 4 },
   monthNavLabel: { fontSize: 15, fontWeight: "800", color: "#1e293b", minWidth: 170, textAlign: "center" },
   body: { flex: 1 },
-  bodyContent: { padding: 12, alignItems: "center" },
+  bodyContent: { padding: 12, alignItems: "center", flexGrow: 1 },
   pageContainer: { width: "100%", maxWidth: 900, alignItems: "center" },
   summaryRow: { gap: 6, alignItems: "center", marginBottom: 14 },
   summaryCard: {
