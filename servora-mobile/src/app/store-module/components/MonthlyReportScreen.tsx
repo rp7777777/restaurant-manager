@@ -11,20 +11,20 @@
 //    `itemName::unit` fallback.
 // ✅ NOTE — item-wise aggregation groups by item across ALL requests
 //    in the month (any status) — an item requested 3 separate times
-//    shows as ONE row with combined quantities, not 3 rows. This is
-//    the confirmed design (item-wise SUMMARY, not a request log).
-// ✅ NEW — header polish: 18px/700 title, ~50px height, 18-20px left
-//    padding, vertically centered.
-// ✅ NEW — category header shows a fixed "DD MON YYYY - DD MON YYYY"
-//    range for the selected month (first day to last day), matching
-//    HistoricalInventoryTableView.tsx's "date on the right side of
-//    the category header" convention exactly — NOT tied to any
-//    actual request date, purely the calendar month's own bounds.
-// ✅ NEW — category filter dropdown (chip row, same pattern as
-//    HistoricalInventoryTableView's "All Categories" chips) — filters
-//    which categories are shown in the breakdown below; does NOT
-//    affect the summary cards (which remain whole-month totals).
-// FROZEN
+//    shows as ONE row with combined quantities, not 3 rows.
+// ✅ Header polish: 18px/700 title, ~50px height, 18px left padding.
+// ✅ Category filter chips (All Categories + each category).
+// ✅ STEP 1 (this revision) — category header date range: for the
+//    CURRENT calendar month, ends at TODAY (todayISO(), UTC-
+//    consistent with the rest of the codebase) and grows daily
+//    rather than showing the full month immediately. For a PAST
+//    month, shows the fixed 01-to-last-day range. Computed via
+//    formatMonthRange(selectedMonth, currentMonthKey, todayFullDate)
+//    — todayFullDate captured once via todayISO() on mount (same
+//    "today" staleness trade-off already accepted elsewhere in this
+//    codebase, e.g. Inventory's date navigator).
+// FROZEN (pending Steps 2-4: category dropdown, clickable stat
+// cards, per-batch row breakdown — tracked separately)
 // ============================================
 
 import React, { useMemo, useState } from "react";
@@ -32,6 +32,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from "react-nati
 import { MaterialIcons } from "@expo/vector-icons";
 import { IngredientRequest } from "../../kitchen-module/types/kitchen-types";
 import { Category } from "../../../modules/inventory-module/types/category";
+import { todayISO } from "../../../utils/date-utils";
 
 const ROW_HEIGHT = 26;
 const COLS = { sn: 35, item: 160, unit: 60, requested: 100, issued: 90, rejected: 90 };
@@ -86,15 +87,24 @@ function formatMonthLabel(monthKey: string): string {
   return d.toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
 }
 
-// ✅ NEW — fixed calendar-month range, "DD MON YYYY - DD MON YYYY",
-// always first-to-last day of the selected month.
-function formatMonthRange(monthKey: string): string {
+// ✅ STEP 1 — for the CURRENT month, ends at TODAY (grows daily);
+// for a PAST month, shows the fixed 01-to-last-day range.
+function formatMonthRange(monthKey: string, currentMonthKeyVal: string, todayFullDate: string): string {
   const [year, month] = monthKey.split("-").map(Number);
   const firstDay = new Date(Date.UTC(year, month - 1, 1));
-  const lastDay = new Date(Date.UTC(year, month, 0));
+
+  const isCurrentMonth = monthKey === currentMonthKeyVal;
+  let endDay: Date;
+  if (isCurrentMonth) {
+    const [ty, tm, td] = todayFullDate.split("-").map(Number);
+    endDay = new Date(Date.UTC(ty, tm - 1, td));
+  } else {
+    endDay = new Date(Date.UTC(year, month, 0));
+  }
+
   const fmt = (d: Date) =>
     d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).toUpperCase();
-  return `${fmt(firstDay)} - ${fmt(lastDay)}`;
+  return `${fmt(firstDay)} - ${fmt(endDay)}`;
 }
 
 function currentMonthKey(): string {
@@ -106,6 +116,7 @@ function currentMonthKey(): string {
 
 export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyReportScreenProps) {
   const today = useMemo(() => currentMonthKey(), []);
+  const todayFullDate = useMemo(() => todayISO(), []);
   const [selectedMonth, setSelectedMonth] = useState(today);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [tableAreaHeights, setTableAreaHeights] = useState<Record<string, number>>({});
@@ -166,8 +177,6 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
     return result;
   }, [monthlyRequests, categories]);
 
-  // ✅ NEW — category filter, applied AFTER aggregation (doesn't
-  // affect the whole-month summary cards above).
   const visibleCategoryGroups = useMemo(() => {
     if (!categoryFilter) return categoryGroups;
     return categoryGroups.filter((g) => g.categoryId === categoryFilter);
@@ -247,7 +256,7 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
                     <Text style={styles.categoryHeaderText}>
                       {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
                     </Text>
-                    <Text style={styles.categoryHeaderDate}>{formatMonthRange(selectedMonth)}</Text>
+                    <Text style={styles.categoryHeaderDate}>{formatMonthRange(selectedMonth, today, todayFullDate)}</Text>
                   </View>
 
                   <View
