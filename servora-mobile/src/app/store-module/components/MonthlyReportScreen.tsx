@@ -1,55 +1,65 @@
 // ============================================
 // SERVORA ERP — MonthlyReportScreen Component
 // ✅ Reuses useStoreRequests().requests (already restaurant-wide,
-//    live) — no new Firestore subscription.
+//    live) — no new Firestore subscription for the request list.
 // 🔒 "month" = req.requiredDate's month (not createdAt).
-// ✅ Status counts are current-snapshot (not historical state).
-// ✅ Requested Qty = sum(orderQuantity), any status.
-// ✅ Issued Qty = sum(issuedQuantity ?? 0), ISSUED status only.
-// ✅ Rejected Qty = sum(orderQuantity), REJECTED status only.
-// ✅ Item grouping key = inventoryId when present, else
-//    `itemName::unit` fallback.
-// ✅ NOTE — item-wise aggregation groups by item across ALL requests
-//    in the month (any status) — an item requested 3 separate times
-//    shows as ONE row with combined quantities, not 3 rows.
-// ✅ Header polish: 18px/700 title, ~50px height, 18px left padding.
-// ✅ Category filter chips (All Categories + each category).
-// ✅ STEP 1 (this revision) — category header date range: for the
-//    CURRENT calendar month, ends at TODAY (todayISO(), UTC-
-//    consistent with the rest of the codebase) and grows daily
-//    rather than showing the full month immediately. For a PAST
-//    month, shows the fixed 01-to-last-day range. Computed via
-//    formatMonthRange(selectedMonth, currentMonthKey, todayFullDate)
-//    — todayFullDate captured once via todayISO() on mount (same
-//    "today" staleness trade-off already accepted elsewhere in this
-//    codebase, e.g. Inventory's date navigator).
-// FROZEN (pending Steps 2-4: category dropdown, clickable stat
-// cards, per-batch row breakdown — tracked separately)
+// ✅ Category header date range: current month ends at TODAY (grows
+//    daily), past month shows fixed 01-to-last-day range.
+// ✅ Category filter is a dropdown.
+// ✅ Stat cards clickable, filter item breakdown by status.
+// ✅ Per-batch row breakdown: Item Name merged; Lot/Batch No. +
+//    Store Issued Qty split per batch; Kitchen Req.Qty/Unit/
+//    Rejected Qty request-level.
+// ✅ NEW — "Req Total" and "Issued Total" columns added, ITEM-LEVEL
+//    (not request-level, not batch-level) — vertically centered
+//    across the whole item group, matching Item Name's own layout:
+//      Req Total    = sum of orderQuantity across ALL of the item's
+//                     requests in the month (any status).
+//      Issued Total = sum of ALL batch allocation quantities across
+//                     ALL of the item's ISSUED requests in the
+//                     month — i.e. sum(alloc.quantity) over every
+//                     row in the Lot/Batch No./Store Issued Qty
+//                     columns for this item, NOT a re-derivation
+//                     from issuedQuantity (avoids double-counting or
+//                     drift if a request's allocations don't sum
+//                     exactly to its issuedQuantity for any reason).
+// ✅ Column order: S.N. / Item Name / Lot/Batch No. / Kitchen
+//    Req.Qty / Req Total / Store Issued Qty / Issued Total / Unit /
+//    Rejected Qty.
+// FROZEN (pending: rejectionNote field + Rejection Note column —
+// tracked as a separate, larger schema change)
 // ============================================
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { IngredientRequest } from "../../kitchen-module/types/kitchen-types";
+import { IngredientRequest, RequestStatus } from "../../kitchen-module/types/kitchen-types";
 import { Category } from "../../../modules/inventory-module/types/category";
+import { getMovementsByReference } from "../../../modules/stock-movement-module/services/stock-movement-service";
+import { BatchAllocationRecord } from "../../../modules/stock-movement-module/types/stock-movement";
 import { todayISO } from "../../../utils/date-utils";
 
 const ROW_HEIGHT = 26;
-const COLS = { sn: 35, item: 160, unit: 60, requested: 100, issued: 90, rejected: 90 };
-const TABLE_WIDTH = COLS.sn + COLS.item + COLS.unit + COLS.requested + COLS.issued + COLS.rejected;
+const COLS = { sn: 40, item: 200, batch: 130, req: 75, reqTotal: 85, issued: 90, issuedTotal: 95, unit: 60, rejected: 95 };
+const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.req + COLS.reqTotal + COLS.issued + COLS.issuedTotal + COLS.unit + COLS.rejected;
 
 const DIVIDER_X_POSITIONS = (() => {
   const positions: number[] = [];
   let x = 0;
   x += COLS.sn; positions.push(x);
   x += COLS.item; positions.push(x);
-  x += COLS.unit; positions.push(x);
-  x += COLS.requested; positions.push(x);
+  x += COLS.batch; positions.push(x);
+  x += COLS.req; positions.push(x);
+  x += COLS.reqTotal; positions.push(x);
   x += COLS.issued; positions.push(x);
+  x += COLS.issuedTotal; positions.push(x);
+  x += COLS.unit; positions.push(x);
   return positions;
 })();
 
 const UNCATEGORIZED_ID = "__uncategorized__";
+
+type StatusFilter = RequestStatus | null;
 
 interface MonthlyReportScreenProps {
   requests:   IngredientRequest[];
@@ -57,20 +67,16 @@ interface MonthlyReportScreenProps {
   onClose:    () => void;
 }
 
-interface ItemAgg {
-  key:          string;
-  itemName:     string;
-  unit:         string;
-  requestedQty: number;
-  issuedQty:    number;
-  rejectedQty:  number;
+interface ItemGroup {
+  itemName: string;
+  requests: IngredientRequest[];
 }
 
-interface CategoryAgg {
+interface CategoryGroup {
   categoryId:   string;
   categoryName: string;
   categoryIcon: string | undefined;
-  items:        ItemAgg[];
+  items:        ItemGroup[];
 }
 
 function shiftMonth(monthKey: string, delta: number): string {
@@ -87,8 +93,6 @@ function formatMonthLabel(monthKey: string): string {
   return d.toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
 }
 
-// ✅ STEP 1 — for the CURRENT month, ends at TODAY (grows daily);
-// for a PAST month, shows the fixed 01-to-last-day range.
 function formatMonthRange(monthKey: string, currentMonthKeyVal: string, todayFullDate: string): string {
   const [year, month] = monthKey.split("-").map(Number);
   const firstDay = new Date(Date.UTC(year, month - 1, 1));
@@ -114,11 +118,17 @@ function currentMonthKey(): string {
   return `${yyyy}-${mm}`;
 }
 
+function getRequestRowCount(allocationCount: number): number {
+  return allocationCount > 0 ? allocationCount : 1;
+}
+
 export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyReportScreenProps) {
   const today = useMemo(() => currentMonthKey(), []);
   const todayFullDate = useMemo(() => todayISO(), []);
   const [selectedMonth, setSelectedMonth] = useState(today);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(null);
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [tableAreaHeights, setTableAreaHeights] = useState<Record<string, number>>({});
 
   const monthlyRequests = useMemo(
@@ -137,45 +147,86 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
     return { total: monthlyRequests.length, pending, approved, issued, rejected };
   }, [monthlyRequests]);
 
-  const categoryGroups = useMemo<CategoryAgg[]>(() => {
+  const statusFilteredRequests = useMemo(() => {
+    if (!statusFilter) return monthlyRequests;
+    return monthlyRequests.filter((r) => r.status === statusFilter);
+  }, [monthlyRequests, statusFilter]);
+
+  const [batchAllocationsByRequestId, setBatchAllocationsByRequestId] =
+    useState<Map<string, BatchAllocationRecord[]>>(new Map());
+
+  const issuedIdsKey = useMemo(
+    () => statusFilteredRequests.filter((r) => r.status === "ISSUED").map((r) => r.id).sort().join(","),
+    [statusFilteredRequests]
+  );
+
+  useEffect(() => {
+    const issuedIds = statusFilteredRequests.filter((r) => r.status === "ISSUED").map((r) => r.id);
+    if (issuedIds.length === 0) {
+      setBatchAllocationsByRequestId(new Map());
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      const restaurantId = statusFilteredRequests[0]?.restaurantId;
+      if (!restaurantId) return;
+      const entries = await Promise.all(
+        issuedIds.map(async (id): Promise<readonly [string, BatchAllocationRecord[]]> => {
+          try {
+            const movements = await getMovementsByReference(restaurantId, "KITCHEN_REQUEST", id);
+            const allocations = movements.flatMap((m) => m.batchAllocations ?? []);
+            return [id, allocations];
+          } catch (error) {
+            console.warn(`Failed to load batch allocations for request ${id}:`, error);
+            return [id, [] as BatchAllocationRecord[]];
+          }
+        })
+      );
+      if (!cancelled) {
+        setBatchAllocationsByRequestId(new Map(entries));
+      }
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issuedIdsKey]);
+
+  const categoryGroups = useMemo<CategoryGroup[]>(() => {
     const categoryById = new Map(categories.map((c) => [c.id, c]));
-    const byCategory = new Map<string, Map<string, ItemAgg>>();
+    const byCategory = new Map<string, Map<string, IngredientRequest[]>>();
 
-    for (const r of monthlyRequests) {
+    for (const r of statusFilteredRequests) {
       const catKey = r.categoryId && categoryById.has(r.categoryId) ? r.categoryId : UNCATEGORIZED_ID;
-      const itemKey = r.inventoryId ? r.inventoryId : `${r.itemName}::${r.unit}`;
-
-      const byItem = byCategory.get(catKey) ?? new Map<string, ItemAgg>();
-      const existing = byItem.get(itemKey) ?? {
-        key: itemKey, itemName: r.itemName, unit: r.unit,
-        requestedQty: 0, issuedQty: 0, rejectedQty: 0,
-      };
-
-      existing.requestedQty += r.orderQuantity;
-      if (r.status === "ISSUED") existing.issuedQty += r.issuedQuantity ?? 0;
-      if (r.status === "REJECTED") existing.rejectedQty += r.orderQuantity;
-
-      byItem.set(itemKey, existing);
+      const byItem = byCategory.get(catKey) ?? new Map<string, IngredientRequest[]>();
+      const itemKey = r.itemName;
+      const list = byItem.get(itemKey) ?? [];
+      list.push(r);
+      byItem.set(itemKey, list);
       byCategory.set(catKey, byItem);
     }
 
-    const result: CategoryAgg[] = [];
+    const result: CategoryGroup[] = [];
     for (const category of categories) {
       const byItem = byCategory.get(category.id);
       if (!byItem || byItem.size === 0) continue;
-      const items = Array.from(byItem.values()).sort((a, b) => a.itemName.localeCompare(b.itemName));
-      result.push({ categoryId: category.id, categoryName: category.name, categoryIcon: category.icon, items });
+      const itemGroups: ItemGroup[] = Array.from(byItem.entries())
+        .map(([itemName, itemRequests]) => ({ itemName, requests: itemRequests }))
+        .sort((a, b) => a.itemName.localeCompare(b.itemName));
+      result.push({ categoryId: category.id, categoryName: category.name, categoryIcon: category.icon, items: itemGroups });
     }
 
     const uncatByItem = byCategory.get(UNCATEGORIZED_ID);
     if (uncatByItem && uncatByItem.size > 0) {
-      const items = Array.from(uncatByItem.values()).sort((a, b) => a.itemName.localeCompare(b.itemName));
-      result.push({ categoryId: UNCATEGORIZED_ID, categoryName: "Uncategorized", categoryIcon: undefined, items });
+      const itemGroups: ItemGroup[] = Array.from(uncatByItem.entries())
+        .map(([itemName, itemRequests]) => ({ itemName, requests: itemRequests }))
+        .sort((a, b) => a.itemName.localeCompare(b.itemName));
+      result.push({ categoryId: UNCATEGORIZED_ID, categoryName: "Uncategorized", categoryIcon: undefined, items: itemGroups });
     }
 
     result.sort((a, b) => a.categoryName.localeCompare(b.categoryName));
     return result;
-  }, [monthlyRequests, categories]);
+  }, [statusFilteredRequests, categories]);
 
   const visibleCategoryGroups = useMemo(() => {
     if (!categoryFilter) return categoryGroups;
@@ -183,6 +234,10 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
   }, [categoryGroups, categoryFilter]);
 
   const isNextDisabled = selectedMonth >= today;
+
+  const selectedCategoryName = categoryFilter
+    ? categories.find((c) => c.id === categoryFilter)?.name ?? "All Categories"
+    : "All Categories";
 
   return (
     <View style={styles.container}>
@@ -209,37 +264,36 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
 
       <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
         <View style={styles.pageContainer}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRow}>
-            <SummaryCard label="Total" value={summary.total} color="#64748b" icon="list" />
-            <SummaryCard label="Pending" value={summary.pending} color="#f59e0b" icon="schedule" />
-            <SummaryCard label="Approved" value={summary.approved} color="#3b82f6" icon="check-circle" />
-            <SummaryCard label="Issued" value={summary.issued} color="#10b981" icon="done-all" />
-            <SummaryCard label="Rejected" value={summary.rejected} color="#ef4444" icon="cancel" />
-          </ScrollView>
+          <View style={styles.topControlsRow}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryRow}>
+              <SummaryCard label="Total" value={summary.total} color="#64748b" icon="list" active={statusFilter === null} onPress={() => setStatusFilter(null)} />
+              <SummaryCard label="Pending" value={summary.pending} color="#f59e0b" icon="schedule" active={statusFilter === "PENDING"} onPress={() => setStatusFilter((s) => s === "PENDING" ? null : "PENDING")} />
+              <SummaryCard label="Approved" value={summary.approved} color="#3b82f6" icon="check-circle" active={statusFilter === "APPROVED"} onPress={() => setStatusFilter((s) => s === "APPROVED" ? null : "APPROVED")} />
+              <SummaryCard label="Issued" value={summary.issued} color="#10b981" icon="done-all" active={statusFilter === "ISSUED"} onPress={() => setStatusFilter((s) => s === "ISSUED" ? null : "ISSUED")} />
+              <SummaryCard label="Rejected" value={summary.rejected} color="#ef4444" icon="cancel" active={statusFilter === "REJECTED"} onPress={() => setStatusFilter((s) => s === "REJECTED" ? null : "REJECTED")} />
+            </ScrollView>
 
-          {categories.length > 0 && (
-            <View style={styles.categoryWrap}>
-              <TouchableOpacity
-                style={[styles.categoryChip, categoryFilter === null && styles.categoryChipActive]}
-                onPress={() => setCategoryFilter(null)}
-              >
-                <Text style={[styles.categoryChipText, categoryFilter === null && styles.categoryChipTextActive]}>
-                  All Categories
-                </Text>
-              </TouchableOpacity>
-              {categories.map((cat) => (
-                <TouchableOpacity
-                  key={cat.id}
-                  style={[styles.categoryChip, categoryFilter === cat.id && styles.categoryChipActive]}
-                  onPress={() => setCategoryFilter(cat.id)}
-                >
-                  <Text style={[styles.categoryChipText, categoryFilter === cat.id && styles.categoryChipTextActive]}>
-                    {cat.icon} {cat.name}
-                  </Text>
+            {categories.length > 0 && (
+              <View style={styles.dropdownWrap}>
+                <TouchableOpacity style={styles.dropdownButton} onPress={() => setShowCategoryDropdown((v) => !v)}>
+                  <Text style={styles.dropdownButtonText}>{selectedCategoryName}</Text>
+                  <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={20} color="#64748b" />
                 </TouchableOpacity>
-              ))}
-            </View>
-          )}
+                {showCategoryDropdown && (
+                  <ScrollView style={styles.dropdownList} nestedScrollEnabled>
+                    <TouchableOpacity style={styles.dropdownItem} onPress={() => { setCategoryFilter(null); setShowCategoryDropdown(false); }}>
+                      <Text style={styles.dropdownItemText}>All Categories</Text>
+                    </TouchableOpacity>
+                    {categories.map((cat) => (
+                      <TouchableOpacity key={cat.id} style={styles.dropdownItem} onPress={() => { setCategoryFilter(cat.id); setShowCategoryDropdown(false); }}>
+                        <Text style={styles.dropdownItemText}>{cat.icon} {cat.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                )}
+              </View>
+            )}
+          </View>
 
           {visibleCategoryGroups.length === 0 ? (
             <View style={styles.emptyState}>
@@ -270,23 +324,102 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
                   >
                     <View style={styles.tableHeaderRow}>
                       <Text style={[styles.headerCell, { width: COLS.sn }]}>S.N.</Text>
-                      <Text style={[styles.headerCell, { width: COLS.item }]}>Item</Text>
+                      <Text style={[styles.headerCell, { width: COLS.item }]}>Item Name</Text>
+                      <Text style={[styles.headerCell, { width: COLS.batch }]}>Lot/Batch No.</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.req }]}>Kitchen Req.Qty</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.reqTotal }]}>Req Total</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.issued }]}>Store Issued Qty</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.issuedTotal }]}>Issued Total</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
-                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.requested }]}>Requested Qty</Text>
-                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.issued }]}>Issued Qty</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.rejected }]}>Rejected Qty</Text>
                     </View>
 
-                    {group.items.map((item, idx) => {
-                      const isEvenRow = idx % 2 === 1;
+                    {group.items.map((itemGroup, itemIndex) => {
+                      const itemGroupHeight = itemGroup.requests.reduce((sum, req) => {
+                        const allocationCount = (batchAllocationsByRequestId.get(req.id) ?? []).length;
+                        return sum + getRequestRowCount(allocationCount) * ROW_HEIGHT;
+                      }, 0);
+                      const isEvenRow = itemIndex % 2 === 1;
+
+                      // ✅ NEW — item-level totals.
+                      const reqTotal = itemGroup.requests.reduce((sum, r) => sum + r.orderQuantity, 0);
+                      const issuedTotal = itemGroup.requests.reduce((sum, r) => {
+                        const allocations = batchAllocationsByRequestId.get(r.id) ?? [];
+                        return sum + allocations.reduce((s, a) => s + a.quantity, 0);
+                      }, 0);
+                      const itemUnit = itemGroup.requests[0]?.unit ?? "";
+
                       return (
-                        <View key={item.key} style={[styles.dataRow, isEvenRow && styles.dataRowAlt]}>
-                          <Text style={[styles.cell, { width: COLS.sn }]}>{idx + 1}</Text>
-                          <Text style={[styles.cell, styles.itemCell, { width: COLS.item }]}>{item.itemName}</Text>
-                          <Text style={[styles.cell, styles.centerCell, { width: COLS.unit }]}>{item.unit}</Text>
-                          <Text style={[styles.cell, styles.centerCell, { width: COLS.requested }]}>{item.requestedQty}</Text>
-                          <Text style={[styles.cell, styles.centerCell, { width: COLS.issued }]}>{item.issuedQty}</Text>
-                          <Text style={[styles.cell, styles.centerCell, styles.rejectedCell, { width: COLS.rejected }]}>{item.rejectedQty}</Text>
+                        <View key={itemGroup.itemName} style={[styles.itemGroupRow, { minHeight: itemGroupHeight }, isEvenRow && styles.itemGroupRowAlt]}>
+                          <View style={[styles.leftStrip, { width: COLS.sn + COLS.item, minHeight: itemGroupHeight }]}>
+                            <Text style={[styles.cell, { width: COLS.sn }]}>{itemIndex + 1}</Text>
+                            <Text style={[styles.cell, styles.itemCell, { width: COLS.item }]}>{itemGroup.itemName}</Text>
+                          </View>
+
+                          <View style={styles.rightRequestRows}>
+                            {itemGroup.requests.map((req, reqIdx) => {
+                              const allocations = batchAllocationsByRequestId.get(req.id) ?? [];
+                              const rows = allocations.length > 0 ? allocations : [null];
+                              const requestBlockHeight = rows.length * ROW_HEIGHT;
+
+                              return (
+                                <View
+                                  key={req.id}
+                                  style={[
+                                    styles.requestBlock,
+                                    { minHeight: requestBlockHeight },
+                                    reqIdx < itemGroup.requests.length - 1 && styles.requestRowDivider,
+                                  ]}
+                                >
+                                  <View style={{ width: COLS.batch }}>
+                                    {rows.map((alloc, rowIdx) => (
+                                      <View
+                                        key={alloc ? alloc.batchId : "no-batch"}
+                                        style={[styles.batchLineRow, { height: ROW_HEIGHT }, rowIdx < rows.length - 1 && styles.batchRowDivider]}
+                                      >
+                                        <Text style={styles.cell}>{alloc ? alloc.batchNo : "—"}</Text>
+                                      </View>
+                                    ))}
+                                  </View>
+
+                                  <View style={[styles.requestLevelCell, { width: COLS.req, minHeight: requestBlockHeight }]}>
+                                    <Text style={[styles.cell, styles.centerCell]}>{req.orderQuantity}</Text>
+                                  </View>
+
+                                  <View style={{ width: COLS.issued }}>
+                                    {rows.map((alloc, rowIdx) => (
+                                      <View
+                                        key={alloc ? alloc.batchId : "no-batch"}
+                                        style={[styles.batchLineRow, { height: ROW_HEIGHT }, rowIdx < rows.length - 1 && styles.batchRowDivider]}
+                                      >
+                                        <Text style={[styles.cell, styles.centerCell]}>
+                                          {alloc ? alloc.quantity : (req.status === "ISSUED" ? (req.issuedQuantity ?? "—") : "—")}
+                                        </Text>
+                                      </View>
+                                    ))}
+                                  </View>
+                                </View>
+                              );
+                            })}
+                          </View>
+
+                          <View style={[styles.itemLevelCell, { width: COLS.reqTotal, minHeight: itemGroupHeight }]}>
+                            <Text style={[styles.cell, styles.centerCell, styles.totalCellText]}>{reqTotal}</Text>
+                          </View>
+
+                          <View style={[styles.itemLevelCell, { width: COLS.issuedTotal, minHeight: itemGroupHeight }]}>
+                            <Text style={[styles.cell, styles.centerCell, styles.totalCellText]}>{issuedTotal}</Text>
+                          </View>
+
+                          <View style={[styles.itemLevelCell, { width: COLS.unit, minHeight: itemGroupHeight }]}>
+                            <Text style={[styles.cell, styles.centerCell]}>{itemUnit}</Text>
+                          </View>
+
+                          <View style={[styles.itemLevelCell, { width: COLS.rejected, minHeight: itemGroupHeight }]}>
+                            <Text style={[styles.cell, styles.centerCell, styles.rejectedCell]}>
+                              {itemGroup.requests.filter((r) => r.status === "REJECTED").reduce((s, r) => s + r.orderQuantity, 0)}
+                            </Text>
+                          </View>
                         </View>
                       );
                     })}
@@ -316,13 +449,19 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
   );
 }
 
-function SummaryCard({ label, value, color, icon }: { label: string; value: number; color: string; icon: keyof typeof MaterialIcons.glyphMap }) {
+function SummaryCard({
+  label, value, color, icon, active, onPress,
+}: { label: string; value: number; color: string; icon: keyof typeof MaterialIcons.glyphMap; active: boolean; onPress: () => void }) {
   return (
-    <View style={styles.summaryCard}>
+    <TouchableOpacity
+      style={[styles.summaryCard, active && { borderColor: color, borderWidth: 2 }]}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
       <MaterialIcons name={icon} size={14} color={color} />
       <Text style={[styles.summaryValue, { color }]}>{value}</Text>
       <Text style={styles.summaryLabel}>{label}</Text>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -343,7 +482,11 @@ const styles = StyleSheet.create({
   body: { flex: 1 },
   bodyContent: { padding: 12, alignItems: "center", flexGrow: 1 },
   pageContainer: { width: "100%", maxWidth: 900, alignItems: "center" },
-  summaryRow: { gap: 6, alignItems: "center", marginBottom: 10 },
+  topControlsRow: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start",
+    width: "100%", maxWidth: TABLE_WIDTH, marginBottom: 14, gap: 10,
+  },
+  summaryRow: { gap: 6, alignItems: "center" },
   summaryCard: {
     flexDirection: "row", alignItems: "center", gap: 5, height: 32,
     borderRadius: 6, borderWidth: 1, borderColor: "#e2e8f0", paddingHorizontal: 10,
@@ -351,17 +494,20 @@ const styles = StyleSheet.create({
   },
   summaryValue: { fontSize: 13, fontWeight: "800" },
   summaryLabel: { fontSize: 10, fontWeight: "600", color: "#64748b" },
-  categoryWrap: {
-    flexDirection: "row", flexWrap: "wrap", gap: 6,
-    width: "100%", marginBottom: 14,
+  dropdownWrap: { width: 220 },
+  dropdownButton: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    borderWidth: 1, borderColor: "#cbd5e1", borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 9, backgroundColor: "#fff",
   },
-  categoryChip: {
-    height: 24, justifyContent: "center", paddingHorizontal: 10, borderRadius: 4,
-    backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#cbd5e1",
+  dropdownButtonText: { fontSize: 13, color: "#1e293b", fontWeight: "600" },
+  dropdownList: {
+    borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 8,
+    marginTop: 4, maxHeight: 220, backgroundColor: "#f8fafc",
+    position: "absolute", top: 42, right: 0, width: 220, zIndex: 100,
   },
-  categoryChipActive: { backgroundColor: "#0369a1", borderColor: "#0369a1" },
-  categoryChipText: { fontSize: 10, fontWeight: "600", color: "#475569" },
-  categoryChipTextActive: { color: "#fff" },
+  dropdownItem: { paddingHorizontal: 14, paddingVertical: 10 },
+  dropdownItemText: { fontSize: 13, color: "#1e293b" },
   emptyState: { alignItems: "center", marginTop: 60, gap: 8 },
   emptyStateText: { color: "#94a3b8", fontSize: 13, fontWeight: "600" },
   categoryBlock: {
@@ -380,12 +526,18 @@ const styles = StyleSheet.create({
   },
   headerCell: { fontSize: 12, fontWeight: "800", color: "#1e293b", paddingHorizontal: 3 },
   centerCell: { textAlign: "center" },
-  dataRow: {
-    flexDirection: "row", alignItems: "center", height: ROW_HEIGHT,
-    borderBottomWidth: 1.5, borderBottomColor: "#475569", backgroundColor: "#fff",
-  },
-  dataRowAlt: { backgroundColor: "#f8fafc" },
+  itemGroupRow: { flexDirection: "row", borderBottomWidth: 1.5, borderBottomColor: "#475569" },
+  itemGroupRowAlt: { backgroundColor: "#f8fafc" },
+  leftStrip: { flexDirection: "row", alignItems: "center", paddingVertical: 4 },
   cell: { fontSize: 11, color: "#334155", paddingHorizontal: 3 },
   itemCell: { fontWeight: "700", color: "#0f172a" },
+  rightRequestRows: { flex: 1 },
+  requestBlock: { flexDirection: "row" },
+  requestRowDivider: { borderBottomWidth: 1.5, borderBottomColor: "#475569" },
+  batchLineRow: { justifyContent: "center", paddingHorizontal: 3 },
+  batchRowDivider: { borderBottomWidth: 1, borderBottomColor: "#94a3b8" },
+  requestLevelCell: { justifyContent: "center", alignItems: "center", paddingHorizontal: 3 },
+  itemLevelCell: { justifyContent: "center", alignItems: "center", paddingHorizontal: 3 },
+  totalCellText: { fontWeight: "800", color: "#0f172a" },
   rejectedCell: { color: "#dc2626", fontWeight: "700" },
 });
