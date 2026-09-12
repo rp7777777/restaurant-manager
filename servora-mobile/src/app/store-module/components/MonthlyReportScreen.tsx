@@ -1,38 +1,34 @@
 // ============================================
 // SERVORA ERP — MonthlyReportScreen Component
-// ✅ Reuses useStoreRequests().requests (already restaurant-wide,
-//    live) — no new Firestore subscription for the request list.
+// ✅ Reuses useStoreRequests().requests — no new Firestore
+//    subscription for the request list.
 // 🔒 "month" = req.requiredDate's month (not createdAt).
 // ✅ Category header date range: current month ends at TODAY (grows
 //    daily), past month shows fixed 01-to-last-day range.
-// ✅ Category filter dropdown. Stat cards clickable.
+// ✅ Category filter dropdown (green border, matching the "issued/
+//    positive" green used for Store Issued Qty). Stat cards
+//    clickable.
 // ✅ FINAL column order: S.N. / Item Name / Lot/Batch No. / Kitchen
-//    Req.Qty / Store Issued Qty / Kitchen Req. Total Qty / Store
-//    Issued Total Qty / Unit / Rejected Qty.
-// 🔒 CONFIRMED SEMANTICS:
-//    - Kitchen Req.Qty  = REQUEST-level (orderQuantity), MERGED/
-//      vertically centered across that request's OWN batch rows.
-//    - Store Issued Qty = BATCH-level ONLY (alloc.quantity) — NO
-//      issuedQuantity fallback when a batch row has no allocation
-//      (a null/no-batch row shows "—", never a re-derived total).
-//      This avoids the exact contradiction of "batch rows show —,
-//      but Store Issued Qty shows a nonzero number" that a fallback
-//      to issuedQuantity could otherwise create.
-//    - Kitchen Req. Total Qty  = ITEM-level = sum(orderQuantity)
-//      over ALL of the item's requests in the month.
-//    - Store Issued Total Qty  = ITEM-level = sum of every batch
-//      allocation's quantity over ALL of the item's ISSUED requests
-//      (NOT re-derived from issuedQuantity).
-//    - Rejected Qty = ITEM-level = sum(orderQuantity) over the
-//      item's REJECTED requests.
-// ✅ Item grouping key = inventoryId when present, else
-//    `itemName::unit` fallback — prevents two DIFFERENT inventory
-//    items that happen to share a name (e.g. two "beer" SKUs) from
-//    being silently merged into one row.
-// ✅ Batch-allocation refetch key now includes each ISSUED request's
-//    issuedQuantity, not just its id — so if a request's issued
-//    amount is later corrected/updated while this report stays open,
-//    the allocation fetch re-runs rather than showing stale data.
+//    Req.Qty / Store Issued Qty / Rejected Qty / Kitchen Req. Total
+//    Qty / Store Issued Total Qty / Unit — Rejected Qty moved next
+//    to Store Issued Qty (so a drop from requested to issued/
+//    rejected reads left-to-right in one glance), Unit moved to the
+//    end.
+// ✅ Store Issued Qty batch-row values colored green (#059669,
+//    matching MovementHistoryModal's own PURCHASE/RETURN/
+//    TRANSFER_IN green convention for positive/incoming stock
+//    movements).
+// 🔒 CONFIRMED SEMANTICS (unchanged from prior freeze):
+//    - Kitchen Req.Qty  = REQUEST-level, merged across that
+//      request's own batch rows.
+//    - Store Issued Qty = BATCH-level ONLY, no issuedQuantity
+//      fallback (a no-batch row always shows "—").
+//    - Kitchen Req. Total Qty  = ITEM-level sum(orderQuantity).
+//    - Store Issued Total Qty  = ITEM-level sum of all batch
+//      allocation quantities (not re-derived from issuedQuantity).
+//    - Rejected Qty = ITEM-level sum(orderQuantity) over REJECTED
+//      requests.
+// ✅ Item grouping key prefers inventoryId over itemName-only.
 // FROZEN (pending: rejectionNote field + Rejection Note column —
 // tracked as a separate, larger schema change)
 // ============================================
@@ -47,8 +43,8 @@ import { BatchAllocationRecord } from "../../../modules/stock-movement-module/ty
 import { todayISO } from "../../../utils/date-utils";
 
 const ROW_HEIGHT = 26;
-const COLS = { sn: 40, item: 190, batch: 110, req: 75, issued: 85, reqTotal: 90, issuedTotal: 95, unit: 60, rejected: 90 };
-const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.req + COLS.issued + COLS.reqTotal + COLS.issuedTotal + COLS.unit + COLS.rejected;
+const COLS = { sn: 40, item: 190, batch: 110, req: 75, issued: 85, rejected: 90, reqTotal: 90, issuedTotal: 95, unit: 60 };
+const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.req + COLS.issued + COLS.rejected + COLS.reqTotal + COLS.issuedTotal + COLS.unit;
 
 const DIVIDER_X_POSITIONS = (() => {
   const positions: number[] = [];
@@ -58,9 +54,9 @@ const DIVIDER_X_POSITIONS = (() => {
   x += COLS.batch; positions.push(x);
   x += COLS.req; positions.push(x);
   x += COLS.issued; positions.push(x);
+  x += COLS.rejected; positions.push(x);
   x += COLS.reqTotal; positions.push(x);
   x += COLS.issuedTotal; positions.push(x);
-  x += COLS.unit; positions.push(x);
   return positions;
 })();
 
@@ -163,9 +159,6 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
   const [batchAllocationsByRequestId, setBatchAllocationsByRequestId] =
     useState<Map<string, BatchAllocationRecord[]>>(new Map());
 
-  // ✅ FIX — key now includes issuedQuantity, not just id, so a
-  // later correction to an ISSUED request's issued amount triggers
-  // a refetch instead of showing stale allocation data.
   const issuedIdsKey = useMemo(
     () =>
       statusFilteredRequests
@@ -215,10 +208,6 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
     for (const r of statusFilteredRequests) {
       const catKey = r.categoryId && categoryById.has(r.categoryId) ? r.categoryId : UNCATEGORIZED_ID;
       const byItem = byCategory.get(catKey) ?? new Map<string, IngredientRequest[]>();
-      // ✅ FIX — grouping key prefers inventoryId (real Inventory
-      // item identity), falling back to `itemName::unit` only when
-      // inventoryId is missing — prevents two different Inventory
-      // items sharing a display name from being merged.
       const itemKey = r.inventoryId ? r.inventoryId : `${r.itemName}::${r.unit}`;
       const list = byItem.get(itemKey) ?? [];
       list.push(r);
@@ -297,7 +286,7 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
               <View style={styles.dropdownWrap}>
                 <TouchableOpacity style={styles.dropdownButton} onPress={() => setShowCategoryDropdown((v) => !v)}>
                   <Text style={styles.dropdownButtonText}>{selectedCategoryName}</Text>
-                  <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={20} color="#64748b" />
+                  <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={20} color="#059669" />
                 </TouchableOpacity>
                 {showCategoryDropdown && (
                   <ScrollView style={styles.dropdownList} nestedScrollEnabled>
@@ -348,10 +337,10 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
                       <Text style={[styles.headerCell, { width: COLS.batch }]}>Lot/Batch No.</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.req }]}>Kitchen Req.Qty</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.issued }]}>Store Issued Qty</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.rejected }]}>Rejected Qty</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.reqTotal }]}>Kitchen Req. Total Qty</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.issuedTotal }]}>Store Issued Total Qty</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
-                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.rejected }]}>Rejected Qty</Text>
                     </View>
 
                     {group.items.map((itemGroup, itemIndex) => {
@@ -402,23 +391,17 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
                                     ))}
                                   </View>
 
-                                  {/* Kitchen Req.Qty — REQUEST-level, merged/vertically
-                                      centered across this request's own batch rows. */}
                                   <View style={[styles.requestLevelCell, { width: COLS.req, minHeight: requestBlockHeight }]}>
                                     <Text style={[styles.cell, styles.centerCell]}>{req.orderQuantity}</Text>
                                   </View>
 
-                                  {/* ✅ FIX — Store Issued Qty is BATCH-level ONLY. No
-                                      issuedQuantity fallback — a no-batch row always
-                                      shows "—", never a re-derived total, avoiding any
-                                      contradiction with the batch rows shown above it. */}
                                   <View style={{ width: COLS.issued }}>
                                     {rows.map((alloc, rowIdx) => (
                                       <View
                                         key={alloc ? alloc.batchId : "no-batch"}
                                         style={[styles.batchLineRow, { height: ROW_HEIGHT }, rowIdx < rows.length - 1 && styles.batchRowDivider]}
                                       >
-                                        <Text style={[styles.cell, styles.centerCell]}>
+                                        <Text style={[styles.cell, styles.centerCell, alloc && styles.issuedQtyCell]}>
                                           {alloc ? alloc.quantity : "—"}
                                         </Text>
                                       </View>
@@ -427,6 +410,10 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
                                 </View>
                               );
                             })}
+                          </View>
+
+                          <View style={[styles.itemLevelCell, { width: COLS.rejected, minHeight: itemGroupHeight }]}>
+                            <Text style={[styles.cell, styles.centerCell, styles.rejectedCell]}>{rejectedTotal}</Text>
                           </View>
 
                           <View style={[styles.itemLevelCell, { width: COLS.reqTotal, minHeight: itemGroupHeight }]}>
@@ -439,10 +426,6 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
 
                           <View style={[styles.itemLevelCell, { width: COLS.unit, minHeight: itemGroupHeight }]}>
                             <Text style={[styles.cell, styles.centerCell]}>{itemUnit}</Text>
-                          </View>
-
-                          <View style={[styles.itemLevelCell, { width: COLS.rejected, minHeight: itemGroupHeight }]}>
-                            <Text style={[styles.cell, styles.centerCell, styles.rejectedCell]}>{rejectedTotal}</Text>
                           </View>
                         </View>
                       );
@@ -521,7 +504,7 @@ const styles = StyleSheet.create({
   dropdownWrap: { width: 220 },
   dropdownButton: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    borderWidth: 1, borderColor: "#cbd5e1", borderRadius: 8,
+    borderWidth: 1.5, borderColor: "#059669", borderRadius: 8,
     paddingHorizontal: 12, paddingVertical: 9, backgroundColor: "#fff",
   },
   dropdownButtonText: { fontSize: 13, color: "#1e293b", fontWeight: "600" },
@@ -564,4 +547,5 @@ const styles = StyleSheet.create({
   itemLevelCell: { justifyContent: "center", alignItems: "center", paddingHorizontal: 3 },
   totalCellText: { fontWeight: "800", color: "#0f172a" },
   rejectedCell: { color: "#dc2626", fontWeight: "700" },
+  issuedQtyCell: { color: "#059669", fontWeight: "700" },
 });
