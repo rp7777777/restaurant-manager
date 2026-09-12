@@ -510,8 +510,9 @@ const styles = StyleSheet.create({
   dropdownButtonText: { fontSize: 13, color: "#1e293b", fontWeight: "600" },
   dropdownList: {
     borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 8,
-    marginTop: 4, maxHeight: 220, backgroundColor: "#f8fafc",
-    position: "absolute", top: 42, right: 0, width: 220, zIndex: 100,
+    marginTop: 4, maxHeight: 220, backgroundColor: "#ffffff",
+    position: "absolute", top: 42, right: 0, width: 220, zIndex: 9999, elevation: 9999,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6,
   },
   dropdownItem: { paddingHorizontal: 14, paddingVertical: 10 },
   dropdownItemText: { fontSize: 13, color: "#1e293b" },
