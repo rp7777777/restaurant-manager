@@ -5,19 +5,23 @@
 // 🔒 "month" = req.requiredDate's month (not createdAt).
 // ✅ Category header date range: current month ends at TODAY (grows
 //    daily), past month shows fixed 01-to-last-day range.
-// ✅ Category filter dropdown (green border, matching the "issued/
-//    positive" green used for Store Issued Qty). Stat cards
-//    clickable.
+// ✅ Category filter dropdown — NOT absolutely positioned anymore:
+//    when open, it sits in normal document flow and pushes the
+//    table below it downward, then the table returns to its normal
+//    position when the dropdown closes. This was changed from an
+//    absolute-positioned overlay because the overlay was rendering
+//    with an apparently-transparent background on web, letting
+//    table content bleed through visually even with an explicit
+//    opaque backgroundColor — normal flow avoids that class of
+//    layering issue entirely.
+// ✅ Stat cards clickable, filter item breakdown by status.
 // ✅ FINAL column order: S.N. / Item Name / Lot/Batch No. / Kitchen
-//    Req.Qty / Store Issued Qty / Rejected Qty / Kitchen Req. Total
-//    Qty / Store Issued Total Qty / Unit — Rejected Qty moved next
-//    to Store Issued Qty (so a drop from requested to issued/
-//    rejected reads left-to-right in one glance), Unit moved to the
-//    end.
-// ✅ Store Issued Qty batch-row values colored green (#059669,
-//    matching MovementHistoryModal's own PURCHASE/RETURN/
-//    TRANSFER_IN green convention for positive/incoming stock
-//    movements).
+//    Req.Qty / Store Issued Qty / Store Rejected Qty / Kitchen Req.
+//    Total Qty / Store Issued Total Qty / Unit.
+// ✅ Store Issued Qty (batch-level) AND Store Issued Total Qty
+//    (item-level) both colored green (#059669) — consistent
+//    "issued/positive" color across both granularities.
+// ✅ Unit column values given light bold weight (600) for readability.
 // 🔒 CONFIRMED SEMANTICS (unchanged from prior freeze):
 //    - Kitchen Req.Qty  = REQUEST-level, merged across that
 //      request's own batch rows.
@@ -26,8 +30,8 @@
 //    - Kitchen Req. Total Qty  = ITEM-level sum(orderQuantity).
 //    - Store Issued Total Qty  = ITEM-level sum of all batch
 //      allocation quantities (not re-derived from issuedQuantity).
-//    - Rejected Qty = ITEM-level sum(orderQuantity) over REJECTED
-//      requests.
+//    - Store Rejected Qty = ITEM-level sum(orderQuantity) over
+//      REJECTED requests.
 // ✅ Item grouping key prefers inventoryId over itemName-only.
 // FROZEN (pending: rejectionNote field + Rejection Note column —
 // tracked as a separate, larger schema change)
@@ -43,7 +47,7 @@ import { BatchAllocationRecord } from "../../../modules/stock-movement-module/ty
 import { todayISO } from "../../../utils/date-utils";
 
 const ROW_HEIGHT = 26;
-const COLS = { sn: 40, item: 190, batch: 110, req: 75, issued: 85, rejected: 90, reqTotal: 90, issuedTotal: 95, unit: 60 };
+const COLS = { sn: 40, item: 190, batch: 110, req: 75, issued: 85, rejected: 100, reqTotal: 90, issuedTotal: 95, unit: 60 };
 const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.req + COLS.issued + COLS.rejected + COLS.reqTotal + COLS.issuedTotal + COLS.unit;
 
 const DIVIDER_X_POSITIONS = (() => {
@@ -337,7 +341,7 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
                       <Text style={[styles.headerCell, { width: COLS.batch }]}>Lot/Batch No.</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.req }]}>Kitchen Req.Qty</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.issued }]}>Store Issued Qty</Text>
-                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.rejected }]}>Rejected Qty</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.rejected }]}>Store Rejected Qty</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.reqTotal }]}>Kitchen Req. Total Qty</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.issuedTotal }]}>Store Issued Total Qty</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
@@ -421,11 +425,11 @@ export function MonthlyReportScreen({ requests, categories, onClose }: MonthlyRe
                           </View>
 
                           <View style={[styles.itemLevelCell, { width: COLS.issuedTotal, minHeight: itemGroupHeight }]}>
-                            <Text style={[styles.cell, styles.centerCell, styles.totalCellText]}>{issuedTotal}</Text>
+                            <Text style={[styles.cell, styles.centerCell, styles.totalCellText, styles.issuedQtyCell]}>{issuedTotal}</Text>
                           </View>
 
                           <View style={[styles.itemLevelCell, { width: COLS.unit, minHeight: itemGroupHeight }]}>
-                            <Text style={[styles.cell, styles.centerCell]}>{itemUnit}</Text>
+                            <Text style={[styles.cell, styles.centerCell, styles.unitCellText]}>{itemUnit}</Text>
                           </View>
                         </View>
                       );
@@ -511,7 +515,7 @@ const styles = StyleSheet.create({
   dropdownList: {
     borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 8,
     marginTop: 4, maxHeight: 220, backgroundColor: "#ffffff",
-    position: "absolute", top: 42, right: 0, width: 220, zIndex: 9999, elevation: 9999,
+    width: 220, alignSelf: "flex-end",
     shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6,
   },
   dropdownItem: { paddingHorizontal: 14, paddingVertical: 10 },
@@ -547,6 +551,7 @@ const styles = StyleSheet.create({
   requestLevelCell: { justifyContent: "center", alignItems: "center", paddingHorizontal: 3 },
   itemLevelCell: { justifyContent: "center", alignItems: "center", paddingHorizontal: 3 },
   totalCellText: { fontWeight: "800", color: "#0f172a" },
+  unitCellText: { fontWeight: "600" },
   rejectedCell: { color: "#dc2626", fontWeight: "700" },
   issuedQtyCell: { color: "#059669", fontWeight: "700" },
 });
