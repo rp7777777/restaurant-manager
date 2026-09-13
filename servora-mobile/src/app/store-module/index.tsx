@@ -259,6 +259,7 @@ export default function StoreScreen() {
         <RequestDetailModal
           visible={!!detailTarget}
           request={detailTarget}
+          allocations={detailTarget ? batchAllocationsByRequestId.get(detailTarget.id) : undefined}
           theme={theme}
           onClose={() => setDetailTarget(null)}
         />

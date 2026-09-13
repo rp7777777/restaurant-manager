@@ -183,7 +183,7 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                   <Text style={[styles.headerCell, { width: COLS.note }]}>Notes</Text>
                   <Text style={[styles.headerCell, { width: COLS.status }]}>Status</Text>
                   <Text style={[styles.headerCell, { width: COLS.by }]}>Requested By</Text>
-                  <Text style={[styles.headerCell, { width: COLS.chevron }]}></Text>
+                  <Text style={[styles.headerCell, { width: COLS.chevron }]}>View</Text>
                 </View>
               )}
 
@@ -216,15 +216,13 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                         const requestBlockHeight = rows.length * ROW_HEIGHT;
 
                         return (
-                          <TouchableOpacity
+                          <View
                             key={req.id}
                             style={[
                               styles.requestBlock,
                               { minHeight: requestBlockHeight },
                               reqIdx < itemGroup.requests.length - 1 && styles.requestRowDivider,
                             ]}
-                            onPress={() => onRowPress(req)}
-                            activeOpacity={0.6}
                           >
                             {/* Batch column — per-batch rows */}
                             <View style={{ width: COLS.batch }}>
@@ -291,10 +289,16 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                               <Text style={styles.cell}>{req.requestedBy || "—"}</Text>
                             </View>
 
+                            {/* ✅ ONLY this View button — matches the exact pattern
+                                already used elsewhere (Inventory table's Edit
+                                arrow, Movement History) — the whole row is no
+                                longer clickable, just this chevron. */}
                             <View style={[styles.requestLevelCell, { width: COLS.chevron, minHeight: requestBlockHeight }]}>
-                              <MaterialIcons name="chevron-right" size={16} color="#dc2626" />
+                              <TouchableOpacity onPress={() => onRowPress(req)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                <MaterialIcons name="chevron-right" size={16} color="#dc2626" />
+                              </TouchableOpacity>
                             </View>
-                          </TouchableOpacity>
+                          </View>
                         );
                       })}
                     </View>

@@ -1,14 +1,22 @@
 // ============================================
 // SERVORA ERP — RequestDetailModal Component
-// ✅ NEW — read-only detail view for ISSUED/REJECTED requests
-//    (tapped from KitchenRequestTable's generic onRowPress). Never
-//    mutates anything — no Firestore calls, no service imports, no
-//    action buttons besides Close.
+// ✅ Read-only detail view for ISSUED/REJECTED requests (tapped from
+//    KitchenRequestTable's generic onRowPress). Never mutates
+//    anything — no Firestore calls, no service imports, no action
+//    buttons besides Close.
 // ✅ Shows the fields relevant to how the request was resolved:
 //    - ISSUED: item, requested/issued qty, requested by, required
 //      date, issued by, issued at, both notes (request + issue).
 //    - REJECTED: item, requested qty, requested by, required date,
 //      rejected by, rejected at, the original request note.
+// ✅ NEW — allocations prop (BatchAllocationRecord[], optional)
+//    added: when the request is ISSUED and allocations were passed
+//    in (from index.tsx's existing batchAllocationsByRequestId map,
+//    the SAME map already used by KitchenRequestTable for the daily
+//    table's Lot/Batch No. column — no new data fetch here), each
+//    batch's Lot/Batch No. and quantity issued from it are shown as
+//    their own detail row(s), so the "View" action's modal now
+//    matches what the table itself already displays.
 // ✅ formatTimestamp() moved here (was inline in the old index.tsx)
 //    since this is the only component that needs to render a
 //    Firestore timestamp as a readable date.
@@ -18,12 +26,14 @@
 import React from "react";
 import { View, Text, StyleSheet, Modal, TouchableOpacity } from "react-native";
 import { IngredientRequest } from "../../kitchen-module/types/kitchen-types";
+import { BatchAllocationRecord } from "../../../modules/stock-movement-module/types/stock-movement";
 
 interface RequestDetailModalProps {
-  visible: boolean;
-  request: IngredientRequest | null;
-  theme: { surface: string; text: string; textSecondary: string; border: string };
-  onClose: () => void;
+  visible:      boolean;
+  request:      IngredientRequest | null;
+  allocations?: BatchAllocationRecord[];
+  theme:        { surface: string; text: string; textSecondary: string; border: string };
+  onClose:      () => void;
 }
 
 function formatTimestamp(ts: unknown): string {
@@ -43,7 +53,7 @@ function DetailRow({ label, value, textColor, secondaryColor }: { label: string;
   );
 }
 
-export function RequestDetailModal({ visible, request, theme, onClose }: RequestDetailModalProps) {
+export function RequestDetailModal({ visible, request, allocations, theme, onClose }: RequestDetailModalProps) {
   if (!request) return null;
 
   const isIssued = request.status === "ISSUED";
@@ -68,6 +78,18 @@ export function RequestDetailModal({ visible, request, theme, onClose }: Request
               textColor={theme.text} secondaryColor={theme.textSecondary}
             />
           )}
+
+          {isIssued && allocations && allocations.length > 0 && (
+            allocations.map((alloc, idx) => (
+              <DetailRow
+                key={alloc.batchId ?? idx}
+                label={allocations.length > 1 ? `Lot/Batch No. ${idx + 1}` : "Lot/Batch No."}
+                value={`${alloc.batchNo} (${alloc.quantity} ${request.unit})`}
+                textColor={theme.text} secondaryColor={theme.textSecondary}
+              />
+            ))
+          )}
+
           <DetailRow label="Requested By" value={request.requestedBy} textColor={theme.text} secondaryColor={theme.textSecondary} />
           <DetailRow label="Required Date" value={request.requiredDate} textColor={theme.text} secondaryColor={theme.textSecondary} />
 

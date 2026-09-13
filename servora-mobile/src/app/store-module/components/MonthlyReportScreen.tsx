@@ -47,7 +47,7 @@ import { BatchAllocationRecord } from "../../../modules/stock-movement-module/ty
 import { todayISO } from "../../../utils/date-utils";
 
 const ROW_HEIGHT = 26;
-const COLS = { sn: 40, item: 190, batch: 110, req: 75, issued: 85, rejected: 100, reqTotal: 90, issuedTotal: 95, unit: 60 };
+const COLS = { sn: 40, item: 190, batch: 170, req: 75, issued: 85, rejected: 100, reqTotal: 90, issuedTotal: 95, unit: 60 };
 const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.req + COLS.issued + COLS.rejected + COLS.reqTotal + COLS.issuedTotal + COLS.unit;
 
 const DIVIDER_X_POSITIONS = (() => {
