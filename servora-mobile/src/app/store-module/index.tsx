@@ -109,11 +109,11 @@ export default function StoreScreen() {
     }
   };
 
-  const handleReject = async () => {
+  const handleReject = async (reason: string) => {
     if (!pendingTarget || !restaurantId) return;
     setProcessing(true);
     try {
-      await rejectKitchenRequest(restaurantId, pendingTarget.id, actorName);
+      await rejectKitchenRequest(restaurantId, pendingTarget.id, actorName, reason);
       setPendingTarget(null);
     } catch (err: any) {
       showAlert("Error", err?.message ?? "Failed");

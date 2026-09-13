@@ -5,18 +5,23 @@
 //    anything — no Firestore calls, no service imports, no action
 //    buttons besides Close.
 // ✅ Shows the fields relevant to how the request was resolved:
-//    - ISSUED: item, requested/issued qty, requested by, required
-//      date, issued by, issued at, both notes (request + issue).
+//    - ISSUED: item, requested/issued qty, lot/batch no. (per
+//      allocation), requested by, required date, issued by, issued
+//      at, both notes (request + issue).
 //    - REJECTED: item, requested qty, requested by, required date,
-//      rejected by, rejected at, the original request note.
-// ✅ NEW — allocations prop (BatchAllocationRecord[], optional)
-//    added: when the request is ISSUED and allocations were passed
-//    in (from index.tsx's existing batchAllocationsByRequestId map,
-//    the SAME map already used by KitchenRequestTable for the daily
-//    table's Lot/Batch No. column — no new data fetch here), each
-//    batch's Lot/Batch No. and quantity issued from it are shown as
-//    their own detail row(s), so the "View" action's modal now
-//    matches what the table itself already displays.
+//      rejected by, rejected at, rejection reason (rejectionNote),
+//      the original request note.
+// ✅ allocations prop (BatchAllocationRecord[], optional): when the
+//    request is ISSUED and allocations were passed in (from
+//    index.tsx's existing batchAllocationsByRequestId map — the SAME
+//    map already used by KitchenRequestTable — no new data fetch),
+//    each batch's Lot/Batch No. and quantity issued from it are
+//    shown as their own detail row(s).
+// ✅ NEW — Rejection Note shown for REJECTED requests, using the
+//    request's own rejectionNote field (set by
+//    PendingActionModal's quick-select-reason UI at reject time).
+//    Falls back to nothing shown if rejectionNote is missing/empty
+//    (e.g. requests rejected before this feature existed).
 // ✅ formatTimestamp() moved here (was inline in the old index.tsx)
 //    since this is the only component that needs to render a
 //    Firestore timestamp as a readable date.
@@ -103,6 +108,9 @@ export function RequestDetailModal({ visible, request, allocations, theme, onClo
             <>
               <DetailRow label="Rejected By" value={request.rejectedBy ?? "—"} textColor={theme.text} secondaryColor={theme.textSecondary} />
               <DetailRow label="Rejected On" value={formatTimestamp(request.rejectedAt)} textColor={theme.text} secondaryColor={theme.textSecondary} />
+              {request.rejectionNote ? (
+                <DetailRow label="Rejection Reason" value={request.rejectionNote} textColor={theme.text} secondaryColor={theme.textSecondary} />
+              ) : null}
             </>
           )}
 

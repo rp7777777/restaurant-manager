@@ -36,4 +36,5 @@ export interface IngredientRequest {
   issuedBy?: string;
   issuedAt?: unknown;
   issueNote?: string | null;  // Store Keeper's own note at issue time (e.g. "only 18kg in stock, issuing partial") — separate from the Kitchen's original request note
+  rejectionNote?: string | null;  // Store Keeper's reason for rejecting the request (e.g. "Out of Stock", "Quality Issue", or custom text)
 }

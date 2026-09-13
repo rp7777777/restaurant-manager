@@ -4,26 +4,24 @@
 // ✅ FOUR-level grouping: category -> item -> individual requests ->
 //    batch allocation rows. Category header shows only the date.
 //    "Item Name" merged/vertically-centered per item.
-// ✅ NEW — WITHIN a request, "Req.Qty", "Unit", and "Required Date"
-//    are now REQUEST-LEVEL columns (siblings of the batch-row
-//    column, matching Item Name's own vertically-centered layout),
-//    NOT split per batch row — only "Lot/Batch No." and "Issued"
-//    are truly per-batch data and remain split across batch rows.
-//    This matches the exact same "item-level column beside
-//    batch-level rows" pattern already used for Total QTY in
-//    HistoricalInventoryTableView.tsx.
-// ✅ Notes/Status/Requested By remain shown once per request (on the
-//    first batch row) — batch count doesn't affect those either,
-//    but they're inherently single-line so no separate column
-//    treatment was needed.
-// ✅ NEW — row divider colors darkened to match Inventory table's
-//    contrast level (#94a3b8 -> #475569 for batch dividers,
-//    matching itemGroupRow's own color).
+// ✅ "Req.Qty", "Unit", and "Required Date" are REQUEST-LEVEL columns
+//    (siblings of the batch-row column, matching Item Name's own
+//    vertically-centered layout), NOT split per batch row — only
+//    "Lot/Batch No." and "Issued" are truly per-batch data and
+//    remain split across batch rows.
+// ✅ Notes/Status/Requested By remain shown once per request.
+// ✅ NEW — for REJECTED requests, the Status cell now also shows the
+//    request's rejectionNote (set via PendingActionModal's quick-
+//    select-reason UI) as a small italic line below the status
+//    badge, if one exists. Older rejected requests (from before this
+//    field existed) simply show no extra line, unchanged from before.
 // ✅ ONLY the first category block shows the column header row.
 // ✅ No gap between category blocks.
+// ✅ Row click behavior: ONLY the "View" chevron button opens the
+//    detail/action modal — the rest of the row is non-interactive.
 // ✅ Column order: S.N. / Item Name / Lot/Batch No. / Req.Qty /
 //    Issued / Unit / Required Date / Notes / Status / Requested By
-//    / (chevron).
+//    / View (chevron).
 // FROZEN
 // ============================================
 
@@ -278,10 +276,17 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                               <Text style={styles.cell}>{req.note || "—"}</Text>
                             </View>
 
-                            {/* Status — request-level */}
-                            <View style={[styles.requestLevelCell, styles.statusCellWrap, { width: COLS.status, minHeight: requestBlockHeight }]}>
-                              <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-                              <Text style={[styles.cell, { color: statusColor, fontWeight: "700" }]}>{req.status}</Text>
+                            {/* ✅ Status — request-level. If REJECTED and a
+                                rejectionNote exists, shown as a small italic
+                                line below the status badge. */}
+                            <View style={[styles.requestLevelCell, { width: COLS.status, minHeight: requestBlockHeight }]}>
+                              <View style={styles.statusCellWrap}>
+                                <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+                                <Text style={[styles.cell, { color: statusColor, fontWeight: "700" }]}>{req.status}</Text>
+                              </View>
+                              {req.status === "REJECTED" && req.rejectionNote ? (
+                                <Text style={styles.rejectionNoteText} numberOfLines={2}>{req.rejectionNote}</Text>
+                              ) : null}
                             </View>
 
                             {/* Requested By — request-level */}
@@ -289,10 +294,8 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                               <Text style={styles.cell}>{req.requestedBy || "—"}</Text>
                             </View>
 
-                            {/* ✅ ONLY this View button — matches the exact pattern
-                                already used elsewhere (Inventory table's Edit
-                                arrow, Movement History) — the whole row is no
-                                longer clickable, just this chevron. */}
+                            {/* ✅ ONLY this View button — the whole row is not
+                                clickable, just this chevron. */}
                             <View style={[styles.requestLevelCell, { width: COLS.chevron, minHeight: requestBlockHeight }]}>
                               <TouchableOpacity onPress={() => onRowPress(req)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                                 <MaterialIcons name="chevron-right" size={16} color="#dc2626" />
@@ -366,6 +369,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: "#94a3b8",
   },
   requestLevelCell: { justifyContent: "center", alignItems: "center", paddingHorizontal: 3 },
-  statusCellWrap: { flexDirection: "row", gap: 3 },
+  statusCellWrap: { flexDirection: "row", alignItems: "center", gap: 3 },
   statusDot: { width: 6, height: 6, borderRadius: 3 },
+  rejectionNoteText: { fontSize: 9, color: "#dc2626", fontWeight: "600", marginTop: 2, textAlign: "center" },
 });

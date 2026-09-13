@@ -217,7 +217,8 @@ export async function approveKitchenRequest(
 export async function rejectKitchenRequest(
   restaurantId: string,
   requestId: string,
-  rejecterName: string
+  rejecterName: string,
+  rejectionNote?: string
 ): Promise<void> {
   if (!restaurantId) throw new Error("Restaurant not configured");
   if (!auth.currentUser) throw new Error("User not authenticated");
@@ -237,6 +238,7 @@ export async function rejectKitchenRequest(
       status: "REJECTED",
       rejectedBy: rejecterName,
       rejectedAt: serverTimestamp(),
+      rejectionNote: rejectionNote ?? null,
       updatedAt: serverTimestamp(),
     });
   });
