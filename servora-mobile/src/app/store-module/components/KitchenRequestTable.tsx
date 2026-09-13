@@ -36,7 +36,7 @@ import { Category } from "../../../modules/inventory-module/types/category";
 import { STATUS_COLORS } from "../utils/store-formatters";
 
 const ROW_HEIGHT = 26;
-const COLS = { sn: 30, item: 110, batch: 130, req: 55, issued: 55, unit: 45, date: 90, note: 150, status: 95, by: 90, chevron: 35 };
+const COLS = { sn: 30, item: 110, by: 90, batch: 120, unit: 45, req: 55, issued: 55, date: 80, note: 165, status: 95, chevron: 35 };
 const TABLE_WIDTH =
   COLS.sn + COLS.item + COLS.batch + COLS.req + COLS.issued + COLS.unit + COLS.date + COLS.note + COLS.status + COLS.by + COLS.chevron;
 
@@ -330,14 +330,14 @@ const styles = StyleSheet.create({
   },
   groupHeader: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    backgroundColor: "#0369a1", paddingVertical: 7, paddingHorizontal: 10,
+    backgroundColor: "#0369a1", paddingVertical: 6, paddingHorizontal: 10,
   },
   groupHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.3 },
   groupHeaderDate: { color: "#dbeafe", fontWeight: "700", fontSize: 12 },
   tableArea: { position: "relative" },
   tableHeaderRow: {
     flexDirection: "row", backgroundColor: "#fef9c3",
-    borderBottomWidth: 2, borderBottomColor: "#1e293b", paddingVertical: 8,
+    borderBottomWidth: 2, borderBottomColor: "#1e293b", paddingVertical: 2,
   },
   headerCell: { fontSize: 12, fontWeight: "800", color: "#1e293b", paddingHorizontal: 3 },
   centerCell: { textAlign: "center" },
