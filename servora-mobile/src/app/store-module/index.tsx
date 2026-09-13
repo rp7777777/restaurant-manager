@@ -18,17 +18,19 @@
 //    through to KitchenRequestTable for the Lot/Batch No. column.
 // ✅ categories fetched via useCategoriesForPicker, passed to
 //    KitchenRequestTable for category-wise grouping.
-// ✅ FIX — Monthly Report overlay moved OUTSIDE the main ScrollView
-//    (now a sibling inside a top-level Fragment, not nested inside
-//    it). Previously, StyleSheet.absoluteFill was applied to a View
-//    nested INSIDE the ScrollView — absoluteFill only fills its
-//    nearest positioned ancestor, and a ScrollView's content area is
-//    sized to its CONTENT height, not the full viewport, so the
-//    overlay was clipped to however tall the Store screen's content
-//    happened to be, leaving old Store content visible below it.
-//    Moving the overlay to be a sibling of the ScrollView (both
-//    direct children of the top-level Fragment) lets absoluteFill
-//    correctly fill the actual screen viewport.
+// ✅ NEW — category filter dropdown (same button+list pattern as
+//    MonthlyReportScreen.tsx's dropdown, normal document flow so it
+//    pushes content down rather than overlaying) added below the
+//    Monthly Report button — filters the daily table by category,
+//    independent of and combinable with the existing status filter.
+//    filteredDisplayRequests now applies BOTH statusFilter AND
+//    categoryFilter (status first, then category) before passing to
+//    KitchenRequestTable. StoreStats counts remain unaffected by the
+//    category filter (still whole-date totals), matching the
+//    existing status-filter-only-affects-table behavior.
+// ✅ Overlay: Monthly Report is a sibling of the ScrollView (not
+//    nested inside it), so its absoluteFill correctly covers the
+//    full screen viewport.
 // FROZEN
 // ============================================
 
@@ -69,6 +71,8 @@ export default function StoreScreen() {
 
   const [processing, setProcessing] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StoreStatusFilter>(null);
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [showMonthlyReport, setShowMonthlyReport] = useState(false);
 
   const [pendingTarget, setPendingTarget] = useState<IngredientRequest | null>(null);
@@ -147,9 +151,15 @@ export default function StoreScreen() {
   const rejectedCount = displayRequests.filter((r) => r.status === "REJECTED").length;
 
   const filteredDisplayRequests = useMemo(() => {
-    if (!statusFilter) return displayRequests;
-    return displayRequests.filter((r) => r.status === statusFilter);
-  }, [displayRequests, statusFilter]);
+    let result = displayRequests;
+    if (statusFilter) result = result.filter((r) => r.status === statusFilter);
+    if (categoryFilter) result = result.filter((r) => r.categoryId === categoryFilter);
+    return result;
+  }, [displayRequests, statusFilter, categoryFilter]);
+
+  const selectedCategoryName = categoryFilter
+    ? categories.find((c) => c.id === categoryFilter)?.name ?? "All Categories"
+    : "All Categories";
 
   return (
     <>
@@ -164,6 +174,27 @@ export default function StoreScreen() {
           <MaterialIcons name="bar-chart" size={16} color="#0369a1" />
           <Text style={styles.monthlyReportBtnText}>Monthly Report</Text>
         </TouchableOpacity>
+
+        {categories.length > 0 && (
+          <View style={styles.categoryDropdownWrap}>
+            <TouchableOpacity style={styles.categoryDropdownButton} onPress={() => setShowCategoryDropdown((v) => !v)}>
+              <Text style={styles.categoryDropdownButtonText}>{selectedCategoryName}</Text>
+              <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={20} color="#059669" />
+            </TouchableOpacity>
+            {showCategoryDropdown && (
+              <ScrollView style={styles.categoryDropdownList} nestedScrollEnabled>
+                <TouchableOpacity style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(null); setShowCategoryDropdown(false); }}>
+                  <Text style={styles.categoryDropdownItemText}>All Categories</Text>
+                </TouchableOpacity>
+                {categories.map((cat) => (
+                  <TouchableOpacity key={cat.id} style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(cat.id); setShowCategoryDropdown(false); }}>
+                    <Text style={styles.categoryDropdownItemText}>{cat.icon} {cat.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        )}
 
         <View style={styles.body}>
           <StoreStats
@@ -253,9 +284,23 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 13, fontWeight: "600" },
   monthlyReportBtn: {
     flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start",
-    marginHorizontal: 12, marginTop: 8, marginBottom: 4,
+    marginHorizontal: 12, marginTop: 8, marginBottom: 8,
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6,
     borderWidth: 1, borderColor: "#0369a1", backgroundColor: "#eff6ff",
   },
   monthlyReportBtnText: { fontSize: 12, fontWeight: "700", color: "#0369a1" },
+  categoryDropdownWrap: { width: 220, marginHorizontal: 12, marginBottom: 8 },
+  categoryDropdownButton: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    borderWidth: 1.5, borderColor: "#059669", borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 9, backgroundColor: "#fff",
+  },
+  categoryDropdownButtonText: { fontSize: 13, color: "#1e293b", fontWeight: "600" },
+  categoryDropdownList: {
+    borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 8,
+    marginTop: 4, maxHeight: 220, backgroundColor: "#ffffff", width: 220,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6,
+  },
+  categoryDropdownItem: { paddingHorizontal: 14, paddingVertical: 10 },
+  categoryDropdownItemText: { fontSize: 13, color: "#1e293b" },
 });
