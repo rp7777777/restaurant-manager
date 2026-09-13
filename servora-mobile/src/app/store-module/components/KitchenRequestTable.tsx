@@ -36,7 +36,7 @@ import { Category } from "../../../modules/inventory-module/types/category";
 import { STATUS_COLORS } from "../utils/store-formatters";
 
 const ROW_HEIGHT = 26;
-const COLS = { sn: 30, item: 110, by: 90, batch: 120, unit: 45, req: 55, issued: 55, date: 80, note: 165, status: 95, chevron: 35 };
+const COLS = { sn: 30, item: 110, by: 90, batch: 170, unit: 45, req: 55, issued: 55, date: 80, note: 165, status: 95, chevron: 35 };
 const TABLE_WIDTH =
   COLS.sn + COLS.item + COLS.batch + COLS.req + COLS.issued + COLS.unit + COLS.date + COLS.note + COLS.status + COLS.by + COLS.chevron;
 
@@ -357,7 +357,7 @@ const styles = StyleSheet.create({
   requestRowDivider: {
     borderBottomWidth: 1.5, borderBottomColor: "#475569",
   },
-  batchLineRow: { justifyContent: "center", paddingHorizontal: 3 },
+  batchLineRow: { justifyContent: "center", paddingHorizontal: 3, paddingVertical: 2 },
   batchRowDivider: {
     borderBottomWidth: 1, borderBottomColor: "#94a3b8",
   },
