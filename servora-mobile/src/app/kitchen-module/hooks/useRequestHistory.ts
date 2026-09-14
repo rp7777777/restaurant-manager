@@ -1,17 +1,26 @@
 // ============================================
 // SERVORA ERP — useRequestHistory Hook
 // ✅ Owns day-navigation state (selectedDate, prev/next day, isToday)
-//    and the requiredDate-filtered history list — moved from the
-//    old kitchen-module/index.tsx's inline logic.
-// ✅ Not on the original locked file plan, but a legitimate small
-//    addition: this is cohesive, reusable state (day navigation is
-//    its own concern, separate from the raw data useKitchenRequests
-//    provides), matching the same one-hook-one-concern pattern
-//    already used throughout this restructuring.
+//    and the requiredDate-filtered history list.
+// ✅ FIX — was using its own local getTodayStr() (new Date().
+//    toISOString().slice(0,10)) which (a) converts to UTC, causing
+//    an off-by-one-day mismatch depending on the user's local
+//    timezone/time of day, and (b) was called only ONCE at
+//    useState's initializer — if the screen stayed mounted across a
+//    local-midnight boundary, "Today" silently stayed pinned to the
+//    stale date until the user manually navigated away and back.
+//    Now uses the project-wide todayISO() helper (already timezone-
+//    safe, used throughout Inventory/Store/MonthlyReportScreen) for
+//    the initial value AND for the isToday comparison — day
+//    arithmetic (prev/next) still operates on the selectedDate
+//    string directly via the UTC-safe Date.UTC() pattern, avoiding
+//    the same local-timezone parsing pitfall `new Date(dateString)`
+//    has.
 // ============================================
 
 import { useState, useMemo } from "react";
 import { IngredientRequest } from "../types/kitchen-types";
+import { todayISO } from "../../../utils/date-utils";
 
 export interface UseRequestHistoryResult {
   selectedDate:     string;
@@ -21,36 +30,32 @@ export interface UseRequestHistoryResult {
   isToday:          boolean;
 }
 
-// ✅ Single source for "today as YYYY-MM-DD" — was repeated 3 times
-// inline before; now called once wherever "today" is needed.
-function getTodayStr(): string {
-  return new Date().toISOString().slice(0, 10);
+// ✅ UTC-safe day shift — avoids `new Date(dateString)` local-
+// timezone parsing pitfalls (same pattern used throughout
+// MonthlyReportScreen.tsx/HistoricalInventoryTableView.tsx).
+function shiftDateStr(dateStr: string, deltaDays: number): string {
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const utcMs = Date.UTC(year, month - 1, day) + deltaDays * 86400000;
+  const result = new Date(utcMs);
+  const yyyy = result.getUTCFullYear();
+  const mm = String(result.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(result.getUTCDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 export function useRequestHistory(
   requests: IngredientRequest[]
 ): UseRequestHistoryResult {
-  const [selectedDate, setSelectedDate] = useState(getTodayStr);
+  const [selectedDate, setSelectedDate] = useState(todayISO);
 
-  // ✅ useMemo — avoids re-filtering on every render once request
-  // counts grow large (thousands of requests); matches the
-  // established real pattern already used by useInventoryFilters.ts.
   const historyRequests = useMemo(
     () => requests.filter((r) => r.requiredDate === selectedDate),
     [requests, selectedDate]
   );
 
-  const goToPrevDay = () => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() - 1);
-    setSelectedDate(d.toISOString().slice(0, 10));
-  };
-  const goToNextDay = () => {
-    const d = new Date(selectedDate);
-    d.setDate(d.getDate() + 1);
-    setSelectedDate(d.toISOString().slice(0, 10));
-  };
-  const isToday = selectedDate === getTodayStr();
+  const goToPrevDay = () => setSelectedDate((d) => shiftDateStr(d, -1));
+  const goToNextDay = () => setSelectedDate((d) => shiftDateStr(d, 1));
+  const isToday = selectedDate === todayISO();
 
   return { selectedDate, historyRequests, goToPrevDay, goToNextDay, isToday };
 }

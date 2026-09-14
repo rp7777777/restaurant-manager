@@ -1,27 +1,27 @@
 // ============================================
 // SERVORA ERP — KitchenScreen
-// ✅ Thin top-level controller — header, Pending/Approved/Total
-//    stats, and composes NewRequestScreen / RequestHistoryScreen.
-// ✅ categories fetched via useCategoriesForPicker (same hook used
-//    throughout Inventory/Store), passed down to
-//    RequestHistoryScreen for KitchenHistoryTable's category
-//    grouping.
-// ✅ Stat cards (Pending/Approved/Total) are clickable, filtering
-//    RequestHistoryScreen's table by status (statusFilter).
-//    "Approved" card maps to status === "APPROVED" only (NOT
-//    "APPROVED" || "ISSUED" — the card's own COUNT still combines
-//    both, matching the existing approvedCount semantics, but the
-//    FILTER is precise to APPROVED alone so clicking it doesn't
-//    silently also show ISSUED rows under an "Approved" label).
-//    Clicking the already-active card again clears the filter.
-// ✅ Category filter dropdown (normal document flow, not absolutely
-//    positioned — pushes content down rather than overlaying).
-// ✅ NEW — stats row and category dropdown are now hidden while the
-//    New Request form is open (showForm), so the form gets the
-//    screen's full attention instead of competing with filter UI
-//    the form doesn't use.
-// ✅ restaurantId passed to RequestHistoryScreen (needed there for
-//    the batch allocation fetch).
+// ✅ Thin top-level controller — header, stats, date navigation, and
+//    composes NewRequestScreen / RequestHistoryScreen.
+// ✅ Stat cards match Store's own StoreStats pattern exactly:
+//    compact horizontal row (icon+value+label), height 30px,
+//    Total/Pending/Approved/Issued/Rejected, day-scoped
+//    (selectedDate, not restaurant-wide totals).
+// ✅ selectedDate/day-navigation (useRequestHistory) owned HERE
+//    (lifted up from RequestHistoryScreen) so stat cards and the
+//    table share the same date state. Date navigator shows ONLY
+//    "Today" for the current date, or ONLY the formatted date for
+//    other days (not both together).
+// ✅ NEW — Monthly Report REUSES store-module's own
+//    MonthlyReportScreen component wholesale (same summary cards,
+//    category dropdown, live date range, batch-level rows, item/
+//    request-level totals) — no new component built. Kitchen and
+//    Store both report on the exact same underlying `requests`
+//    (IngredientRequest) collection, just from their own screen's
+//    entry point. Overlay is a sibling of the ScrollView (Fragment
+//    wrapper), NOT nested inside it — matching Store's own fix for
+//    the overlay-height-clipped-by-parent-ScrollView issue.
+// ✅ Stat cards + category dropdown + Monthly Report button all
+//    hidden while the New Request form is open.
 // FROZEN
 // ============================================
 
@@ -34,8 +34,11 @@ import { LinearGradient } from "expo-linear-gradient";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useApp } from "../../../context/AppContext";
 import { useKitchenRequests } from "../hooks/useKitchenRequests";
+import { useRequestHistory } from "../hooks/useRequestHistory";
 import { useCategoriesForPicker } from "../../../modules/inventory-module/hooks/useCategoriesForPicker";
 import { IngredientRequest } from "../types/kitchen-types";
+import { formatSelectedDate } from "../utils/kitchen-format";
+import { MonthlyReportScreen } from "../../store-module/components/MonthlyReportScreen";
 import NewRequestScreen from "./NewRequestScreen";
 import RequestHistoryScreen from "./RequestHistoryScreen";
 
@@ -45,8 +48,10 @@ export default function KitchenScreen() {
   const { theme, restaurantId } = useApp();
   const { requests, loading } = useKitchenRequests(restaurantId);
   const { categories } = useCategoriesForPicker(restaurantId);
+  const { selectedDate, historyRequests, goToPrevDay, goToNextDay, isToday } = useRequestHistory(requests);
 
   const [showForm, setShowForm] = useState(false);
+  const [showMonthlyReport, setShowMonthlyReport] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(null);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
@@ -57,124 +62,166 @@ export default function KitchenScreen() {
     setTimeout(() => setRefreshing(false), 500);
   };
 
-  const pendingCount = requests.filter((r) => r.status === "PENDING").length;
-  const approvedCount = requests.filter((r) => r.status === "APPROVED" || r.status === "ISSUED").length;
+  const totalCount    = historyRequests.length;
+  const pendingCount  = historyRequests.filter((r) => r.status === "PENDING").length;
+  const approvedCount = historyRequests.filter((r) => r.status === "APPROVED").length;
+  const issuedCount   = historyRequests.filter((r) => r.status === "ISSUED").length;
+  const rejectedCount = historyRequests.filter((r) => r.status === "REJECTED").length;
 
   const selectedCategoryName = categoryFilter
     ? categories.find((c) => c.id === categoryFilter)?.name ?? "All Categories"
     : "All Categories";
 
   return (
-    <ScrollView
-      style={[styles.container, { backgroundColor: theme.bg }]}
-      showsVerticalScrollIndicator={false}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.primary]} tintColor={theme.primary} />}
-      keyboardShouldPersistTaps="handled"
-    >
-      {/* Header */}
-      <LinearGradient colors={["#00154f", "#0039cb"]} style={styles.header}>
-        <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.headerTitle}>KITCHEN</Text>
-            <Text style={styles.headerSub}>Ingredient Request</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.newRequestBtn}
-            onPress={() => setShowForm(!showForm)}
-          >
-            <MaterialIcons name={showForm ? "close" : "add-shopping-cart"} size={20} color="#00154f" />
-            <Text style={styles.newRequestBtnText}>
-              {showForm ? "Cancel" : "New Request"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </LinearGradient>
-
-      <View style={styles.body}>
-        {/* ✅ NEW — stats + category dropdown hidden while the form
-            is open, so the form gets full screen attention. */}
-        {!showForm && (
-          <>
-            <View style={styles.statsRow}>
-              <TouchableOpacity
-                style={[
-                  styles.statCard, { backgroundColor: theme.card },
-                  statusFilter === "PENDING" && styles.statCardActive,
-                ]}
-                onPress={() => setStatusFilter((s) => s === "PENDING" ? null : "PENDING")}
-              >
-                <MaterialIcons name="schedule" size={22} color="#f59e0b" />
-                <Text style={[styles.statValue, { color: "#f59e0b" }]}>{pendingCount}</Text>
-                <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Pending</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.statCard, { backgroundColor: theme.card },
-                  statusFilter === "APPROVED" && styles.statCardActive,
-                ]}
-                onPress={() => setStatusFilter((s) => s === "APPROVED" ? null : "APPROVED")}
-              >
-                <MaterialIcons name="done-all" size={22} color="#10b981" />
-                <Text style={[styles.statValue, { color: "#10b981" }]}>{approvedCount}</Text>
-                <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Approved</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.statCard, { backgroundColor: theme.card },
-                  statusFilter === null && styles.statCardActive,
-                ]}
-                onPress={() => setStatusFilter(null)}
-              >
-                <MaterialIcons name="list-alt" size={22} color="#3b82f6" />
-                <Text style={[styles.statValue, { color: "#3b82f6" }]}>{requests.length}</Text>
-                <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Total</Text>
-              </TouchableOpacity>
+    <>
+      <ScrollView
+        style={[styles.container, { backgroundColor: theme.bg }]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.primary]} tintColor={theme.primary} />}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Header */}
+        <LinearGradient colors={["#00154f", "#0039cb"]} style={styles.header}>
+          <View style={styles.headerRow}>
+            <View>
+              <Text style={styles.headerTitle}>KITCHEN</Text>
+              <Text style={styles.headerSub}>Ingredient Request</Text>
             </View>
+            <TouchableOpacity
+              style={styles.newRequestBtn}
+              onPress={() => setShowForm(!showForm)}
+            >
+              <MaterialIcons name={showForm ? "close" : "add-shopping-cart"} size={20} color="#00154f" />
+              <Text style={styles.newRequestBtnText}>
+                {showForm ? "Cancel" : "New Request"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </LinearGradient>
 
-            {categories.length > 0 && (
-              <View style={styles.categoryDropdownWrap}>
-                <TouchableOpacity style={styles.categoryDropdownButton} onPress={() => setShowCategoryDropdown((v) => !v)}>
-                  <Text style={styles.categoryDropdownButtonText}>{selectedCategoryName}</Text>
-                  <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={20} color="#059669" />
+        {!showForm && (
+          <TouchableOpacity style={styles.monthlyReportBtn} onPress={() => setShowMonthlyReport(true)}>
+            <MaterialIcons name="bar-chart" size={16} color="#0369a1" />
+            <Text style={styles.monthlyReportBtnText}>Monthly Report</Text>
+          </TouchableOpacity>
+        )}
+
+        <View style={styles.body}>
+          {!showForm && (
+            <>
+              {/* Date Navigator */}
+              <View style={[styles.dateNav, { backgroundColor: theme.card }]}>
+                <TouchableOpacity onPress={goToPrevDay} style={styles.dateNavArrow}>
+                  <MaterialIcons name="chevron-left" size={20} color={theme.text} />
                 </TouchableOpacity>
-                {showCategoryDropdown && (
-                  <ScrollView style={styles.categoryDropdownList} nestedScrollEnabled>
-                    <TouchableOpacity style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(null); setShowCategoryDropdown(false); }}>
-                      <Text style={styles.categoryDropdownItemText}>All Categories</Text>
-                    </TouchableOpacity>
-                    {categories.map((cat) => (
-                      <TouchableOpacity key={cat.id} style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(cat.id); setShowCategoryDropdown(false); }}>
-                        <Text style={styles.categoryDropdownItemText}>{cat.icon} {cat.name}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                )}
+                <Text style={[styles.dateNavLabel, { color: theme.text }]}>
+                  {isToday ? "Today" : formatSelectedDate(selectedDate)}
+                </Text>
+                <TouchableOpacity onPress={goToNextDay} style={styles.dateNavArrow}>
+                  <MaterialIcons name="chevron-right" size={20} color={theme.text} />
+                </TouchableOpacity>
               </View>
-            )}
-          </>
-        )}
 
-        {/* New Request Form — shown/hidden via the header toggle */}
-        {showForm && (
-          <NewRequestScreen
-            restaurantId={restaurantId}
+              {/* Stat cards — compact, matching StoreStats.tsx exactly */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statsRow}>
+                <TouchableOpacity
+                  style={[styles.statCard, { backgroundColor: theme.card }, statusFilter === null && { borderColor: "#64748b", borderWidth: 2 }]}
+                  onPress={() => setStatusFilter(null)}
+                >
+                  <MaterialIcons name="list-alt" size={13} color="#64748b" />
+                  <Text style={[styles.statValue, { color: "#64748b" }]}>{totalCount}</Text>
+                  <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Total</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.statCard, { backgroundColor: theme.card }, statusFilter === "PENDING" && { borderColor: "#f59e0b", borderWidth: 2 }]}
+                  onPress={() => setStatusFilter((s) => s === "PENDING" ? null : "PENDING")}
+                >
+                  <MaterialIcons name="schedule" size={13} color="#f59e0b" />
+                  <Text style={[styles.statValue, { color: "#f59e0b" }]}>{pendingCount}</Text>
+                  <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Pending</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.statCard, { backgroundColor: theme.card }, statusFilter === "APPROVED" && { borderColor: "#3b82f6", borderWidth: 2 }]}
+                  onPress={() => setStatusFilter((s) => s === "APPROVED" ? null : "APPROVED")}
+                >
+                  <MaterialIcons name="check-circle" size={13} color="#3b82f6" />
+                  <Text style={[styles.statValue, { color: "#3b82f6" }]}>{approvedCount}</Text>
+                  <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Approved</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.statCard, { backgroundColor: theme.card }, statusFilter === "ISSUED" && { borderColor: "#10b981", borderWidth: 2 }]}
+                  onPress={() => setStatusFilter((s) => s === "ISSUED" ? null : "ISSUED")}
+                >
+                  <MaterialIcons name="done-all" size={13} color="#10b981" />
+                  <Text style={[styles.statValue, { color: "#10b981" }]}>{issuedCount}</Text>
+                  <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Issued</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.statCard, { backgroundColor: theme.card }, statusFilter === "REJECTED" && { borderColor: "#ef4444", borderWidth: 2 }]}
+                  onPress={() => setStatusFilter((s) => s === "REJECTED" ? null : "REJECTED")}
+                >
+                  <MaterialIcons name="cancel" size={13} color="#ef4444" />
+                  <Text style={[styles.statValue, { color: "#ef4444" }]}>{rejectedCount}</Text>
+                  <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Rejected</Text>
+                </TouchableOpacity>
+              </ScrollView>
+
+              {categories.length > 0 && (
+                <View style={styles.categoryDropdownWrap}>
+                  <TouchableOpacity style={styles.categoryDropdownButton} onPress={() => setShowCategoryDropdown((v) => !v)}>
+                    <Text style={styles.categoryDropdownButtonText}>{selectedCategoryName}</Text>
+                    <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={20} color="#059669" />
+                  </TouchableOpacity>
+                  {showCategoryDropdown && (
+                    <ScrollView style={styles.categoryDropdownList} nestedScrollEnabled>
+                      <TouchableOpacity style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(null); setShowCategoryDropdown(false); }}>
+                        <Text style={styles.categoryDropdownItemText}>All Categories</Text>
+                      </TouchableOpacity>
+                      {categories.map((cat) => (
+                        <TouchableOpacity key={cat.id} style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(cat.id); setShowCategoryDropdown(false); }}>
+                          <Text style={styles.categoryDropdownItemText}>{cat.icon} {cat.name}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  )}
+                </View>
+              )}
+            </>
+          )}
+
+          {/* New Request Form */}
+          {showForm && (
+            <NewRequestScreen
+              restaurantId={restaurantId}
+              theme={theme}
+              onSent={() => setShowForm(false)}
+            />
+          )}
+
+          {/* Request History */}
+          <RequestHistoryScreen
+            historyRequests={historyRequests}
+            selectedDate={selectedDate}
+            loading={loading}
             theme={theme}
-            onSent={() => setShowForm(false)}
+            restaurantId={restaurantId}
+            categories={categories}
+            statusFilter={statusFilter}
+            categoryFilter={categoryFilter}
           />
-        )}
+        </View>
+      </ScrollView>
 
-        {/* Request History */}
-        <RequestHistoryScreen
-          requests={requests}
-          loading={loading}
-          theme={theme}
-          restaurantId={restaurantId}
-          categories={categories}
-          statusFilter={statusFilter}
-          categoryFilter={categoryFilter}
-        />
-      </View>
-    </ScrollView>
+      {showMonthlyReport && (
+        <View style={[StyleSheet.absoluteFill, { zIndex: 9999, elevation: 9999 }]}>
+          <MonthlyReportScreen
+            requests={requests}
+            categories={categories}
+            onClose={() => setShowMonthlyReport(false)}
+          />
+        </View>
+      )}
+    </>
   );
 }
 
@@ -192,11 +239,26 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFD700", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10,
   },
   newRequestBtnText: { color: "#00154f", fontSize: 12, fontWeight: "800" },
+  monthlyReportBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start",
+    marginHorizontal: 14, marginTop: 8, marginBottom: 4,
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6,
+    borderWidth: 1, borderColor: "#0369a1", backgroundColor: "#eff6ff",
+  },
+  monthlyReportBtnText: { fontSize: 12, fontWeight: "700", color: "#0369a1" },
   body: { padding: 14 },
-  statsRow: { flexDirection: "row", gap: 10, marginBottom: 10 },
-  statCard: { flex: 1, borderRadius: 14, padding: 12, alignItems: "center", gap: 4, borderWidth: 2, borderColor: "transparent" },
-  statCardActive: { borderColor: "#3b82f6" },
-  statValue: { fontSize: 20, fontWeight: "900" },
+  dateNav: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 10, borderRadius: 10, paddingVertical: 8, marginBottom: 10,
+  },
+  dateNavArrow: { padding: 4 },
+  dateNavLabel: { fontSize: 13, fontWeight: "700" },
+  statsRow: { flexDirection: "row", gap: 6, alignItems: "center", marginBottom: 10 },
+  statCard: {
+    flexDirection: "row", alignItems: "center", gap: 5, height: 30,
+    borderRadius: 6, borderWidth: 1, borderColor: "#e2e8f0", paddingHorizontal: 9,
+  },
+  statValue: { fontSize: 12, fontWeight: "800" },
   statLabel: { fontSize: 10, fontWeight: "600" },
   categoryDropdownWrap: { width: 220, marginBottom: 14 },
   categoryDropdownButton: {

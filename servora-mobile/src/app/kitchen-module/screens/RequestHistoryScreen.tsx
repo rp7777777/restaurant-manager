@@ -1,28 +1,30 @@
 // ============================================
 // SERVORA ERP — RequestHistoryScreen
-// ✅ Day-scoped Request History — now renders KitchenHistoryTable
-//    (category-grouped, batch-level table) instead of a list of
-//    RequestCard components.
-// ✅ NEW — status filter (clickable stat cards, wired from
-//    KitchenScreen.tsx) and category filter (dropdown, also wired
-//    from KitchenScreen.tsx) both applied to historyRequests before
-//    passing to KitchenHistoryTable — status filter narrows by
-//    req.status, category filter narrows by req.categoryId.
-// ✅ NEW — batch allocations for the selected date's ISSUED requests
-//    are fetched via getMovementsByReference() (the SAME targeted
-//    lookup pattern already used in MonthlyReportScreen.tsx — no new
-//    fetch pattern introduced). Refetches whenever selectedDate
-//    changes or the set of ISSUED request IDs (+ their
-//    issuedQuantity, for staleness safety) changes.
-// ✅ restaurantId is now a required prop (was previously only used
-//    by NewRequestScreen) — needed here for the allocation fetch.
+// ✅ Renders KitchenHistoryTable (category-grouped, batch-level
+//    table) for a single, already-date-filtered list of requests.
+// ✅ NEW — date navigation (selectedDate, prev/next day) is now
+//    OWNED BY KitchenScreen.tsx (lifted up via useRequestHistory),
+//    not this component — so KitchenScreen's stat cards and this
+//    table both read from the exact same date state. This component
+//    now receives historyRequests (already day-filtered) and
+//    selectedDate as props, and no longer renders its own date
+//    navigator UI.
+// ✅ status filter (clickable stat cards) and category filter
+//    (dropdown), both wired from KitchenScreen.tsx, applied to
+//    historyRequests before passing to KitchenHistoryTable.
+// ✅ Batch allocations for the selected date's ISSUED requests are
+//    fetched via getMovementsByReference() (the SAME targeted lookup
+//    pattern already used in MonthlyReportScreen.tsx). Refetches
+//    whenever selectedDate/filters change (via issuedIdsKey) or the
+//    set of ISSUED request IDs (+ their issuedQuantity, for
+//    staleness safety) changes.
+// ✅ restaurantId required for the allocation fetch.
 // FROZEN
 // ============================================
 
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet } from "react-native";
+import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import { useRequestHistory } from "../hooks/useRequestHistory";
 import { formatSelectedDate } from "../utils/kitchen-format";
 import { IngredientRequest } from "../types/kitchen-types";
 import { Category } from "../../../modules/inventory-module/types/category";
@@ -38,20 +40,19 @@ interface Theme {
 }
 
 interface RequestHistoryScreenProps {
-  requests:      IngredientRequest[];
-  loading:       boolean;
-  theme:         Theme;
-  restaurantId:  string | null | undefined;
-  categories:    Category[];
-  statusFilter:  IngredientRequest["status"] | null;
-  categoryFilter: string | null;
+  historyRequests: IngredientRequest[];
+  selectedDate:    string;
+  loading:         boolean;
+  theme:           Theme;
+  restaurantId:    string | null | undefined;
+  categories:      Category[];
+  statusFilter:    IngredientRequest["status"] | null;
+  categoryFilter:  string | null;
 }
 
 export default function RequestHistoryScreen({
-  requests, loading, theme, restaurantId, categories, statusFilter, categoryFilter,
+  historyRequests, selectedDate, loading, theme, restaurantId, categories, statusFilter, categoryFilter,
 }: RequestHistoryScreenProps) {
-  const { selectedDate, historyRequests, goToPrevDay, goToNextDay, isToday } = useRequestHistory(requests);
-
   const filteredRequests = useMemo(() => {
     let result = historyRequests;
     if (statusFilter) result = result.filter((r) => r.status === statusFilter);
@@ -106,18 +107,6 @@ export default function RequestHistoryScreen({
     <View>
       <Text style={[styles.sectionTitle, { color: theme.text }]}>Request History</Text>
 
-      <View style={[styles.dateNav, { backgroundColor: theme.card }]}>
-        <TouchableOpacity onPress={goToPrevDay} style={styles.dateNavArrow}>
-          <MaterialIcons name="chevron-left" size={20} color={theme.text} />
-        </TouchableOpacity>
-        <Text style={[styles.dateNavLabel, { color: theme.text }]}>
-          {isToday ? "Today — " : ""}{formatSelectedDate(selectedDate)}
-        </Text>
-        <TouchableOpacity onPress={goToNextDay} style={styles.dateNavArrow}>
-          <MaterialIcons name="chevron-right" size={20} color={theme.text} />
-        </TouchableOpacity>
-      </View>
-
       {loading ? (
         <ActivityIndicator color={theme.primary} style={{ marginTop: 20 }} />
       ) : filteredRequests.length === 0 ? (
@@ -141,12 +130,6 @@ export default function RequestHistoryScreen({
 
 const styles = StyleSheet.create({
   sectionTitle: { fontSize: 15, fontWeight: "800", marginBottom: 10 },
-  dateNav: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center",
-    gap: 10, borderRadius: 10, paddingVertical: 8, marginBottom: 12,
-  },
-  dateNavArrow: { padding: 4 },
-  dateNavLabel: { fontSize: 13, fontWeight: "700" },
   emptyBox: { borderRadius: 14, padding: 40, alignItems: "center", gap: 10 },
   emptyText: { fontSize: 13 },
 });
