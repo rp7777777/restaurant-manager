@@ -1,19 +1,34 @@
 // ============================================
 // SERVORA ERP — RequestHistoryScreen
-// ✅ Day-scoped Request History — moved from the old
-//    kitchen-module/index.tsx's inline "Request History" section.
-// ✅ Composes useRequestHistory() (day nav + filtered list) and
-//    RequestCard (one card per request) — no business logic here,
-//    pure composition + the day-nav header/empty-state JSX.
+// ✅ Day-scoped Request History — now renders KitchenHistoryTable
+//    (category-grouped, batch-level table) instead of a list of
+//    RequestCard components.
+// ✅ NEW — status filter (clickable stat cards, wired from
+//    KitchenScreen.tsx) and category filter (dropdown, also wired
+//    from KitchenScreen.tsx) both applied to historyRequests before
+//    passing to KitchenHistoryTable — status filter narrows by
+//    req.status, category filter narrows by req.categoryId.
+// ✅ NEW — batch allocations for the selected date's ISSUED requests
+//    are fetched via getMovementsByReference() (the SAME targeted
+//    lookup pattern already used in MonthlyReportScreen.tsx — no new
+//    fetch pattern introduced). Refetches whenever selectedDate
+//    changes or the set of ISSUED request IDs (+ their
+//    issuedQuantity, for staleness safety) changes.
+// ✅ restaurantId is now a required prop (was previously only used
+//    by NewRequestScreen) — needed here for the allocation fetch.
+// FROZEN
 // ============================================
 
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { useRequestHistory } from "../hooks/useRequestHistory";
 import { formatSelectedDate } from "../utils/kitchen-format";
 import { IngredientRequest } from "../types/kitchen-types";
-import RequestCard from "../components/RequestCard";
+import { Category } from "../../../modules/inventory-module/types/category";
+import { getMovementsByReference } from "../../../modules/stock-movement-module/services/stock-movement-service";
+import { BatchAllocationRecord } from "../../../modules/stock-movement-module/types/stock-movement";
+import { KitchenHistoryTable } from "../components/KitchenHistoryTable";
 
 interface Theme {
   card:          string;
@@ -23,13 +38,69 @@ interface Theme {
 }
 
 interface RequestHistoryScreenProps {
-  requests: IngredientRequest[];
-  loading:  boolean;
-  theme:    Theme;
+  requests:      IngredientRequest[];
+  loading:       boolean;
+  theme:         Theme;
+  restaurantId:  string | null | undefined;
+  categories:    Category[];
+  statusFilter:  IngredientRequest["status"] | null;
+  categoryFilter: string | null;
 }
 
-export default function RequestHistoryScreen({ requests, loading, theme }: RequestHistoryScreenProps) {
+export default function RequestHistoryScreen({
+  requests, loading, theme, restaurantId, categories, statusFilter, categoryFilter,
+}: RequestHistoryScreenProps) {
   const { selectedDate, historyRequests, goToPrevDay, goToNextDay, isToday } = useRequestHistory(requests);
+
+  const filteredRequests = useMemo(() => {
+    let result = historyRequests;
+    if (statusFilter) result = result.filter((r) => r.status === statusFilter);
+    if (categoryFilter) result = result.filter((r) => r.categoryId === categoryFilter);
+    return result;
+  }, [historyRequests, statusFilter, categoryFilter]);
+
+  const [batchAllocationsByRequestId, setBatchAllocationsByRequestId] =
+    useState<Map<string, BatchAllocationRecord[]>>(new Map());
+
+  const issuedIdsKey = useMemo(
+    () =>
+      filteredRequests
+        .filter((r) => r.status === "ISSUED")
+        .map((r) => `${r.id}:${r.issuedQuantity ?? 0}`)
+        .sort()
+        .join(","),
+    [filteredRequests]
+  );
+
+  useEffect(() => {
+    const issuedIds = filteredRequests.filter((r) => r.status === "ISSUED").map((r) => r.id);
+    if (issuedIds.length === 0 || !restaurantId) {
+      setBatchAllocationsByRequestId(new Map());
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        issuedIds.map(async (id): Promise<readonly [string, BatchAllocationRecord[]]> => {
+          try {
+            const movements = await getMovementsByReference(restaurantId, "KITCHEN_REQUEST", id);
+            const allocations = movements.flatMap((m) => m.batchAllocations ?? []);
+            return [id, allocations];
+          } catch (error) {
+            console.warn(`Failed to load batch allocations for request ${id}:`, error);
+            return [id, [] as BatchAllocationRecord[]];
+          }
+        })
+      );
+      if (!cancelled) {
+        setBatchAllocationsByRequestId(new Map(entries));
+      }
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issuedIdsKey, restaurantId]);
 
   return (
     <View>
@@ -49,7 +120,7 @@ export default function RequestHistoryScreen({ requests, loading, theme }: Reque
 
       {loading ? (
         <ActivityIndicator color={theme.primary} style={{ marginTop: 20 }} />
-      ) : historyRequests.length === 0 ? (
+      ) : filteredRequests.length === 0 ? (
         <View style={[styles.emptyBox, { backgroundColor: theme.card }]}>
           <MaterialIcons name="add-shopping-cart" size={40} color={theme.textSecondary} />
           <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
@@ -57,9 +128,12 @@ export default function RequestHistoryScreen({ requests, loading, theme }: Reque
           </Text>
         </View>
       ) : (
-        historyRequests.map((req) => (
-          <RequestCard key={req.id} request={req} theme={theme} />
-        ))
+        <KitchenHistoryTable
+          requests={filteredRequests}
+          batchAllocationsByRequestId={batchAllocationsByRequestId}
+          categories={categories}
+          categoryDate={formatSelectedDate(selectedDate)}
+        />
       )}
     </View>
   );
