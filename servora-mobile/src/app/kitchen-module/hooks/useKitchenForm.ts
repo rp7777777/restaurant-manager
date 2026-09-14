@@ -1,17 +1,21 @@
 // ============================================
 // SERVORA ERP — useKitchenForm Hook
-// ✅ FIX — requestedBy fallback changed from `??` (nullish
-//    coalescing) to `.trim() || ...` (logical OR with trim). Root
-//    cause: a real user's Firestore document was found to have
-//    name: "" (an empty string, not null/undefined) — `??` treats
-//    "" as a valid value and never falls through to the email/
-//    "Chef" fallback, so the request silently saved with an EMPTY
-//    requestedBy, which then showed as "Requested by: Unknown" in
-//    Store Module's KitchenRequestTable. `.trim() || ...` treats any
-//    empty-or-whitespace-only name as falsy, so it now correctly
-//    falls back to the user's email, then finally to "Chef" if even
-//    that's unavailable — regardless of whether userProfile.name is
-//    undefined, null, "", or just whitespace.
+// ✅ FIX — requestedBy fallback changed from `??` to `.trim() || ...`
+//    (empty-string userProfile.name bug — see original comment).
+// ✅ FIX — Kitchen Closing Stock is now ALWAYS the user's own typed
+//    value, NEVER auto-overridden by Inventory's currentStock.
+//    Previously: `const finalClosingStock = picked ? String(picked.currentStock) : closingStock;`
+//    silently discarded whatever Kitchen typed and substituted
+//    Inventory's live stock for "linked" items instead. Kitchen's
+//    own physical count (which can legitimately differ from
+//    Inventory's official record — spillage/wastage not yet logged)
+//    was never actually saved for linked items. Now closingStock is
+//    always the raw user input, optional (may be left blank —
+//    saves as 0, no validation error).
+// ✅ NEW — inventoryStockAtRequest: a separate, reference-only
+//    snapshot of Inventory's currentStock captured at add-to-list
+//    time (only when the item is linked) — never used to override
+//    closingStock, purely informational for later display.
 // ============================================
 
 import { useState } from "react";
@@ -26,6 +30,7 @@ export interface DraftKitchenRequestItem {
   inventoryId?: string | null;
   categoryId?: string | null;
   closingStock: string;
+  inventoryStockAtRequest?: number | null;
   minimumLevel: string;
   orderQuantity: string;
   unit: string;
@@ -73,7 +78,6 @@ export function useKitchenForm(
   const addItemToList = () => {
     const picked = itemSearch.pickedItem;
     const finalUnit = picked?.unit ?? unit;
-    const finalClosingStock = picked ? String(picked.currentStock) : closingStock;
     const finalMinimumLevel = picked ? String(picked.minStock) : minimumLevel;
 
     if (!itemSearch.itemName.trim() || !orderQuantity) {
@@ -88,7 +92,8 @@ export function useKitchenForm(
       itemName: itemSearch.itemName.trim(),
       inventoryId: picked?.id ?? null,
       categoryId: itemSearch.selectedCategoryId ?? null,
-      closingStock: finalClosingStock,
+      closingStock,
+      inventoryStockAtRequest: picked ? picked.currentStock : null,
       minimumLevel: finalMinimumLevel,
       orderQuantity,
       unit: finalUnit,
@@ -118,12 +123,12 @@ export function useKitchenForm(
         inventoryId: item.inventoryId,
         categoryId: item.categoryId,
         closingStock: Number(item.closingStock || 0),
+        inventoryStockAtRequest: item.inventoryStockAtRequest ?? null,
         minimumLevel: Number(item.minimumLevel || 0),
         orderQuantity: Number(item.orderQuantity),
         unit: item.unit,
       }));
 
-      // ✅ FIX — .trim() || ... instead of ?? — see FROZEN header.
       await sendKitchenRequest({
         items,
         requiredDate,

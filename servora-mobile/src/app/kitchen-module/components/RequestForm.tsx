@@ -1,22 +1,25 @@
 // ============================================
 // SERVORA ERP — RequestForm Component
-// ✅ The "New Request" form — moved from the old
-//    kitchen-module/index.tsx's inline JSX (~262 lines), now wired
-//    to useKitchenForm() (which itself composes useItemSearch())
-//    instead of the screen owning ~15 separate useState calls.
-// ✅ Same field-by-field behavior as the original: Category picker
-//    narrows item search; picking a linked Inventory item locks
-//    Closing Stock/Min Level/Unit to read-only Inventory values and
-//    shows a Below-Minimum-Stock warning when relevant; free-text
-//    entry is an explicit opt-in row, not the default; items list
-//    groups by category; Send is disabled while empty/saving.
-// ✅ Changing Category clears the currently typed/linked item (see
-//    useItemSearch.ts's handleSetSelectedCategoryId) — the old item
-//    almost certainly doesn't belong to the newly-picked category.
-// ✅ Closing Stock/Min Level/Unit read-only displays show the
-//    REAL picked Inventory item's values (itemSearch.pickedItem.*)
-//    directly, not a form-level state that only gets synced after
-//    "Add to List" is pressed.
+// ✅ The "New Request" form.
+// ✅ Category picker narrows item search; free-text entry is an
+//    explicit opt-in row, not the default; items list groups by
+//    category; Send is disabled while empty/saving.
+// ✅ Min Level/Unit still read-only-lock to Inventory values when an
+//    item is linked — informational defaults, not something Kitchen
+//    physically re-counts.
+// ✅ "Kitchen Closing Stock" is ALWAYS a manually-editable TextInput,
+//    regardless of whether the item is linked to Inventory. It is
+//    Kitchen's own physical count and must never be silently
+//    replaced by Inventory's live stock.
+// ✅ When an item is linked, Inventory's own current stock is shown
+//    as a SEPARATE, clearly-labeled read-only reference row
+//    ("Inventory Stock") — for comparison only, never used to fill
+//    or override Kitchen's entry.
+// ✅ NEW — Order Quantity numeric validation added to handleAddItem:
+//    rejects 0, negative numbers, and non-numeric text (was
+//    previously only checked for "non-empty", so "0"/"-5"/"abc"
+//    could all pass through to Number(item.orderQuantity) and
+//    produce NaN or a non-positive saved quantity).
 // ============================================
 
 import React from "react";
@@ -46,12 +49,9 @@ interface Theme {
 interface RequestFormProps {
   form:  ReturnType<typeof useKitchenForm>;
   theme: Theme;
-  onSent: () => void;  // called after a successful send — the screen decides what happens next (e.g. switch to History tab)
+  onSent: () => void;
 }
 
-// ✅ Cross-platform alert — matches the established real pattern
-// (e.g. InventoryScreen.tsx) rather than plain Alert.alert(), which
-// silently fails to render on react-native-web.
 function showAlert(message: string) {
   if (isWeb) window.alert(message);
   else Alert.alert("Error", message);
@@ -62,6 +62,11 @@ export default function RequestForm({ form, theme, onSent }: RequestFormProps) {
   const linked = !!itemSearch.pickedItem;
 
   const handleAddItem = () => {
+    const qty = Number(form.orderQuantity);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      showAlert("Order Quantity must be a valid number greater than 0");
+      return;
+    }
     try {
       form.addItemToList();
     } catch (err: any) {
@@ -159,24 +164,28 @@ export default function RequestForm({ form, theme, onSent }: RequestFormProps) {
           </TouchableOpacity>
         )}
 
-        <View style={styles.row3}>
-          <View style={styles.thirdField}>
-            <Text style={[styles.miniLabel, { color: theme.textSecondary }]}>Closing Stock</Text>
-            {linked ? (
-              <View style={[styles.miniInput, styles.miniInputReadOnly, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-                <Text style={[styles.readOnlyValueText, { color: theme.text }]}>{itemSearch.pickedItem?.currentStock}</Text>
-              </View>
-            ) : (
-              <TextInput
-                style={[styles.miniInput, { backgroundColor: theme.surface, borderColor: theme.border, color: theme.text }]}
-                placeholder="0"
-                placeholderTextColor={theme.textSecondary}
-                keyboardType="decimal-pad"
-                value={form.closingStock}
-                onChangeText={form.setClosingStock}
-              />
-            )}
+        {/* ✅ Kitchen Closing Stock — ALWAYS editable, own row, full width */}
+        <Text style={[styles.miniLabel, { color: theme.textSecondary, marginTop: 4 }]}>Kitchen Closing Stock</Text>
+        <TextInput
+          style={[styles.miniInput, styles.fullWidthInput, { backgroundColor: theme.surface, borderColor: theme.border, color: theme.text }]}
+          placeholder="0"
+          placeholderTextColor={theme.textSecondary}
+          keyboardType="decimal-pad"
+          value={form.closingStock}
+          onChangeText={form.setClosingStock}
+        />
+
+        {/* ✅ Inventory Stock — reference-only, shown only when linked */}
+        {linked && (
+          <View style={styles.inventoryStockRow}>
+            <MaterialIcons name="info-outline" size={12} color={theme.textSecondary} />
+            <Text style={[styles.inventoryStockText, { color: theme.textSecondary }]}>
+              Inventory Stock: {itemSearch.pickedItem?.currentStock} {itemSearch.pickedItem?.unit} (reference only)
+            </Text>
           </View>
+        )}
+
+        <View style={styles.row3}>
           <View style={styles.thirdField}>
             <Text style={[styles.miniLabel, { color: theme.textSecondary }]}>Min Level</Text>
             {linked ? (
@@ -210,7 +219,7 @@ export default function RequestForm({ form, theme, onSent }: RequestFormProps) {
         {linked && itemSearch.pickedItem && itemSearch.pickedItem.currentStock < itemSearch.pickedItem.minStock && (
           <View style={styles.belowMinWarning}>
             <MaterialIcons name="warning" size={13} color="#dc2626" />
-            <Text style={styles.belowMinWarningText}>Below Minimum Stock</Text>
+            <Text style={styles.belowMinWarningText}>Inventory Below Minimum</Text>
           </View>
         )}
 
@@ -362,6 +371,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 8, marginBottom: 8,
   },
   newItemRowText: { fontSize: 12, fontStyle: "italic", flex: 1 },
+  fullWidthInput: { marginBottom: 4 },
+  inventoryStockRow: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    marginBottom: 8,
+  },
+  inventoryStockText: { fontSize: 11, fontStyle: "italic" },
   row3: { flexDirection: "row", gap: 8, marginBottom: 8 },
   thirdField: { flex: 1 },
   miniLabel: { fontSize: 9, fontWeight: "700", marginBottom: 4 },

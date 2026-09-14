@@ -2,25 +2,26 @@
 // SERVORA ERP — KitchenScreen
 // ✅ Thin top-level controller — header, Pending/Approved/Total
 //    stats, and composes NewRequestScreen / RequestHistoryScreen.
-// ✅ NEW — categories fetched via useCategoriesForPicker (same hook
-//    used throughout Inventory/Store), passed down to
+// ✅ categories fetched via useCategoriesForPicker (same hook used
+//    throughout Inventory/Store), passed down to
 //    RequestHistoryScreen for KitchenHistoryTable's category
 //    grouping.
-// ✅ NEW — stat cards (Pending/Approved/Total) are now clickable,
-//    filtering RequestHistoryScreen's table by status
-//    (statusFilter). "Approved" card maps to status === "APPROVED"
-//    only (NOT "APPROVED" || "ISSUED" — the card's own COUNT still
-//    combines both, matching the existing approvedCount semantics,
-//    but the FILTER is precise to APPROVED alone so clicking it
-//    doesn't silently also show ISSUED rows under an "Approved"
-//    label). Clicking the already-active card again clears the
-//    filter (toggle to null, showing all statuses for that date).
-// ✅ NEW — category filter dropdown (same button+list pattern as
-//    MonthlyReportScreen.tsx/Store's daily dropdown — normal
-//    document flow, not absolutely positioned, so it pushes content
-//    down rather than overlaying).
-// ✅ restaurantId now passed to RequestHistoryScreen (needed there
-//    for the batch allocation fetch).
+// ✅ Stat cards (Pending/Approved/Total) are clickable, filtering
+//    RequestHistoryScreen's table by status (statusFilter).
+//    "Approved" card maps to status === "APPROVED" only (NOT
+//    "APPROVED" || "ISSUED" — the card's own COUNT still combines
+//    both, matching the existing approvedCount semantics, but the
+//    FILTER is precise to APPROVED alone so clicking it doesn't
+//    silently also show ISSUED rows under an "Approved" label).
+//    Clicking the already-active card again clears the filter.
+// ✅ Category filter dropdown (normal document flow, not absolutely
+//    positioned — pushes content down rather than overlaying).
+// ✅ NEW — stats row and category dropdown are now hidden while the
+//    New Request form is open (showForm), so the form gets the
+//    screen's full attention instead of competing with filter UI
+//    the form doesn't use.
+// ✅ restaurantId passed to RequestHistoryScreen (needed there for
+//    the batch allocation fetch).
 // FROZEN
 // ============================================
 
@@ -90,63 +91,67 @@ export default function KitchenScreen() {
       </LinearGradient>
 
       <View style={styles.body}>
-        {/* Stats — now clickable */}
-        <View style={styles.statsRow}>
-          <TouchableOpacity
-            style={[
-              styles.statCard, { backgroundColor: theme.card },
-              statusFilter === "PENDING" && styles.statCardActive,
-            ]}
-            onPress={() => setStatusFilter((s) => s === "PENDING" ? null : "PENDING")}
-          >
-            <MaterialIcons name="schedule" size={22} color="#f59e0b" />
-            <Text style={[styles.statValue, { color: "#f59e0b" }]}>{pendingCount}</Text>
-            <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Pending</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.statCard, { backgroundColor: theme.card },
-              statusFilter === "APPROVED" && styles.statCardActive,
-            ]}
-            onPress={() => setStatusFilter((s) => s === "APPROVED" ? null : "APPROVED")}
-          >
-            <MaterialIcons name="done-all" size={22} color="#10b981" />
-            <Text style={[styles.statValue, { color: "#10b981" }]}>{approvedCount}</Text>
-            <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Approved</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.statCard, { backgroundColor: theme.card },
-              statusFilter === null && styles.statCardActive,
-            ]}
-            onPress={() => setStatusFilter(null)}
-          >
-            <MaterialIcons name="list-alt" size={22} color="#3b82f6" />
-            <Text style={[styles.statValue, { color: "#3b82f6" }]}>{requests.length}</Text>
-            <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Total</Text>
-          </TouchableOpacity>
-        </View>
+        {/* ✅ NEW — stats + category dropdown hidden while the form
+            is open, so the form gets full screen attention. */}
+        {!showForm && (
+          <>
+            <View style={styles.statsRow}>
+              <TouchableOpacity
+                style={[
+                  styles.statCard, { backgroundColor: theme.card },
+                  statusFilter === "PENDING" && styles.statCardActive,
+                ]}
+                onPress={() => setStatusFilter((s) => s === "PENDING" ? null : "PENDING")}
+              >
+                <MaterialIcons name="schedule" size={22} color="#f59e0b" />
+                <Text style={[styles.statValue, { color: "#f59e0b" }]}>{pendingCount}</Text>
+                <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Pending</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.statCard, { backgroundColor: theme.card },
+                  statusFilter === "APPROVED" && styles.statCardActive,
+                ]}
+                onPress={() => setStatusFilter((s) => s === "APPROVED" ? null : "APPROVED")}
+              >
+                <MaterialIcons name="done-all" size={22} color="#10b981" />
+                <Text style={[styles.statValue, { color: "#10b981" }]}>{approvedCount}</Text>
+                <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Approved</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.statCard, { backgroundColor: theme.card },
+                  statusFilter === null && styles.statCardActive,
+                ]}
+                onPress={() => setStatusFilter(null)}
+              >
+                <MaterialIcons name="list-alt" size={22} color="#3b82f6" />
+                <Text style={[styles.statValue, { color: "#3b82f6" }]}>{requests.length}</Text>
+                <Text style={[styles.statLabel, { color: theme.textSecondary }]}>Total</Text>
+              </TouchableOpacity>
+            </View>
 
-        {/* Category filter dropdown */}
-        {categories.length > 0 && (
-          <View style={styles.categoryDropdownWrap}>
-            <TouchableOpacity style={styles.categoryDropdownButton} onPress={() => setShowCategoryDropdown((v) => !v)}>
-              <Text style={styles.categoryDropdownButtonText}>{selectedCategoryName}</Text>
-              <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={20} color="#059669" />
-            </TouchableOpacity>
-            {showCategoryDropdown && (
-              <ScrollView style={styles.categoryDropdownList} nestedScrollEnabled>
-                <TouchableOpacity style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(null); setShowCategoryDropdown(false); }}>
-                  <Text style={styles.categoryDropdownItemText}>All Categories</Text>
+            {categories.length > 0 && (
+              <View style={styles.categoryDropdownWrap}>
+                <TouchableOpacity style={styles.categoryDropdownButton} onPress={() => setShowCategoryDropdown((v) => !v)}>
+                  <Text style={styles.categoryDropdownButtonText}>{selectedCategoryName}</Text>
+                  <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={20} color="#059669" />
                 </TouchableOpacity>
-                {categories.map((cat) => (
-                  <TouchableOpacity key={cat.id} style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(cat.id); setShowCategoryDropdown(false); }}>
-                    <Text style={styles.categoryDropdownItemText}>{cat.icon} {cat.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
+                {showCategoryDropdown && (
+                  <ScrollView style={styles.categoryDropdownList} nestedScrollEnabled>
+                    <TouchableOpacity style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(null); setShowCategoryDropdown(false); }}>
+                      <Text style={styles.categoryDropdownItemText}>All Categories</Text>
+                    </TouchableOpacity>
+                    {categories.map((cat) => (
+                      <TouchableOpacity key={cat.id} style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(cat.id); setShowCategoryDropdown(false); }}>
+                        <Text style={styles.categoryDropdownItemText}>{cat.icon} {cat.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                )}
+              </View>
             )}
-          </View>
+          </>
         )}
 
         {/* New Request Form — shown/hidden via the header toggle */}

@@ -33,6 +33,12 @@
 //    transaction that also writes to kitchenRequests) while reusing
 //    the pure FEFO CALCULATION functions keeps Inventory module
 //    generic and Kitchen module's own workflow transaction separate.
+//    ⚠️ NOTE — this FEFO-automatic allocation is scheduled to be
+//    replaced by a manual batch-selection flow (Store keeper picks
+//    which batch(es) to issue from) in a future, separate change —
+//    NOT done in this revision (deliberately deferred, high-risk
+//    transaction-logic change kept isolated from the
+//    inventoryStockAtRequest addition below).
 // ✅ FIX — request.inventoryId vs the inventoryId this call is
 //    issuing against are now cross-checked BEFORE any read of the
 //    inventory item. Previously, if a request already had an
@@ -48,6 +54,10 @@
 //    approved — e.g. issuing 25kg against a 10kg approved request,
 //    as long as enough stock existed. Now issuing more than
 //    orderQuantity throws.
+// ✅ NEW — SendKitchenRequestItem/createInput now carry
+//    inventoryStockAtRequest (a reference-only Inventory currentStock
+//    snapshot at request time, separate from closingStock — Kitchen's
+//    own manually-entered physical count, never overridden by it).
 // ⚠️ DOCUMENTED, ACCEPTED LIMITATIONS (not fixed here — matches
 //    existing, already-frozen Inventory architecture exactly, not
 //    new Kitchen-specific gaps):
@@ -103,6 +113,7 @@ export interface SendKitchenRequestItem {
   inventoryId?: string | null;
   categoryId?: string | null;
   closingStock: number;
+  inventoryStockAtRequest?: number | null;
   minimumLevel: number;
   orderQuantity: number;
   unit: string;
@@ -143,6 +154,7 @@ export async function sendKitchenRequest(
       inventoryId: item.inventoryId ?? null,
       categoryId: item.categoryId ?? null,
       closingStock: item.closingStock,
+      inventoryStockAtRequest: item.inventoryStockAtRequest ?? null,
       minimumLevel: item.minimumLevel,
       orderQuantity: item.orderQuantity,
       unit: item.unit,

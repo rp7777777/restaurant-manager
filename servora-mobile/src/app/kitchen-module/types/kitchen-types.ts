@@ -4,6 +4,13 @@
 //    of the Phase 2 module restructuring — types unchanged, just
 //    relocated so repository/services/hooks/screens all share the
 //    same source of truth instead of each file redefining its own.
+// ✅ NEW — inventoryStockAtRequest added: a REFERENCE-ONLY snapshot
+//    of Inventory's currentStock at request time (captured only
+//    when the item was linked to a real Inventory item). This is
+//    deliberately SEPARATE from closingStock, which is Kitchen's own
+//    manually-entered physical count and is NEVER auto-overridden by
+//    Inventory's live stock (see useKitchenForm.ts's own header for
+//    the full root-cause explanation of the bug this fixes).
 // ============================================
 
 export type RequestStatus = "PENDING" | "APPROVED" | "ISSUED" | "REJECTED";
@@ -13,7 +20,8 @@ export interface IngredientRequest {
   itemName: string;
   inventoryId?: string | null;  // ✅ links this request to a real Inventory item — lets Store's Issue step call recordStockMovement() directly instead of matching by name
   categoryId?: string | null;  // ✅ same category the item belongs to in Inventory, for grouping/reporting
-  closingStock: number;
+  closingStock: number;  // Kitchen's own manually-entered physical count — NEVER auto-overridden by Inventory
+  inventoryStockAtRequest?: number | null;  // Reference-only snapshot of Inventory's currentStock at request time (if item was linked) — display only, never used to override closingStock
   minimumLevel: number;
   orderQuantity: number;
   unit: string;
