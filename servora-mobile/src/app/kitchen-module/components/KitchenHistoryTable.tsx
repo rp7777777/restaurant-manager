@@ -1,51 +1,43 @@
 // ============================================
 // SERVORA ERP — KitchenHistoryTable Component
-// ✅ Kitchen's OWN view of its request history — replaces
-//    RequestCard.tsx's card-per-request layout with a professional
-//    table, matching the design language already established in
-//    HistoricalInventoryTableView.tsx / KitchenRequestTable.tsx
-//    (Store's own daily table).
-// ✅ Category-grouped (category header shows the date on the
-//    right), Item Name merged/vertically-centered per item.
+// ✅ Kitchen's OWN view of its request history.
+// ✅ NEW — RESTRUCTURED grouping to match KitchenRequestTable.tsx
+//    (Store's daily table) exactly: requestedBy -> category -> item
+//    -> individual requests -> batch allocation rows (was category
+//    -> item -> requests, with no requester-level separation). A
+//    second requester now produces its own separate table block.
 // 🔒 CONFIRMED COLUMN ORDER: S.N. / Item Name / Lot/Batch No. /
-//    Closing Stock / Req.Qty / Unit / Required Date / Status.
-//    No "Requested By" column — this is Kitchen's own view of
-//    requests it made, unlike Store's table which shows multiple
-//    requesters.
-// ✅ Closing Stock and Req.Qty are REQUEST-level (the value Kitchen
-//    entered when creating the request) — merged/vertically
-//    centered across that request's own batch rows, exactly
-//    matching Kitchen Req.Qty's treatment in
-//    MonthlyReportScreen.tsx/KitchenRequestTable.tsx.
-// ✅ Lot/Batch No. is BATCH-level — one row per actual allocation,
-//    populated only once Store has ISSUED the request (a request
-//    with no allocations yet — PENDING/APPROVED/REJECTED — renders
-//    as exactly one row with "—" for Lot/Batch No.).
-// ✅ batchAllocationsByRequestId is passed in as a prop (fetched by
-//    the caller, RequestHistoryScreen.tsx, via the SAME
-//    getMovementsByReference()-based pattern already used in
-//    MonthlyReportScreen.tsx — no new fetch pattern introduced here,
-//    this component is purely presentational).
+//    Closing Stock / Req.Qty / Store Issued / Unit / Required Date /
+//    Status. No "Requested By" row-level column (shown at the
+//    requester-header level instead), no "Notes", no "View".
+// ✅ Lot/Batch No. and Store Issued are BATCH-level — one row per
+//    actual allocation, populated only once Store has ISSUED the
+//    request (a request with no allocations yet renders as exactly
+//    one row with "—" for both).
+// ✅ Closing Stock, Req.Qty, Unit, Required Date, Status are
+//    REQUEST-level — merged/vertically centered across that
+//    request's own batch rows.
+// ✅ Column header row shown ONLY ONCE — the first category block of
+//    the first requester group.
+// ✅ batchAllocationsByRequestId passed in as a prop (fetched by the
+//    caller, RequestHistoryScreen.tsx).
 // ✅ Item grouping key = inventoryId when present, else
-//    `itemName::unit` fallback — matches MonthlyReportScreen.tsx's
-//    own grouping key exactly, so two different Inventory items that
-//    happen to share a display name are never silently merged.
-// ✅ Status column also shows rejectionNote (small red line) for
-//    REJECTED requests that have one, matching
-//    KitchenRequestTable.tsx's own treatment.
+//    `itemName::unit` fallback.
+// ✅ Status column also shows rejectionNote for REJECTED requests.
 // FROZEN
 // ============================================
 
 import React, { useMemo, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
+import { MaterialIcons } from "@expo/vector-icons";
 import { IngredientRequest } from "../types/kitchen-types";
 import { BatchAllocationRecord } from "../../../modules/stock-movement-module/types/stock-movement";
 import { Category } from "../../../modules/inventory-module/types/category";
 import { STATUS_COLORS } from "../../store-module/utils/store-formatters";
 
 const ROW_HEIGHT = 26;
-const COLS = { sn: 35, item: 180, batch: 160, closing: 95, req: 75, unit: 60, date: 95, status: 100 };
-const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.closing + COLS.req + COLS.unit + COLS.date + COLS.status;
+const COLS = { sn: 35, item: 160, batch: 150, closing: 85, req: 65, issued: 80, unit: 55, date: 90, status: 100 };
+const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.closing + COLS.req + COLS.issued + COLS.unit + COLS.date + COLS.status;
 
 const DIVIDER_X_POSITIONS = (() => {
   const positions: number[] = [];
@@ -55,6 +47,7 @@ const DIVIDER_X_POSITIONS = (() => {
   x += COLS.batch; positions.push(x);
   x += COLS.closing; positions.push(x);
   x += COLS.req; positions.push(x);
+  x += COLS.issued; positions.push(x);
   x += COLS.unit; positions.push(x);
   x += COLS.date; positions.push(x);
   return positions;
@@ -82,6 +75,11 @@ interface CategoryGroup {
   items:        ItemGroup[];
 }
 
+interface RequesterGroup {
+  requestedBy: string;
+  categories:  CategoryGroup[];
+}
+
 function getRequestRowCount(allocationCount: number): number {
   return allocationCount > 0 ? allocationCount : 1;
 }
@@ -89,192 +87,241 @@ function getRequestRowCount(allocationCount: number): number {
 export function KitchenHistoryTable({ requests, batchAllocationsByRequestId, categories, categoryDate }: KitchenHistoryTableProps) {
   const [tableAreaHeights, setTableAreaHeights] = useState<Record<string, number>>({});
 
-  const groups = useMemo<CategoryGroup[]>(() => {
+  const requesterGroups = useMemo<RequesterGroup[]>(() => {
     const categoryById = new Map(categories.map((c) => [c.id, c]));
-    const byCategory = new Map<string, Map<string, IngredientRequest[]>>();
 
+    const byRequester = new Map<string, IngredientRequest[]>();
     for (const req of requests) {
-      const catKey = req.categoryId && categoryById.has(req.categoryId) ? req.categoryId : UNCATEGORIZED_ID;
-      const byItem = byCategory.get(catKey) ?? new Map<string, IngredientRequest[]>();
-      const itemKey = req.inventoryId ? req.inventoryId : `${req.itemName}::${req.unit}`;
-      const list = byItem.get(itemKey) ?? [];
+      const key = req.requestedBy || "Unknown";
+      const list = byRequester.get(key) ?? [];
       list.push(req);
-      byItem.set(itemKey, list);
-      byCategory.set(catKey, byItem);
+      byRequester.set(key, list);
     }
 
-    const result: CategoryGroup[] = [];
-    for (const category of categories) {
-      const byItem = byCategory.get(category.id);
-      if (!byItem || byItem.size === 0) continue;
-      const itemGroups: ItemGroup[] = Array.from(byItem.entries())
-        .map(([itemKey, itemRequests]) => ({ itemKey, itemName: itemRequests[0].itemName, requests: itemRequests }))
-        .sort((a, b) => a.itemName.localeCompare(b.itemName));
-      result.push({ categoryId: category.id, categoryName: category.name, categoryIcon: category.icon, items: itemGroups });
+    const result: RequesterGroup[] = [];
+    for (const [requestedBy, requesterRequests] of byRequester.entries()) {
+      const byCategory = new Map<string, Map<string, IngredientRequest[]>>();
+      for (const req of requesterRequests) {
+        const catKey = req.categoryId && categoryById.has(req.categoryId) ? req.categoryId : UNCATEGORIZED_ID;
+        const byItem = byCategory.get(catKey) ?? new Map<string, IngredientRequest[]>();
+        const itemKey = req.inventoryId ? req.inventoryId : `${req.itemName}::${req.unit}`;
+        const list = byItem.get(itemKey) ?? [];
+        list.push(req);
+        byItem.set(itemKey, list);
+        byCategory.set(catKey, byItem);
+      }
+
+      const categoryGroups: CategoryGroup[] = [];
+      for (const category of categories) {
+        const byItem = byCategory.get(category.id);
+        if (!byItem || byItem.size === 0) continue;
+        const itemGroups: ItemGroup[] = Array.from(byItem.entries())
+          .map(([itemKey, itemRequests]) => ({ itemKey, itemName: itemRequests[0].itemName, requests: itemRequests }))
+          .sort((a, b) => a.itemName.localeCompare(b.itemName));
+        categoryGroups.push({ categoryId: category.id, categoryName: category.name, categoryIcon: category.icon, items: itemGroups });
+      }
+      const uncatByItem = byCategory.get(UNCATEGORIZED_ID);
+      if (uncatByItem && uncatByItem.size > 0) {
+        const itemGroups: ItemGroup[] = Array.from(uncatByItem.entries())
+          .map(([itemKey, itemRequests]) => ({ itemKey, itemName: itemRequests[0].itemName, requests: itemRequests }))
+          .sort((a, b) => a.itemName.localeCompare(b.itemName));
+        categoryGroups.push({ categoryId: UNCATEGORIZED_ID, categoryName: "Uncategorized", categoryIcon: undefined, items: itemGroups });
+      }
+      categoryGroups.sort((a, b) => a.categoryName.localeCompare(b.categoryName));
+
+      result.push({ requestedBy, categories: categoryGroups });
     }
 
-    const uncatByItem = byCategory.get(UNCATEGORIZED_ID);
-    if (uncatByItem && uncatByItem.size > 0) {
-      const itemGroups: ItemGroup[] = Array.from(uncatByItem.entries())
-        .map(([itemKey, itemRequests]) => ({ itemKey, itemName: itemRequests[0].itemName, requests: itemRequests }))
-        .sort((a, b) => a.itemName.localeCompare(b.itemName));
-      result.push({ categoryId: UNCATEGORIZED_ID, categoryName: "Uncategorized", categoryIcon: undefined, items: itemGroups });
-    }
-
-    result.sort((a, b) => a.categoryName.localeCompare(b.categoryName));
+    result.sort((a, b) => a.requestedBy.localeCompare(b.requestedBy));
     return result;
   }, [requests, categories]);
 
+  let hasShownColumnHeader = false;
+
   return (
     <View style={{ width: TABLE_WIDTH }}>
-      {groups.map((group, groupIndex) => {
-        const measuredHeight = tableAreaHeights[group.categoryId] ?? 0;
-        const isFirstGroup = groupIndex === 0;
-
-        return (
-          <View key={group.categoryId} style={styles.groupBlock}>
-            <View style={styles.groupHeader}>
-              <Text style={styles.groupHeaderText}>
-                {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
-              </Text>
-              {categoryDate ? <Text style={styles.groupHeaderDate}>{categoryDate}</Text> : null}
+      {requesterGroups.map((requesterGroup) => (
+        <View key={requesterGroup.requestedBy} style={styles.requesterBlock}>
+          <View style={styles.requesterHeader}>
+            <View style={styles.requesterHeaderLeft}>
+              <MaterialIcons name="person" size={14} color="#fff" />
+              <Text style={styles.requesterHeaderText}>Requested by: {requesterGroup.requestedBy}</Text>
             </View>
-
-            <View
-              style={styles.tableArea}
-              onLayout={(e) => {
-                const h = e.nativeEvent.layout.height;
-                setTableAreaHeights((prev) =>
-                  prev[group.categoryId] === h ? prev : { ...prev, [group.categoryId]: h }
-                );
-              }}
-            >
-              {isFirstGroup && (
-                <View style={styles.tableHeaderRow}>
-                  <Text style={[styles.headerCell, { width: COLS.sn }]}>S.N.</Text>
-                  <Text style={[styles.headerCell, { width: COLS.item }]}>Item Name</Text>
-                  <Text style={[styles.headerCell, { width: COLS.batch }]}>Lot/Batch No.</Text>
-                  <Text style={[styles.headerCell, styles.centerCell, { width: COLS.closing }]}>Closing Stock</Text>
-                  <Text style={[styles.headerCell, styles.centerCell, { width: COLS.req }]}>Req.Qty</Text>
-                  <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
-                  <Text style={[styles.headerCell, { width: COLS.date }]}>Required Date</Text>
-                  <Text style={[styles.headerCell, { width: COLS.status }]}>Status</Text>
-                </View>
-              )}
-
-              {group.items.map((itemGroup, itemIndex) => {
-                const itemGroupHeight = itemGroup.requests.reduce((sum, req) => {
-                  const allocationCount = (batchAllocationsByRequestId.get(req.id) ?? []).length;
-                  return sum + getRequestRowCount(allocationCount) * ROW_HEIGHT;
-                }, 0);
-                const isEvenRow = itemIndex % 2 === 1;
-
-                return (
-                  <View
-                    key={itemGroup.itemKey}
-                    style={[styles.itemGroupRow, { minHeight: itemGroupHeight }, isEvenRow && styles.itemGroupRowAlt]}
-                  >
-                    <View style={[styles.leftStrip, { width: COLS.sn + COLS.item, minHeight: itemGroupHeight }]}>
-                      <Text style={[styles.cell, { width: COLS.sn }]}>{itemIndex + 1}</Text>
-                      <Text style={[styles.cell, styles.itemCell, { width: COLS.item }]}>{itemGroup.itemName}</Text>
-                    </View>
-
-                    <View style={styles.rightRequestRows}>
-                      {itemGroup.requests.map((req, reqIdx) => {
-                        const statusColor = STATUS_COLORS[req.status];
-                        const allocations = batchAllocationsByRequestId.get(req.id) ?? [];
-                        const rows = allocations.length > 0 ? allocations : [null];
-                        const requestBlockHeight = rows.length * ROW_HEIGHT;
-
-                        return (
-                          <View
-                            key={req.id}
-                            style={[
-                              styles.requestBlock,
-                              { minHeight: requestBlockHeight },
-                              reqIdx < itemGroup.requests.length - 1 && styles.requestRowDivider,
-                            ]}
-                          >
-                            {/* Lot/Batch No. — BATCH-level, per-allocation rows */}
-                            <View style={{ width: COLS.batch }}>
-                              {rows.map((alloc, rowIdx) => (
-                                <View
-                                  key={alloc ? alloc.batchId : "no-batch"}
-                                  style={[styles.batchLineRow, { height: ROW_HEIGHT }, rowIdx < rows.length - 1 && styles.batchRowDivider]}
-                                >
-                                  <Text style={styles.cell} numberOfLines={1} ellipsizeMode="tail">{alloc ? alloc.batchNo : "—"}</Text>
-                                </View>
-                              ))}
-                            </View>
-
-                            {/* Closing Stock — REQUEST-level, merged */}
-                            <View style={[styles.requestLevelCell, { width: COLS.closing, minHeight: requestBlockHeight }]}>
-                              <Text style={[styles.cell, styles.centerCell]}>{req.closingStock} {req.unit}</Text>
-                            </View>
-
-                            {/* Req.Qty — REQUEST-level, merged */}
-                            <View style={[styles.requestLevelCell, { width: COLS.req, minHeight: requestBlockHeight }]}>
-                              <Text style={[styles.cell, styles.centerCell]}>{req.orderQuantity}</Text>
-                            </View>
-
-                            {/* Unit — REQUEST-level, merged */}
-                            <View style={[styles.requestLevelCell, { width: COLS.unit, minHeight: requestBlockHeight }]}>
-                              <Text style={[styles.cell, styles.centerCell]}>{req.unit}</Text>
-                            </View>
-
-                            {/* Required Date — REQUEST-level, merged */}
-                            <View style={[styles.requestLevelCell, { width: COLS.date, minHeight: requestBlockHeight, alignItems: "flex-start" }]}>
-                              <Text style={styles.cell}>{req.requiredDate}</Text>
-                            </View>
-
-                            {/* Status — REQUEST-level, merged */}
-                            <View style={[styles.requestLevelCell, { width: COLS.status, minHeight: requestBlockHeight }]}>
-                              <View style={styles.statusCellWrap}>
-                                <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-                                <Text style={[styles.cell, { color: statusColor, fontWeight: "700" }]}>{req.status}</Text>
-                              </View>
-                              {req.status === "REJECTED" && req.rejectionNote ? (
-                                <Text style={styles.rejectionNoteText} numberOfLines={2}>{req.rejectionNote}</Text>
-                              ) : null}
-                            </View>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  </View>
-                );
-              })}
-
-              {measuredHeight > 0 && DIVIDER_X_POSITIONS.map((x) => (
-                <View
-                  key={x}
-                  pointerEvents="none"
-                  style={{
-                    position: "absolute",
-                    left: x,
-                    top: 0,
-                    height: measuredHeight + 4,
-                    width: 1,
-                    backgroundColor: "#94a3b8",
-                  }}
-                />
-              ))}
-            </View>
+            {categoryDate ? <Text style={styles.requesterHeaderDate}>{categoryDate}</Text> : null}
           </View>
-        );
-      })}
+
+          {requesterGroup.categories.map((group) => {
+            const measuredHeight = tableAreaHeights[`${requesterGroup.requestedBy}::${group.categoryId}`] ?? 0;
+            const showColumnHeader = !hasShownColumnHeader;
+            if (showColumnHeader) hasShownColumnHeader = true;
+
+            return (
+              <View key={group.categoryId} style={styles.groupBlock}>
+                <View style={styles.categoryHeader}>
+                  <Text style={styles.categoryHeaderText}>
+                    {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
+                  </Text>
+                </View>
+
+                <View
+                  style={styles.tableArea}
+                  onLayout={(e) => {
+                    const h = e.nativeEvent.layout.height;
+                    const key = `${requesterGroup.requestedBy}::${group.categoryId}`;
+                    setTableAreaHeights((prev) =>
+                      prev[key] === h ? prev : { ...prev, [key]: h }
+                    );
+                  }}
+                >
+                  {showColumnHeader && (
+                    <View style={styles.tableHeaderRow}>
+                      <Text style={[styles.headerCell, { width: COLS.sn }]}>S.N.</Text>
+                      <Text style={[styles.headerCell, { width: COLS.item }]}>Item Name</Text>
+                      <Text style={[styles.headerCell, { width: COLS.batch }]}>Lot/Batch No.</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.closing }]}>Closing Stock</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.req }]}>Req.Qty</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.issued }]}>Store Issued</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
+                      <Text style={[styles.headerCell, { width: COLS.date }]}>Required Date</Text>
+                      <Text style={[styles.headerCell, { width: COLS.status }]}>Status</Text>
+                    </View>
+                  )}
+
+                  {group.items.map((itemGroup, itemIndex) => {
+                    const itemGroupHeight = itemGroup.requests.reduce((sum, req) => {
+                      const allocationCount = (batchAllocationsByRequestId.get(req.id) ?? []).length;
+                      return sum + getRequestRowCount(allocationCount) * ROW_HEIGHT;
+                    }, 0);
+                    const isEvenRow = itemIndex % 2 === 1;
+
+                    return (
+                      <View
+                        key={itemGroup.itemKey}
+                        style={[styles.itemGroupRow, { minHeight: itemGroupHeight }, isEvenRow && styles.itemGroupRowAlt]}
+                      >
+                        <View style={[styles.leftStrip, { width: COLS.sn + COLS.item, minHeight: itemGroupHeight }]}>
+                          <Text style={[styles.cell, { width: COLS.sn }]}>{itemIndex + 1}</Text>
+                          <Text style={[styles.cell, styles.itemCell, { width: COLS.item }]}>{itemGroup.itemName}</Text>
+                        </View>
+
+                        <View style={styles.rightRequestRows}>
+                          {itemGroup.requests.map((req, reqIdx) => {
+                            const statusColor = STATUS_COLORS[req.status];
+                            const allocations = batchAllocationsByRequestId.get(req.id) ?? [];
+                            const rows = allocations.length > 0 ? allocations : [null];
+                            const requestBlockHeight = rows.length * ROW_HEIGHT;
+
+                            return (
+                              <View
+                                key={req.id}
+                                style={[
+                                  styles.requestBlock,
+                                  { minHeight: requestBlockHeight },
+                                  reqIdx < itemGroup.requests.length - 1 && styles.requestRowDivider,
+                                ]}
+                              >
+                                {/* Lot/Batch No. — BATCH-level */}
+                                <View style={{ width: COLS.batch }}>
+                                  {rows.map((alloc, rowIdx) => (
+                                    <View
+                                      key={alloc ? alloc.batchId : "no-batch"}
+                                      style={[styles.batchLineRow, { height: ROW_HEIGHT }, rowIdx < rows.length - 1 && styles.batchRowDivider]}
+                                    >
+                                      <Text style={styles.cell} numberOfLines={1} ellipsizeMode="tail">{alloc ? alloc.batchNo : "—"}</Text>
+                                    </View>
+                                  ))}
+                                </View>
+
+                                {/* Closing Stock — REQUEST-level, merged */}
+                                <View style={[styles.requestLevelCell, { width: COLS.closing, minHeight: requestBlockHeight }]}>
+                                  <Text style={[styles.cell, styles.centerCell]}>{req.closingStock} {req.unit}</Text>
+                                </View>
+
+                                {/* Req.Qty — REQUEST-level, merged */}
+                                <View style={[styles.requestLevelCell, { width: COLS.req, minHeight: requestBlockHeight }]}>
+                                  <Text style={[styles.cell, styles.centerCell]}>{req.orderQuantity}</Text>
+                                </View>
+
+                                {/* Store Issued — BATCH-level */}
+                                <View style={{ width: COLS.issued }}>
+                                  {rows.map((alloc, rowIdx) => (
+                                    <View
+                                      key={alloc ? alloc.batchId : "no-batch"}
+                                      style={[styles.batchLineRow, { height: ROW_HEIGHT }, rowIdx < rows.length - 1 && styles.batchRowDivider]}
+                                    >
+                                      <Text style={[styles.cell, styles.centerCell]}>
+                                        {alloc ? alloc.quantity : (req.status === "ISSUED" ? (req.issuedQuantity ?? "—") : "—")}
+                                      </Text>
+                                    </View>
+                                  ))}
+                                </View>
+
+                                {/* Unit — REQUEST-level, merged */}
+                                <View style={[styles.requestLevelCell, { width: COLS.unit, minHeight: requestBlockHeight }]}>
+                                  <Text style={[styles.cell, styles.centerCell]}>{req.unit}</Text>
+                                </View>
+
+                                {/* Required Date — REQUEST-level, merged */}
+                                <View style={[styles.requestLevelCell, { width: COLS.date, minHeight: requestBlockHeight, alignItems: "flex-start" }]}>
+                                  <Text style={styles.cell}>{req.requiredDate}</Text>
+                                </View>
+
+                                {/* Status — REQUEST-level, merged */}
+                                <View style={[styles.requestLevelCell, { width: COLS.status, minHeight: requestBlockHeight }]}>
+                                  <View style={styles.statusCellWrap}>
+                                    <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+                                    <Text style={[styles.cell, { color: statusColor, fontWeight: "700" }]}>{req.status}</Text>
+                                  </View>
+                                  {req.status === "REJECTED" && req.rejectionNote ? (
+                                    <Text style={styles.rejectionNoteText} numberOfLines={2}>{req.rejectionNote}</Text>
+                                  ) : null}
+                                </View>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      </View>
+                    );
+                  })}
+
+                  {measuredHeight > 0 && DIVIDER_X_POSITIONS.map((x) => (
+                    <View
+                      key={x}
+                      pointerEvents="none"
+                      style={{
+                        position: "absolute",
+                        left: x,
+                        top: 0,
+                        height: measuredHeight + 4,
+                        width: 1,
+                        backgroundColor: "#94a3b8",
+                      }}
+                    />
+                  ))}
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      ))}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  groupBlock: { borderWidth: 1, borderColor: "#475569", marginBottom: 0 },
-  groupHeader: {
+  requesterBlock: { marginBottom: 16, borderWidth: 1.5, borderColor: "#1e293b", borderRadius: 4, overflow: "hidden" },
+  requesterHeader: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    backgroundColor: "#1e293b", paddingVertical: 8, paddingHorizontal: 10,
+  },
+  requesterHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
+  requesterHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.3 },
+  requesterHeaderDate: { color: "#cbd5e1", fontWeight: "700", fontSize: 11 },
+  groupBlock: { borderTopWidth: 1, borderTopColor: "#475569" },
+  categoryHeader: {
     backgroundColor: "#0369a1", paddingVertical: 6, paddingHorizontal: 10,
   },
-  groupHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.3 },
-  groupHeaderDate: { color: "#dbeafe", fontWeight: "700", fontSize: 12 },
+  categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 12, letterSpacing: 0.3 },
   tableArea: { position: "relative" },
   tableHeaderRow: {
     flexDirection: "row", backgroundColor: "#fef9c3",

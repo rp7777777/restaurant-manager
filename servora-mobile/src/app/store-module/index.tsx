@@ -18,16 +18,14 @@
 //    through to KitchenRequestTable for the Lot/Batch No. column.
 // ✅ categories fetched via useCategoriesForPicker, passed to
 //    KitchenRequestTable for category-wise grouping.
-// ✅ NEW — category filter dropdown (same button+list pattern as
-//    MonthlyReportScreen.tsx's dropdown, normal document flow so it
-//    pushes content down rather than overlaying) added below the
-//    Monthly Report button — filters the daily table by category,
-//    independent of and combinable with the existing status filter.
-//    filteredDisplayRequests now applies BOTH statusFilter AND
-//    categoryFilter (status first, then category) before passing to
-//    KitchenRequestTable. StoreStats counts remain unaffected by the
-//    category filter (still whole-date totals), matching the
-//    existing status-filter-only-affects-table behavior.
+// ✅ Category filter dropdown (normal document flow, pushes content
+//    down rather than overlaying), combinable with statusFilter.
+// ✅ NEW — KitchenRequestTable now receives liveDateLabel (formatted
+//    via formatLiveDate(selectedDate), e.g. "15 Sept 2026") — always
+//    the actual formatted date, NEVER the word "Today", shown in the
+//    category header alongside "Requested: [createdAt date]" so the
+//    two genuinely different dates (when the table is showing vs.
+//    when each request was actually created) are never ambiguous.
 // ✅ Overlay: Monthly Report is a sibling of the ScrollView (not
 //    nested inside it), so its absoluteFill correctly covers the
 //    full screen viewport.
@@ -58,6 +56,15 @@ import { IssueKitchenRequestModal } from "./components/IssueKitchenRequestModal"
 import { RequestDetailModal } from "./components/RequestDetailModal";
 import { MonthlyReportScreen } from "./components/MonthlyReportScreen";
 import { shiftDate } from "./utils/store-formatters";
+
+// ✅ NEW — always a formatted date string (e.g. "15 Sept 2026"),
+// never the word "Today" — used for KitchenRequestTable's category
+// header "Live:" label.
+function formatLiveDate(dateISO: string): string {
+  const [year, month, day] = dateISO.split("-").map(Number);
+  const d = new Date(Date.UTC(year, month - 1, day));
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+}
 
 export default function StoreScreen() {
   const { theme, restaurantId, userProfile } = useApp();
@@ -231,6 +238,7 @@ export default function StoreScreen() {
               requests={filteredDisplayRequests}
               batchAllocationsByRequestId={batchAllocationsByRequestId}
               categories={categories}
+              liveDateLabel={formatLiveDate(selectedDate)}
               onRowPress={handleRowPress}
             />
           )}
