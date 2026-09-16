@@ -445,7 +445,7 @@ const styles = StyleSheet.create({
   tableArea: { position: "relative", backgroundColor: "#fff" },
   tableHeaderRow: {
     flexDirection: "row", backgroundColor: "#f1f5f9",
-    borderBottomWidth: 1.35, borderBottomColor: "#334155", paddingVertical: 3, minHeight: 20, alignItems: "center",
+    borderBottomWidth: 1.35, borderBottomColor: "#334155", paddingVertical: 1, minHeight: 16, alignItems: "center",
   },
   headerCell: { fontSize: 12, fontWeight: "800", color: "#334155", paddingHorizontal: 6 },
   centerCell: { textAlign: "center" },

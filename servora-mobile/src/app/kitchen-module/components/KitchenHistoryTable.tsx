@@ -2,21 +2,24 @@
 // SERVORA ERP — KitchenHistoryTable Component
 // ✅ UI-ONLY REDESIGN (Phase 2) — matches Store's own
 //    KitchenRequestTable.tsx professional design.
-// ✅ NEW — "View" chevron column added (matches Store's own table).
-//    Clicking it calls onRowPress(req) — the parent
-//    (RequestHistoryScreen.tsx) decides what to show: an Edit/Delete
-//    action modal for PENDING requests (Kitchen can still correct
-//    its own mistaken entry before Store has acted on it), or a
-//    read-only detail view for APPROVED/ISSUED/REJECTED (Store has
-//    already acted — no longer editable).
+// ✅ "View" chevron column — clicking it calls onRowPress(req), the
+//    parent (RequestHistoryScreen.tsx) decides what to show.
+// ✅ NEW — "Kitchen Available Total" column added between Store
+//    Issued and Unit (matches Store's own KitchenRequestTable.tsx)
+//    — calculated as closingStock + sum of all actual batch
+//    allocation quantities for that request. REQUEST-level (merged/
+//    vertically centered), same treatment as Closing Stock/Kitchen
+//    Req.Qty. If no allocations exist yet, equals closingStock alone.
+// ✅ Table header row height reduced further (minHeight 20 -> 16,
+//    paddingVertical 3 -> 1) for a more compact look.
 // 🔒 ZERO OTHER business logic changes: requestedBy -> category ->
 //    item -> request -> batch-allocation grouping, date formatting,
-//    column data, request-level vs batch-level cell merging,
-//    rejectionNote display, Store Issued allocation-only (no
-//    issuedQuantity fallback) — all unchanged. Only JSX/styles for
-//    the new column.
-// 🔒 COLUMN ORDER: S.N. / Item Name / Lot/Batch No. / Closing Stock /
-//    Kitchen Req.Qty / Store Issued / Unit / Status / View.
+//    request-level vs batch-level cell merging, rejectionNote
+//    display, Store Issued allocation-only (no issuedQuantity
+//    fallback) — all unchanged.
+// 🔒 FINAL COLUMN ORDER: S.N. / Item Name / Lot/Batch No. / Closing
+//    Stock / Kitchen Req.Qty / Store Issued / Kitchen Available
+//    Total / Unit / Status / View.
 // ✅ Column header row shown ONLY ONCE — first category block of the
 //    first requester group (unchanged).
 // FROZEN
@@ -31,8 +34,8 @@ import { Category } from "../../../modules/inventory-module/types/category";
 import { STATUS_COLORS } from "../../store-module/utils/store-formatters";
 
 const ROW_HEIGHT = 24;
-const COLS = { sn: 35, item: 180, batch: 170, closing: 85, req: 80, issued: 85, unit: 55, status: 90, chevron: 50 };
-const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.closing + COLS.req + COLS.issued + COLS.unit + COLS.status + COLS.chevron;
+const COLS = { sn: 30, item: 155, batch: 145, closing: 75, req: 65, issued: 70, available: 70, unit: 50, status: 85, chevron: 45 };
+const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.closing + COLS.req + COLS.issued + COLS.available + COLS.unit + COLS.status + COLS.chevron;
 
 const DIVIDER_X_POSITIONS = (() => {
   const positions: number[] = [];
@@ -43,6 +46,7 @@ const DIVIDER_X_POSITIONS = (() => {
   x += COLS.closing; positions.push(x);
   x += COLS.req; positions.push(x);
   x += COLS.issued; positions.push(x);
+  x += COLS.available; positions.push(x);
   x += COLS.unit; positions.push(x);
   x += COLS.status; positions.push(x);
   return positions;
@@ -221,7 +225,7 @@ export function KitchenHistoryTable({ requests, batchAllocationsByRequestId, cat
             if (showColumnHeader) hasShownColumnHeader = true;
             const accent = CATEGORY_ACCENTS[categoryAccentIndex % CATEGORY_ACCENTS.length];
             categoryAccentIndex += 1;
-            const itemCount = group.items.reduce((sum, ig) => sum + ig.requests.length, 0);
+            const itemCount = group.items.length;
 
             return (
               <View key={group.categoryId} style={styles.groupBlock}>
@@ -250,6 +254,7 @@ export function KitchenHistoryTable({ requests, batchAllocationsByRequestId, cat
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.closing }]}>Closing Stock</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.req }]}>Kitchen Req.Qty</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.issued }]}>Store Issued</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.available }]}>Kitchen Available Total</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
                       <Text style={[styles.headerCell, { width: COLS.status }]}>Status</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.chevron }]}>View</Text>
@@ -279,6 +284,7 @@ export function KitchenHistoryTable({ requests, batchAllocationsByRequestId, cat
                             const allocations = batchAllocationsByRequestId.get(req.id) ?? [];
                             const rows = allocations.length > 0 ? allocations : [null];
                             const requestBlockHeight = rows.length * ROW_HEIGHT;
+                            const availableTotal = req.closingStock + allocations.reduce((sum, a) => sum + a.quantity, 0);
 
                             return (
                               <View
@@ -319,6 +325,10 @@ export function KitchenHistoryTable({ requests, batchAllocationsByRequestId, cat
                                       </Text>
                                     </View>
                                   ))}
+                                </View>
+
+                                <View style={[styles.requestLevelCell, { width: COLS.available, minHeight: requestBlockHeight }]}>
+                                  <Text style={[styles.cell, styles.centerCell, styles.availableCellText]}>{availableTotal}</Text>
                                 </View>
 
                                 <View style={[styles.requestLevelCell, { width: COLS.unit, minHeight: requestBlockHeight }]}>
@@ -413,7 +423,7 @@ const styles = StyleSheet.create({
   tableArea: { position: "relative", backgroundColor: "#fff" },
   tableHeaderRow: {
     flexDirection: "row", backgroundColor: "#f1f5f9",
-    borderBottomWidth: 1.35, borderBottomColor: "#334155", paddingVertical: 3, minHeight: 20, alignItems: "center",
+    borderBottomWidth: 1.35, borderBottomColor: "#334155", paddingVertical: 1, minHeight: 16, alignItems: "center",
   },
   headerCell: { fontSize: 12, fontWeight: "800", color: "#334155", paddingHorizontal: 6 },
   centerCell: { textAlign: "center" },
@@ -438,6 +448,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: "#cbd5e1",
   },
   requestLevelCell: { justifyContent: "center", alignItems: "center", paddingHorizontal: 6 },
+  availableCellText: { fontWeight: "800", color: "#0f172a" },
 
   statusRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   statusDot: { width: 6, height: 6, borderRadius: 3 },
