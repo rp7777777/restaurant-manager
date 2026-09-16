@@ -3,35 +3,45 @@
 // ✅ Renders KitchenHistoryTable (category-grouped, batch-level
 //    table) for a single, already-date-filtered list of requests.
 // ✅ date navigation (selectedDate, prev/next day) owned BY
-//    KitchenScreen.tsx (lifted up via useRequestHistory) — this
-//    component receives historyRequests and selectedDate as props.
+//    KitchenScreen.tsx (lifted up via useRequestHistory).
 // ✅ status filter and category filter, both wired from
 //    KitchenScreen.tsx, applied to historyRequests before passing to
 //    KitchenHistoryTable.
 // ✅ Batch allocations for the selected date's ISSUED requests
 //    fetched via getMovementsByReference().
-// ✅ Full Screen button/state/modal REMOVED from here — moved up to
-//    KitchenScreen.tsx, placed on the same row as the category
-//    dropdown (dropdown left, button right). This component no
-//    longer needs the `today`/`allRequests` props it previously
-//    required only for that modal.
+// ✅ NEW — "View" (onRowPress) opens KitchenRequestActionModal:
+//    PENDING requests get Edit/Delete controls (calls
+//    updateKitchenRequestItem()/deleteKitchenRequest()), other
+//    statuses get a read-only detail view. restaurantId is now
+//    required here for these two service calls.
 // FROZEN
 // ============================================
 
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
+import { View, Text, ActivityIndicator, StyleSheet, Platform, Alert } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { formatSelectedDate } from "../utils/kitchen-format";
 import { IngredientRequest } from "../types/kitchen-types";
 import { Category } from "../../../modules/inventory-module/types/category";
 import { getMovementsByReference } from "../../../modules/stock-movement-module/services/stock-movement-service";
 import { BatchAllocationRecord } from "../../../modules/stock-movement-module/types/stock-movement";
+import { updateKitchenRequestItem, deleteKitchenRequest } from "../services/kitchen-request-service";
 import { KitchenHistoryTable } from "../components/KitchenHistoryTable";
+import { KitchenRequestActionModal } from "../components/KitchenRequestActionModal";
+
+const isWeb = Platform.OS === "web";
+
+function showAlert(title: string, message: string) {
+  if (isWeb) window.alert(`${title}\n\n${message}`);
+  else Alert.alert(title, message);
+}
 
 interface Theme {
   card:          string;
+  surface:       string;
   text:          string;
   textSecondary: string;
+  border:        string;
   primary:       string;
 }
 
@@ -49,6 +59,9 @@ interface RequestHistoryScreenProps {
 export default function RequestHistoryScreen({
   historyRequests, selectedDate, loading, theme, restaurantId, categories, statusFilter, categoryFilter,
 }: RequestHistoryScreenProps) {
+  const [actionTarget, setActionTarget] = useState<IngredientRequest | null>(null);
+  const [processing, setProcessing] = useState(false);
+
   const filteredRequests = useMemo(() => {
     let result = historyRequests;
     if (statusFilter) result = result.filter((r) => r.status === statusFilter);
@@ -99,6 +112,40 @@ export default function RequestHistoryScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [issuedIdsKey, restaurantId]);
 
+  const handleSave = async (updated: { itemName: string; orderQuantity: number; unit: string }) => {
+    if (!actionTarget || !restaurantId) return;
+    setProcessing(true);
+    try {
+      await updateKitchenRequestItem({
+        restaurantId,
+        requestId: actionTarget.id,
+        itemName: updated.itemName,
+        inventoryId: actionTarget.inventoryId,
+        categoryId: actionTarget.categoryId,
+        orderQuantity: updated.orderQuantity,
+        unit: updated.unit,
+      });
+      setActionTarget(null);
+    } catch (err: any) {
+      showAlert("Error", err?.message ?? "Failed to update request");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!actionTarget || !restaurantId) return;
+    setProcessing(true);
+    try {
+      await deleteKitchenRequest(restaurantId, actionTarget.id);
+      setActionTarget(null);
+    } catch (err: any) {
+      showAlert("Error", err?.message ?? "Failed to delete request");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   return (
     <View>
       <Text style={[styles.sectionTitle, { color: theme.text }]}>Request History</Text>
@@ -118,8 +165,19 @@ export default function RequestHistoryScreen({
           batchAllocationsByRequestId={batchAllocationsByRequestId}
           categories={categories}
           liveDateLabel={formatSelectedDate(selectedDate)}
+          onRowPress={setActionTarget}
         />
       )}
+
+      <KitchenRequestActionModal
+        visible={!!actionTarget}
+        request={actionTarget}
+        processing={processing}
+        theme={theme}
+        onSave={handleSave}
+        onDelete={handleDelete}
+        onClose={() => setActionTarget(null)}
+      />
     </View>
   );
 }

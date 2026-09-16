@@ -439,3 +439,74 @@ export async function issueKitchenRequest(
 
   return { movementId: movementRef.id, newCurrentStock: result.newCurrentStock };
 }
+// ── Update — PENDING only. Kitchen can correct item/qty/unit/
+//    category on its own mistaken request before Store has acted on
+//    it. Never touches inventory (no stock movement). ──
+export interface UpdateKitchenRequestItemInput {
+  restaurantId: string;
+  requestId:    string;
+  itemName:     string;
+  inventoryId?: string | null;
+  categoryId?:  string | null;
+  orderQuantity: number;
+  unit:         string;
+}
+
+export async function updateKitchenRequestItem(
+  input: UpdateKitchenRequestItemInput
+): Promise<void> {
+  const { restaurantId, requestId, itemName, inventoryId, categoryId, orderQuantity, unit } = input;
+
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
+  if (!itemName.trim()) throw new Error("Item name is required");
+  if (!Number.isFinite(orderQuantity) || orderQuantity <= 0) {
+    throw new Error("Order quantity must be a valid positive number");
+  }
+
+  const requestRef = kitchenRequestDoc(restaurantId, requestId);
+
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(requestRef);
+    if (!snap.exists()) throw new Error("Request not found");
+
+    const status = snap.data().status;
+    if (status !== "PENDING") {
+      throw new Error(`Cannot edit — request is already ${status}`);
+    }
+
+    transaction.update(requestRef, {
+      itemName: itemName.trim(),
+      inventoryId: inventoryId ?? null,
+      categoryId: categoryId ?? null,
+      orderQuantity,
+      unit,
+      updatedAt: serverTimestamp(),
+    });
+  });
+}
+
+// ── Delete — PENDING only. Kitchen can remove its own mistaken
+//    request entirely before Store has acted on it. Never touches
+//    inventory (no stock movement, request was never approved/issued). ──
+export async function deleteKitchenRequest(
+  restaurantId: string,
+  requestId: string
+): Promise<void> {
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
+
+  const requestRef = kitchenRequestDoc(restaurantId, requestId);
+
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(requestRef);
+    if (!snap.exists()) throw new Error("Request not found");
+
+    const status = snap.data().status;
+    if (status !== "PENDING") {
+      throw new Error(`Cannot delete — request is already ${status}`);
+    }
+
+    transaction.delete(requestRef);
+  });
+}

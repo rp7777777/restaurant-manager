@@ -1,23 +1,20 @@
 // ============================================
 // SERVORA ERP — KitchenHistoryFullScreenModal Component
-// ✅ UI-ONLY REDESIGN (Phase 2) — matches Store's own
-//    StoreHistoryFullScreenModal.tsx professional design exactly:
-//    white page header with light-blue icon box, centered date
-//    navigator using symmetric spacers, right-aligned category
-//    dropdown, light-blue-gray body background.
-// 🔒 ZERO business logic changes: date shift math, requiredDate
+// ✅ UI-ONLY REDESIGN — professional light-blue/white/navy SaaS ERP
+//    visual language, matching Store's own StoreHistoryFullScreenModal.
+// ✅ NEW — "View" chevron on KitchenHistoryTable now opens
+//    KitchenRequestActionModal in READ-ONLY mode (readOnly prop) —
+//    Edit/Delete are intentionally NOT offered here even for PENDING
+//    requests, since Full Screen is a separate, independently-date-
+//    navigable context from the daily Request History screen;
+//    editing/deleting from here risked acting on a stale view.
+//    Edit/Delete for PENDING requests live on the daily screen
+//    (RequestHistoryScreen.tsx) only.
+// 🔒 ZERO OTHER business logic changes: date shift math, requiredDate
 //    filtering, category filtering, batch allocation fetch
 //    (getMovementsByReference), issuedIdsKey staleness key, loading/
-//    empty states — all unchanged. Only JSX/styles.
-// ✅ Full-screen wrapper around KitchenHistoryTable: own Modal, own
-//    independent date navigator (re-synced to initialDate every time
-//    the modal opens), scrollable table body.
-// ✅ Own independent category filter dropdown — separate state from
-//    the underlying screen's own category filter, reset to "All
-//    Categories" every time the modal opens.
-// ✅ Batch allocations for the modal's OWN selectedDate's ISSUED
-//    requests fetched independently (same getMovementsByReference
-//    pattern as RequestHistoryScreen.tsx).
+//    empty states (including the setLoadingAllocations(false) fix on
+//    early-return) — all unchanged.
 // FROZEN
 // ============================================
 
@@ -29,6 +26,7 @@ import { Category } from "../../../modules/inventory-module/types/category";
 import { getMovementsByReference } from "../../../modules/stock-movement-module/services/stock-movement-service";
 import { BatchAllocationRecord } from "../../../modules/stock-movement-module/types/stock-movement";
 import { KitchenHistoryTable } from "./KitchenHistoryTable";
+import { KitchenRequestActionModal } from "./KitchenRequestActionModal";
 
 function shiftDate(dateISO: string, deltaDays: number): string {
   const [year, month, day] = dateISO.split("-").map(Number);
@@ -65,12 +63,14 @@ export function KitchenHistoryFullScreenModal({
   const [selectedDate, setSelectedDate] = useState(initialDate);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
+  const [actionTarget, setActionTarget] = useState<IngredientRequest | null>(null);
 
   useEffect(() => {
     if (!visible) return;
     setSelectedDate(initialDate);
     setCategoryFilter(null);
     setShowCategoryDropdown(false);
+    setActionTarget(null);
   }, [visible, initialDate]);
 
   const dayRequests = useMemo(
@@ -215,9 +215,21 @@ export function KitchenHistoryFullScreenModal({
               batchAllocationsByRequestId={batchAllocationsByRequestId}
               categories={categories}
               liveDateLabel={formatDateLabel(selectedDate, today)}
+              onRowPress={setActionTarget}
             />
           )}
         </ScrollView>
+
+        <KitchenRequestActionModal
+          visible={!!actionTarget}
+          request={actionTarget}
+          processing={false}
+          theme={{ surface: "#fff", text: "#1e293b", textSecondary: "#64748b", border: "#e2e8f0" }}
+          readOnly
+          onSave={() => {}}
+          onDelete={() => {}}
+          onClose={() => setActionTarget(null)}
+        />
       </View>
     </Modal>
   );

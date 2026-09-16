@@ -1,26 +1,29 @@
 // ============================================
 // SERVORA ERP — KitchenHistoryTable Component
 // ✅ UI-ONLY REDESIGN (Phase 2) — matches Store's own
-//    KitchenRequestTable.tsx final professional design exactly:
-//    light-blue requester info card, blue/green category accents,
-//    compact light table header, sharp-but-thin grid lines, flat
-//    status (dot + text, no pill/shadow), compact rows.
-// 🔒 ZERO business logic changes: requestedBy -> category -> item ->
-//    request -> batch-allocation grouping, date formatting, column
-//    data (S.N./Item Name/Lot-Batch-No/Closing Stock/Req.Qty/Store
-//    Issued/Unit/Status), request-level vs batch-level cell merging,
-//    rejectionNote display — all unchanged. Only JSX/styles.
-// 🔒 CONFIRMED COLUMN ORDER (unchanged): S.N. / Item Name / Lot/Batch
-//    No. / Closing Stock / Req.Qty / Store Issued / Unit / Status.
-//    No "Requested By" row-level column (shown at requester-header
-//    level), no "Notes"/"Required Date" columns (moved to header).
+//    KitchenRequestTable.tsx professional design.
+// ✅ NEW — "View" chevron column added (matches Store's own table).
+//    Clicking it calls onRowPress(req) — the parent
+//    (RequestHistoryScreen.tsx) decides what to show: an Edit/Delete
+//    action modal for PENDING requests (Kitchen can still correct
+//    its own mistaken entry before Store has acted on it), or a
+//    read-only detail view for APPROVED/ISSUED/REJECTED (Store has
+//    already acted — no longer editable).
+// 🔒 ZERO OTHER business logic changes: requestedBy -> category ->
+//    item -> request -> batch-allocation grouping, date formatting,
+//    column data, request-level vs batch-level cell merging,
+//    rejectionNote display, Store Issued allocation-only (no
+//    issuedQuantity fallback) — all unchanged. Only JSX/styles for
+//    the new column.
+// 🔒 COLUMN ORDER: S.N. / Item Name / Lot/Batch No. / Closing Stock /
+//    Kitchen Req.Qty / Store Issued / Unit / Status / View.
 // ✅ Column header row shown ONLY ONCE — first category block of the
 //    first requester group (unchanged).
 // FROZEN
 // ============================================
 
 import React, { useMemo, useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { IngredientRequest } from "../types/kitchen-types";
 import { BatchAllocationRecord } from "../../../modules/stock-movement-module/types/stock-movement";
@@ -28,8 +31,8 @@ import { Category } from "../../../modules/inventory-module/types/category";
 import { STATUS_COLORS } from "../../store-module/utils/store-formatters";
 
 const ROW_HEIGHT = 24;
-const COLS = { sn: 35, item: 190, batch: 180, closing: 90, req: 80, issued: 90, unit: 60, status: 95 };
-const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.closing + COLS.req + COLS.issued + COLS.unit + COLS.status;
+const COLS = { sn: 35, item: 180, batch: 170, closing: 85, req: 80, issued: 85, unit: 55, status: 90, chevron: 50 };
+const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.closing + COLS.req + COLS.issued + COLS.unit + COLS.status + COLS.chevron;
 
 const DIVIDER_X_POSITIONS = (() => {
   const positions: number[] = [];
@@ -41,6 +44,7 @@ const DIVIDER_X_POSITIONS = (() => {
   x += COLS.req; positions.push(x);
   x += COLS.issued; positions.push(x);
   x += COLS.unit; positions.push(x);
+  x += COLS.status; positions.push(x);
   return positions;
 })();
 
@@ -56,6 +60,7 @@ interface KitchenHistoryTableProps {
   batchAllocationsByRequestId:  Map<string, BatchAllocationRecord[]>;
   categories:                   Category[];
   liveDateLabel:                string;
+  onRowPress:                   (req: IngredientRequest) => void;
 }
 
 interface ItemGroup {
@@ -99,7 +104,7 @@ function getRequestRowCount(allocationCount: number): number {
   return allocationCount > 0 ? allocationCount : 1;
 }
 
-export function KitchenHistoryTable({ requests, batchAllocationsByRequestId, categories, liveDateLabel }: KitchenHistoryTableProps) {
+export function KitchenHistoryTable({ requests, batchAllocationsByRequestId, categories, liveDateLabel, onRowPress }: KitchenHistoryTableProps) {
   const [tableAreaHeights, setTableAreaHeights] = useState<Record<string, number>>({});
 
   const requesterGroups = useMemo<RequesterGroup[]>(() => {
@@ -247,6 +252,7 @@ export function KitchenHistoryTable({ requests, batchAllocationsByRequestId, cat
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.issued }]}>Store Issued</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
                       <Text style={[styles.headerCell, { width: COLS.status }]}>Status</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.chevron }]}>View</Text>
                     </View>
                   )}
 
@@ -328,6 +334,12 @@ export function KitchenHistoryTable({ requests, batchAllocationsByRequestId, cat
                                     <Text style={styles.rejectionNoteText} numberOfLines={2}>{req.rejectionNote}</Text>
                                   ) : null}
                                 </View>
+
+                                <View style={[styles.requestLevelCell, { width: COLS.chevron, minHeight: requestBlockHeight }]}>
+                                  <TouchableOpacity style={styles.viewBtn} onPress={() => onRowPress(req)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                    <MaterialIcons name="chevron-right" size={16} color="#2563eb" />
+                                  </TouchableOpacity>
+                                </View>
                               </View>
                             );
                           })}
@@ -362,13 +374,13 @@ export function KitchenHistoryTable({ requests, batchAllocationsByRequestId, cat
 
 const styles = StyleSheet.create({
   requesterBlock: {
-    marginBottom: 20, borderRadius: 10, overflow: "hidden",
+    marginBottom: 10, borderRadius: 5, overflow: "hidden",
     borderWidth: 1.5, borderColor: "#334155",
     shadowColor: "#0f172a", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4,
   },
 
   requesterCard: {
-    backgroundColor: "#eff6ff", paddingHorizontal: 14, paddingTop: 14, paddingBottom: 8, gap: 8,
+    backgroundColor: "#eff6ff", paddingHorizontal: 8, paddingTop: 3, paddingBottom: 7, gap: 5,
   },
   requesterCardRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   requesterIconCircle: {
@@ -393,7 +405,7 @@ const styles = StyleSheet.create({
   groupBlock: { borderTopWidth: 1, borderTopColor: "#94a3b8" },
   categoryHeader: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    paddingVertical: 4, paddingHorizontal: 14, minHeight: 26,
+    paddingVertical: 4, paddingHorizontal: 14, minHeight: 20,
   },
   categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.3 },
   categoryHeaderCount: { color: "rgba(255,255,255,0.85)", fontWeight: "700", fontSize: 11 },
@@ -401,7 +413,7 @@ const styles = StyleSheet.create({
   tableArea: { position: "relative", backgroundColor: "#fff" },
   tableHeaderRow: {
     flexDirection: "row", backgroundColor: "#f1f5f9",
-    borderBottomWidth: 2, borderBottomColor: "#334155", paddingVertical: 3, minHeight: 24, alignItems: "center",
+    borderBottomWidth: 1.35, borderBottomColor: "#334155", paddingVertical: 3, minHeight: 20, alignItems: "center",
   },
   headerCell: { fontSize: 12, fontWeight: "800", color: "#334155", paddingHorizontal: 6 },
   centerCell: { textAlign: "center" },
@@ -432,4 +444,8 @@ const styles = StyleSheet.create({
   statusText: { fontSize: 11, fontWeight: "600" },
 
   rejectionNoteText: { fontSize: 9, color: "#dc2626", fontWeight: "600", marginTop: 2 },
+  viewBtn: {
+    width: 26, height: 26, borderRadius: 6, backgroundColor: "#eff6ff",
+    alignItems: "center", justifyContent: "center",
+  },
 });
