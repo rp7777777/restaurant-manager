@@ -1,35 +1,36 @@
 // ============================================
 // SERVORA ERP — KitchenRequestTable Component
 // ✅ Generic onRowPress(req) callback.
-// ✅ NEW — RESTRUCTURED grouping: requestedBy -> category -> item ->
-//    individual requests -> batch allocation rows (was category ->
-//    item -> requests, with no requester-level separation). A
-//    second person requesting items now produces its OWN table
-//    block (own "Requested by" header, own category sub-headers),
-//    never merged into the first requester's categories.
-// ✅ Requester header shows: requester name (left), "Requested:
-//    [date] · Live: [date]" (right) — "Requested" = formatGroupDate
-//    of the group's first request's createdAt; "Live" = the
-//    currently-viewed day (liveDateLabel prop), always a formatted
-//    date, never the word "Today".
-// ✅ Column header row (S.N./Item Name/etc.) shown ONLY ONCE — on
-//    the very first category block of the very first requester
-//    group — not repeated per requester or per category.
-// ✅ "Item Name" merged/vertically-centered per item within a
-//    category. "Req.Qty"/"Unit"/"Required Date" are REQUEST-LEVEL
-//    (siblings of the batch-row column), NOT split per batch row —
-//    only "Lot/Batch No."/"Issued" are truly per-batch.
-// ✅ Notes/Status/Requested By remain shown once per request — the
-//    per-row "Requested By" column is UNCHANGED and kept (even
-//    though the requester is now also shown at the group-header
-//    level) since it's still useful as a quick per-row confirmation
-//    and requires no removal to satisfy this restructuring.
-// ✅ For REJECTED requests, Status cell also shows rejectionNote.
-// ✅ No gap between requester blocks or category blocks within them.
+// ✅ Grouping: requestedBy -> category -> item -> individual
+//    requests -> batch allocation rows. A second requester produces
+//    its own separate table block.
+// ✅ Requester header — entire band is standard Excel-style bright
+//    yellow (#FFFF00) background. Top line: "Requested by: [name]"
+//    (left) and the currently-viewed day (liveDateLabel, always a
+//    formatted date, no label prefix) on the SAME line, right-
+//    aligned. Below that, LEFT-aligned stacked bold lines:
+//    "Requested Date: [createdAt]", "Required Date: [requiredDate,
+//    now consistently formatted]", "Note: [note, red text]".
+// ✅ "Requested By" column REMOVED entirely from the table (already
+//    shown once at the requester-header level — was previously
+//    duplicated on every single row).
+// ✅ NEW — table width fixed at exactly 900px (COLS values tuned:
+//    sn 40 + item 250 + batch 200 + req 90 + issued 90 + unit 70 +
+//    status 100 + chevron 60 = 900).
+// ✅ Column headers renamed: "Req.Qty" -> "Kitchen Req.Qty", "Issued"
+//    -> "Store Issued" (clearer about which side each quantity
+//    represents).
+// ✅ "Notes" and "Required Date" columns removed from the table
+//    itself (shown once in the requester header instead).
+// ✅ FINAL column order: S.N. / Item Name / Lot/Batch No. / Kitchen
+//    Req.Qty / Store Issued / Unit / Status / View (chevron).
+// ✅ Column header row shown ONLY ONCE — the first category block of
+//    the first requester group.
+// ✅ "Item Name" merged/vertically-centered per item. "Kitchen
+//    Req.Qty"/"Unit" are REQUEST-LEVEL — only "Lot/Batch No."/"Store
+//    Issued" are truly per-batch.
+// ✅ Status column also shows rejectionNote for REJECTED requests.
 // ✅ Row click: ONLY the "View" chevron opens the detail/action modal.
-// ✅ Column order: S.N. / Item Name / Lot/Batch No. / Req.Qty /
-//    Issued / Unit / Required Date / Notes / Status / Requested By
-//    / View (chevron).
 // FROZEN
 // ============================================
 
@@ -42,9 +43,8 @@ import { Category } from "../../../modules/inventory-module/types/category";
 import { STATUS_COLORS } from "../utils/store-formatters";
 
 const ROW_HEIGHT = 26;
-const COLS = { sn: 30, item: 110, by: 90, batch: 170, unit: 45, req: 55, issued: 55, date: 80, note: 165, status: 95, chevron: 35 };
-const TABLE_WIDTH =
-  COLS.sn + COLS.item + COLS.batch + COLS.req + COLS.issued + COLS.unit + COLS.date + COLS.note + COLS.status + COLS.by + COLS.chevron;
+const COLS = { sn: 40, item: 250, batch: 200, req: 90, issued: 90, unit: 70, status: 100, chevron: 60 };
+const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.req + COLS.issued + COLS.unit + COLS.status + COLS.chevron;
 
 const DIVIDER_X_POSITIONS = (() => {
   const positions: number[] = [];
@@ -55,10 +55,7 @@ const DIVIDER_X_POSITIONS = (() => {
   x += COLS.req; positions.push(x);
   x += COLS.issued; positions.push(x);
   x += COLS.unit; positions.push(x);
-  x += COLS.date; positions.push(x);
-  x += COLS.note; positions.push(x);
   x += COLS.status; positions.push(x);
-  x += COLS.by; positions.push(x);
   return positions;
 })();
 
@@ -84,10 +81,11 @@ interface CategoryGroup {
   items:        ItemGroup[];
 }
 
-// ✅ NEW — top-level grouping is now by requester.
 interface RequesterGroup {
   requestedBy:   string;
   requestedDate: string;
+  requiredDate:  string;
+  note:          string;
   categories:    CategoryGroup[];
 }
 
@@ -97,6 +95,14 @@ function formatGroupDate(ts: unknown): string {
     const d = (ts as any).toDate ? (ts as any).toDate() : new Date(ts as any);
     return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
   } catch { return ""; }
+}
+
+function formatRequiredDate(dateStr: string): string {
+  if (!dateStr) return "";
+  const [year, month, day] = dateStr.split("-").map(Number);
+  if (!year || !month || !day) return dateStr;
+  const d = new Date(Date.UTC(year, month - 1, day));
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
 
 function getRequestRowCount(allocationCount: number): number {
@@ -109,7 +115,6 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
   const requesterGroups = useMemo<RequesterGroup[]>(() => {
     const categoryById = new Map(categories.map((c) => [c.id, c]));
 
-    // Step 1 — group by requestedBy.
     const byRequester = new Map<string, IngredientRequest[]>();
     for (const req of requests) {
       const key = req.requestedBy || "Unknown";
@@ -120,7 +125,6 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
 
     const result: RequesterGroup[] = [];
     for (const [requestedBy, requesterRequests] of byRequester.entries()) {
-      // Step 2 — within this requester, group by category -> item.
       const byCategory = new Map<string, Map<string, IngredientRequest[]>>();
       for (const req of requesterRequests) {
         const catKey = req.categoryId && categoryById.has(req.categoryId) ? req.categoryId : UNCATEGORIZED_ID;
@@ -150,10 +154,13 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
       }
       categoryGroups.sort((a, b) => a.categoryName.localeCompare(b.categoryName));
 
+      const firstReq = requesterRequests[0];
       result.push({
         requestedBy,
-        requestedDate: formatGroupDate(requesterRequests[0]?.createdAt),
-        categories: categoryGroups,
+        requestedDate: formatGroupDate(firstReq?.createdAt),
+        requiredDate:  formatRequiredDate(firstReq?.requiredDate ?? ""),
+        note:          firstReq?.note ?? "",
+        categories:    categoryGroups,
       });
     }
 
@@ -168,13 +175,22 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
       {requesterGroups.map((requesterGroup) => (
         <View key={requesterGroup.requestedBy} style={styles.requesterBlock}>
           <View style={styles.requesterHeader}>
-            <View style={styles.requesterHeaderLeft}>
-              <MaterialIcons name="person" size={14} color="#fff" />
-              <Text style={styles.requesterHeaderText}>Requested by: {requesterGroup.requestedBy}</Text>
+            <View style={styles.requesterHeaderTop}>
+              <View style={styles.requesterHeaderRow}>
+                <MaterialIcons name="person" size={14} color="#1e293b" />
+                <Text style={styles.requesterHeaderText}>Requested by: {requesterGroup.requestedBy}</Text>
+              </View>
+              <Text style={styles.liveDateText}>{liveDateLabel}</Text>
             </View>
-            <Text style={styles.requesterHeaderDates}>
-              {requesterGroup.requestedDate ? `Requested: ${requesterGroup.requestedDate} · ` : ""}Live: {liveDateLabel}
-            </Text>
+            {requesterGroup.requestedDate ? (
+              <Text style={styles.requesterHeaderSubText}>Requested Date: {requesterGroup.requestedDate}</Text>
+            ) : null}
+            {requesterGroup.requiredDate ? (
+              <Text style={styles.requesterHeaderSubText}>Required Date: {requesterGroup.requiredDate}</Text>
+            ) : null}
+            {requesterGroup.note ? (
+              <Text style={styles.requesterHeaderNoteText}>Note: {requesterGroup.note}</Text>
+            ) : null}
           </View>
 
           {requesterGroup.categories.map((group) => {
@@ -205,13 +221,10 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                       <Text style={[styles.headerCell, { width: COLS.sn }]}>S.N.</Text>
                       <Text style={[styles.headerCell, { width: COLS.item }]}>Item Name</Text>
                       <Text style={[styles.headerCell, { width: COLS.batch }]}>Lot/Batch No.</Text>
-                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.req }]}>Req.Qty</Text>
-                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.issued }]}>Issued</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.req }]}>Kitchen Req.Qty</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.issued }]}>Store Issued</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
-                      <Text style={[styles.headerCell, { width: COLS.date }]}>Required Date</Text>
-                      <Text style={[styles.headerCell, { width: COLS.note }]}>Notes</Text>
                       <Text style={[styles.headerCell, { width: COLS.status }]}>Status</Text>
-                      <Text style={[styles.headerCell, { width: COLS.by }]}>Requested By</Text>
                       <Text style={[styles.headerCell, { width: COLS.chevron }]}>View</Text>
                     </View>
                   )}
@@ -293,14 +306,6 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                                   <Text style={[styles.cell, styles.centerCell]}>{req.unit}</Text>
                                 </View>
 
-                                <View style={[styles.requestLevelCell, { width: COLS.date, minHeight: requestBlockHeight, alignItems: "flex-start" }]}>
-                                  <Text style={styles.cell}>{req.requiredDate}</Text>
-                                </View>
-
-                                <View style={[styles.requestLevelCell, { width: COLS.note, minHeight: requestBlockHeight, alignItems: "flex-start" }]}>
-                                  <Text style={styles.cell}>{req.note || "—"}</Text>
-                                </View>
-
                                 <View style={[styles.requestLevelCell, { width: COLS.status, minHeight: requestBlockHeight }]}>
                                   <View style={styles.statusCellWrap}>
                                     <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
@@ -309,10 +314,6 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                                   {req.status === "REJECTED" && req.rejectionNote ? (
                                     <Text style={styles.rejectionNoteText} numberOfLines={2}>{req.rejectionNote}</Text>
                                   ) : null}
-                                </View>
-
-                                <View style={[styles.requestLevelCell, { width: COLS.by, minHeight: requestBlockHeight, alignItems: "flex-start" }]}>
-                                  <Text style={styles.cell}>{req.requestedBy || "—"}</Text>
                                 </View>
 
                                 <View style={[styles.requestLevelCell, { width: COLS.chevron, minHeight: requestBlockHeight }]}>
@@ -355,15 +356,18 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
 const styles = StyleSheet.create({
   requesterBlock: { marginBottom: 16, borderWidth: 1.5, borderColor: "#1e293b", borderRadius: 4, overflow: "hidden" },
   requesterHeader: {
+    backgroundColor: "#FFFF00", paddingVertical: 8, paddingHorizontal: 10, gap: 2,
+  },
+  requesterHeaderTop: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    backgroundColor: "#1e293b", paddingVertical: 8, paddingHorizontal: 10,
+    marginBottom: 2,
   },
-  requesterHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
-  requesterHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.3 },
-  requesterHeaderDates: { color: "#cbd5e1", fontWeight: "700", fontSize: 11 },
-  groupBlock: {
-    borderTopWidth: 1, borderTopColor: "#475569",
-  },
+  requesterHeaderRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  requesterHeaderText: { color: "#1e293b", fontWeight: "700", fontSize: 13, letterSpacing: 0.3 },
+  requesterHeaderSubText: { color: "#1e293b", fontWeight: "700", fontSize: 11 },
+  requesterHeaderNoteText: { color: "#FF0000", fontWeight: "700", fontSize: 11 },
+  liveDateText: { color: "#1e293b", fontWeight: "800", fontSize: 12 },
+  groupBlock: { borderTopWidth: 1, borderTopColor: "#475569" },
   categoryHeader: {
     backgroundColor: "#0369a1", paddingVertical: 6, paddingHorizontal: 10,
   },
