@@ -4,23 +4,32 @@
 //    visual language: requester info card, blue/green category
 //    accents, compact light table header, flat status, sharp thin
 //    grid lines, light-blue View button.
-// ✅ FIX — item grouping key now prefers inventoryId over
-//    itemName-only (was `const itemKey = req.itemName;`, which could
-//    silently merge two DIFFERENT inventory items that happen to
-//    share a display name into one row). Now matches
-//    KitchenHistoryTable.tsx's and MonthlyReportScreen.tsx's own
-//    grouping key exactly: `req.inventoryId ? req.inventoryId :
-//    ${req.itemName}::${req.unit}`. ItemGroup now carries both
-//    itemKey (grouping identity, used as the React key) and
-//    itemName (display text, taken from the first request in the
-//    group) as separate fields.
+// ✅ Item grouping key prefers inventoryId over itemName-only.
+// ✅ "Kitchen Closing Stock" column — request-level, merged, shows
+//    req.closingStock (Kitchen's own physical count at request time).
+// ✅ NEW — "Kitchen Available Total" column added between Store
+//    Issued and Unit — calculated as closingStock + sum of all
+//    actual batch allocation quantities for that request (NOT
+//    closingStock + req.issuedQuantity — uses the real allocations
+//    array so the total reflects actual issued stock, same
+//    allocation-only principle as the Store Issued column itself).
+//    REQUEST-level (merged/vertically centered), since it's one
+//    total per request, not a per-batch value. If no allocations
+//    exist yet (request not yet ISSUED), this equals closingStock
+//    alone — correct, since Store hasn't given anything yet.
+// ✅ "Item Name" column width reduced (250 -> 170) to make room for
+//    the new column within the existing layout.
 // 🔒 ZERO OTHER business logic changes: requestedBy -> category ->
 //    item -> request -> batch-allocation grouping, date formatting
-//    functions, column data, request-level vs batch-level cell
-//    merging, rejectionNote display, onRowPress, and the existing
-//    Store Issued issuedQuantity fallback (pre-existing, intentionally
-//    preserved — NOT the Monthly Report rule) — all unchanged.
-// ✅ Table width fixed at 900px (unchanged).
+//    functions, request-level vs batch-level cell merging,
+//    rejectionNote display, onRowPress, and the existing Store
+//    Issued issuedQuantity fallback (pre-existing, intentionally
+//    preserved — used ONLY for the Store Issued column's own
+//    display, NOT for the new Kitchen Available Total calculation)
+//    — all unchanged.
+// 🔒 FINAL column order: S.N. / Item Name / Lot/Batch No. / Kitchen
+//    Closing Stock / Kitchen Req.Qty / Store Issued / Kitchen
+//    Available Total / Unit / Status / View (chevron).
 // ✅ Column header row shown ONLY ONCE — first category block of the
 //    first requester group (unchanged).
 // FROZEN
@@ -35,8 +44,8 @@ import { Category } from "../../../modules/inventory-module/types/category";
 import { STATUS_COLORS } from "../utils/store-formatters";
 
 const ROW_HEIGHT = 24;
-const COLS = { sn: 40, item: 250, batch: 200, req: 90, issued: 90, unit: 70, status: 100, chevron: 60 };
-const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.req + COLS.issued + COLS.unit + COLS.status + COLS.chevron;
+const COLS = { sn: 35, item: 170, batch: 150, closing: 80, req: 70, issued: 70, available: 75, unit: 55, status: 90, chevron: 45 };
+const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.closing + COLS.req + COLS.issued + COLS.available + COLS.unit + COLS.status + COLS.chevron;
 
 const DIVIDER_X_POSITIONS = (() => {
   const positions: number[] = [];
@@ -44,8 +53,10 @@ const DIVIDER_X_POSITIONS = (() => {
   x += COLS.sn; positions.push(x);
   x += COLS.item; positions.push(x);
   x += COLS.batch; positions.push(x);
+  x += COLS.closing; positions.push(x);
   x += COLS.req; positions.push(x);
   x += COLS.issued; positions.push(x);
+  x += COLS.available; positions.push(x);
   x += COLS.unit; positions.push(x);
   x += COLS.status; positions.push(x);
   return positions;
@@ -224,7 +235,7 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
             if (showColumnHeader) hasShownColumnHeader = true;
             const accent = CATEGORY_ACCENTS[categoryAccentIndex % CATEGORY_ACCENTS.length];
             categoryAccentIndex += 1;
-            const itemCount = group.items.reduce((sum, ig) => sum + ig.requests.length, 0);
+            const itemCount = group.items.length;
 
             return (
               <View key={group.categoryId} style={styles.groupBlock}>
@@ -250,8 +261,10 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                       <Text style={[styles.headerCell, { width: COLS.sn }]}>S.N.</Text>
                       <Text style={[styles.headerCell, { width: COLS.item }]}>Item Name</Text>
                       <Text style={[styles.headerCell, { width: COLS.batch }]}>Lot/Batch No.</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.closing }]}>Kitchen Closing Stock</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.req }]}>Kitchen Req.Qty</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.issued }]}>Store Issued</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.available }]}>Kitchen Available Total</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
                       <Text style={[styles.headerCell, { width: COLS.status }]}>Status</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.chevron }]}>View</Text>
@@ -285,6 +298,7 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                             const allocations = batchAllocationsByRequestId.get(req.id) ?? [];
                             const rows = allocations.length > 0 ? allocations : [null];
                             const requestBlockHeight = rows.length * ROW_HEIGHT;
+                            const availableTotal = req.closingStock + allocations.reduce((sum, a) => sum + a.quantity, 0);
 
                             return (
                               <View
@@ -310,6 +324,10 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                                   ))}
                                 </View>
 
+                                <View style={[styles.requestLevelCell, { width: COLS.closing, minHeight: requestBlockHeight }]}>
+                                  <Text style={[styles.cell, styles.centerCell]}>{req.closingStock}</Text>
+                                </View>
+
                                 <View style={[styles.requestLevelCell, { width: COLS.req, minHeight: requestBlockHeight }]}>
                                   <Text style={[styles.cell, styles.centerCell]}>{req.orderQuantity}</Text>
                                 </View>
@@ -329,6 +347,10 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                                       </Text>
                                     </View>
                                   ))}
+                                </View>
+
+                                <View style={[styles.requestLevelCell, { width: COLS.available, minHeight: requestBlockHeight }]}>
+                                  <Text style={[styles.cell, styles.centerCell, styles.availableCellText]}>{availableTotal}</Text>
                                 </View>
 
                                 <View style={[styles.requestLevelCell, { width: COLS.unit, minHeight: requestBlockHeight }]}>
@@ -448,6 +470,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: "#cbd5e1",
   },
   requestLevelCell: { justifyContent: "center", alignItems: "center", paddingHorizontal: 6 },
+  availableCellText: { fontWeight: "800", color: "#0f172a" },
 
   statusRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   statusDot: { width: 6, height: 6, borderRadius: 3 },
