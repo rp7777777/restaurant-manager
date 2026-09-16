@@ -1,36 +1,31 @@
 // ============================================
 // SERVORA ERP — KitchenRequestTable Component
-// ✅ Generic onRowPress(req) callback.
-// ✅ Grouping: requestedBy -> category -> item -> individual
-//    requests -> batch allocation rows. A second requester produces
-//    its own separate table block.
-// ✅ Requester header — entire band is standard Excel-style bright
-//    yellow (#FFFF00) background. Top line: "Requested by: [name]"
-//    (left) and the currently-viewed day (liveDateLabel, always a
-//    formatted date, no label prefix) on the SAME line, right-
-//    aligned. Below that, LEFT-aligned stacked bold lines:
-//    "Requested Date: [createdAt]", "Required Date: [requiredDate,
-//    now consistently formatted]", "Note: [note, red text]".
-// ✅ "Requested By" column REMOVED entirely from the table (already
-//    shown once at the requester-header level — was previously
-//    duplicated on every single row).
-// ✅ NEW — table width fixed at exactly 900px (COLS values tuned:
-//    sn 40 + item 250 + batch 200 + req 90 + issued 90 + unit 70 +
-//    status 100 + chevron 60 = 900).
-// ✅ Column headers renamed: "Req.Qty" -> "Kitchen Req.Qty", "Issued"
-//    -> "Store Issued" (clearer about which side each quantity
-//    represents).
-// ✅ "Notes" and "Required Date" columns removed from the table
-//    itself (shown once in the requester header instead).
-// ✅ FINAL column order: S.N. / Item Name / Lot/Batch No. / Kitchen
-//    Req.Qty / Store Issued / Unit / Status / View (chevron).
-// ✅ Column header row shown ONLY ONCE — the first category block of
-//    the first requester group.
-// ✅ "Item Name" merged/vertically-centered per item. "Kitchen
-//    Req.Qty"/"Unit" are REQUEST-LEVEL — only "Lot/Batch No."/"Store
-//    Issued" are truly per-batch.
-// ✅ Status column also shows rejectionNote for REJECTED requests.
-// ✅ Row click: ONLY the "View" chevron opens the detail/action modal.
+// ✅ UI-ONLY REDESIGN — professional light-blue/white/navy SaaS ERP
+//    visual language (screenshot-matched):
+//    - Requester header: light-blue info card — navy headings, dark
+//      navy values, small blue icons, date badge on the right.
+//    - Category headers: alternating blue/green accent (by index,
+//      purely a visual cycle, NOT tied to status/data), white bold
+//      title, item count on the right, compact height (30px).
+//    - Table header: light blue-gray background, navy bold text,
+//      thin subtle borders.
+//    - Rows: white/very-light-gray alternating, thin light borders.
+//    - Status: FLAT — small colored dot + plain text, NO pill/
+//      background/border/shadow/elevation of any kind (removed
+//      entirely per explicit request — was a rounded pill background
+//      that rendered with an unwanted glow/shadow-like artifact).
+//    - View button: small rounded light-blue button with a blue
+//      chevron.
+// 🔒 ZERO business logic changes: requestedBy -> category -> item ->
+//    request -> batch-allocation grouping, date formatting functions,
+//    column data, request-level vs batch-level cell merging,
+//    rejectionNote display, onRowPress, and the existing Store
+//    Issued issuedQuantity fallback (pre-existing behavior,
+//    intentionally preserved, NOT the Monthly Report rule) — all
+//    unchanged. Only JSX/styles for presentation.
+// ✅ Table width fixed at 900px (unchanged).
+// ✅ Column header row shown ONLY ONCE — first category block of the
+//    first requester group (unchanged).
 // FROZEN
 // ============================================
 
@@ -42,7 +37,7 @@ import { BatchAllocationRecord } from "../../../modules/stock-movement-module/ty
 import { Category } from "../../../modules/inventory-module/types/category";
 import { STATUS_COLORS } from "../utils/store-formatters";
 
-const ROW_HEIGHT = 26;
+const ROW_HEIGHT = 28;
 const COLS = { sn: 40, item: 250, batch: 200, req: 90, issued: 90, unit: 70, status: 100, chevron: 60 };
 const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.req + COLS.issued + COLS.unit + COLS.status + COLS.chevron;
 
@@ -58,6 +53,11 @@ const DIVIDER_X_POSITIONS = (() => {
   x += COLS.status; positions.push(x);
   return positions;
 })();
+
+const CATEGORY_ACCENTS = [
+  { bg: "#2563eb", bgLight: "#eff6ff" },
+  { bg: "#059669", bgLight: "#ecfdf5" },
+];
 
 const UNCATEGORIZED_ID = "__uncategorized__";
 
@@ -169,41 +169,72 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
   }, [requests, categories]);
 
   let hasShownColumnHeader = false;
+  let categoryAccentIndex = 0;
 
   return (
     <View style={{ width: TABLE_WIDTH }}>
       {requesterGroups.map((requesterGroup) => (
         <View key={requesterGroup.requestedBy} style={styles.requesterBlock}>
-          <View style={styles.requesterHeader}>
-            <View style={styles.requesterHeaderTop}>
-              <View style={styles.requesterHeaderRow}>
-                <MaterialIcons name="person" size={14} color="#1e293b" />
-                <Text style={styles.requesterHeaderText}>Requested by: {requesterGroup.requestedBy}</Text>
+          <View style={styles.requesterCard}>
+            <View style={styles.requesterCardRow}>
+              <View style={styles.requesterIconCircle}>
+                <MaterialIcons name="person" size={16} color="#fff" />
               </View>
-              <Text style={styles.liveDateText}>{liveDateLabel}</Text>
+              <Text style={styles.requesterName}>
+                Requested by: <Text style={styles.requesterNameBold}>{requesterGroup.requestedBy}</Text>
+              </Text>
+              <View style={styles.spacer} />
+              <View style={styles.liveDateBadge}>
+                <MaterialIcons name="event" size={13} color="#1e3a8a" />
+                <Text style={styles.liveDateBadgeText}>{liveDateLabel}</Text>
+              </View>
             </View>
-            {requesterGroup.requestedDate ? (
-              <Text style={styles.requesterHeaderSubText}>Requested Date: {requesterGroup.requestedDate}</Text>
-            ) : null}
-            {requesterGroup.requiredDate ? (
-              <Text style={styles.requesterHeaderSubText}>Required Date: {requesterGroup.requiredDate}</Text>
-            ) : null}
-            {requesterGroup.note ? (
-              <Text style={styles.requesterHeaderNoteText}>Note: {requesterGroup.note}</Text>
-            ) : null}
+            <View style={styles.requesterMetaRow}>
+              {requesterGroup.requestedDate ? (
+                <View style={styles.requesterMetaItem}>
+                  <MaterialIcons name="event" size={13} color="#2563eb" />
+                  <View>
+                    <Text style={styles.requesterMetaLabel}>Requested Date:</Text>
+                    <Text style={styles.requesterMetaValue}>{requesterGroup.requestedDate}</Text>
+                  </View>
+                </View>
+              ) : null}
+              {requesterGroup.requiredDate ? (
+                <View style={styles.requesterMetaItem}>
+                  <MaterialIcons name="event" size={13} color="#2563eb" />
+                  <View>
+                    <Text style={styles.requesterMetaLabel}>Required Date:</Text>
+                    <Text style={styles.requesterMetaValue}>{requesterGroup.requiredDate}</Text>
+                  </View>
+                </View>
+              ) : null}
+              {requesterGroup.note ? (
+                <View style={styles.requesterMetaItem}>
+                  <MaterialIcons name="description" size={13} color="#2563eb" />
+                  <View>
+                    <Text style={styles.requesterMetaLabel}>Note:</Text>
+                    <Text style={styles.requesterMetaValue}>{requesterGroup.note}</Text>
+                  </View>
+                </View>
+              ) : null}
+            </View>
           </View>
 
           {requesterGroup.categories.map((group) => {
             const measuredHeight = tableAreaHeights[`${requesterGroup.requestedBy}::${group.categoryId}`] ?? 0;
             const showColumnHeader = !hasShownColumnHeader;
             if (showColumnHeader) hasShownColumnHeader = true;
+            const accent = CATEGORY_ACCENTS[categoryAccentIndex % CATEGORY_ACCENTS.length];
+            categoryAccentIndex += 1;
+            const itemCount = group.items.reduce((sum, ig) => sum + ig.requests.length, 0);
 
             return (
               <View key={group.categoryId} style={styles.groupBlock}>
-                <View style={styles.categoryHeader}>
+                <View style={[styles.categoryHeader, { backgroundColor: accent.bg }]}>
                   <Text style={styles.categoryHeaderText}>
                     {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
                   </Text>
+                  <Text style={styles.categoryHeaderCount}>{itemCount} item{itemCount === 1 ? "" : "s"}</Text>
                 </View>
 
                 <View
@@ -225,7 +256,7 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.issued }]}>Store Issued</Text>
                       <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
                       <Text style={[styles.headerCell, { width: COLS.status }]}>Status</Text>
-                      <Text style={[styles.headerCell, { width: COLS.chevron }]}>View</Text>
+                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.chevron }]}>View</Text>
                     </View>
                   )}
 
@@ -306,10 +337,12 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                                   <Text style={[styles.cell, styles.centerCell]}>{req.unit}</Text>
                                 </View>
 
-                                <View style={[styles.requestLevelCell, { width: COLS.status, minHeight: requestBlockHeight }]}>
-                                  <View style={styles.statusCellWrap}>
+                                {/* ✅ FLAT status — dot + plain text only, no pill,
+                                    no background, no shadow/elevation. */}
+                                <View style={[styles.requestLevelCell, { width: COLS.status, minHeight: requestBlockHeight, alignItems: "flex-start" }]}>
+                                  <View style={styles.statusRow}>
                                     <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-                                    <Text style={[styles.cell, { color: statusColor, fontWeight: "700" }]}>{req.status}</Text>
+                                    <Text style={[styles.statusText, { color: statusColor }]}>{req.status}</Text>
                                   </View>
                                   {req.status === "REJECTED" && req.rejectionNote ? (
                                     <Text style={styles.rejectionNoteText} numberOfLines={2}>{req.rejectionNote}</Text>
@@ -317,8 +350,8 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                                 </View>
 
                                 <View style={[styles.requestLevelCell, { width: COLS.chevron, minHeight: requestBlockHeight }]}>
-                                  <TouchableOpacity onPress={() => onRowPress(req)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                                    <MaterialIcons name="chevron-right" size={16} color="#dc2626" />
+                                  <TouchableOpacity style={styles.viewBtn} onPress={() => onRowPress(req)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                    <MaterialIcons name="chevron-right" size={16} color="#2563eb" />
                                   </TouchableOpacity>
                                 </View>
                               </View>
@@ -339,7 +372,7 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                         top: 0,
                         height: measuredHeight + 4,
                         width: 1,
-                        backgroundColor: "#94a3b8",
+                        backgroundColor: "#e2e8f0",
                       }}
                     />
                   ))}
@@ -354,53 +387,78 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
 }
 
 const styles = StyleSheet.create({
-  requesterBlock: { marginBottom: 16, borderWidth: 1.5, borderColor: "#1e293b", borderRadius: 4, overflow: "hidden" },
-  requesterHeader: {
-    backgroundColor: "#FFFF00", paddingVertical: 8, paddingHorizontal: 10, gap: 2,
+  requesterBlock: {
+    marginBottom: 20, borderRadius: 10, overflow: "hidden",
+    borderWidth: 1, borderColor: "#e2e8f0",
+    shadowColor: "#0f172a", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4,
   },
-  requesterHeaderTop: {
-    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    marginBottom: 2,
+
+  requesterCard: {
+    backgroundColor: "#eff6ff", padding: 14, gap: 10,
   },
-  requesterHeaderRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  requesterHeaderText: { color: "#1e293b", fontWeight: "700", fontSize: 13, letterSpacing: 0.3 },
-  requesterHeaderSubText: { color: "#1e293b", fontWeight: "700", fontSize: 11 },
-  requesterHeaderNoteText: { color: "#FF0000", fontWeight: "700", fontSize: 11 },
-  liveDateText: { color: "#1e293b", fontWeight: "800", fontSize: 12 },
-  groupBlock: { borderTopWidth: 1, borderTopColor: "#475569" },
+  requesterCardRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  requesterIconCircle: {
+    width: 32, height: 32, borderRadius: 16, backgroundColor: "#2563eb",
+    alignItems: "center", justifyContent: "center",
+  },
+  requesterName: { fontSize: 14, color: "#1e293b", fontWeight: "600" },
+  requesterNameBold: { fontWeight: "800", color: "#0f172a" },
+  spacer: { flex: 1 },
+  liveDateBadge: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: "#bfdbfe", borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6,
+  },
+  liveDateBadgeText: { fontSize: 12, fontWeight: "800", color: "#1e3a8a" },
+  requesterMetaRow: { flexDirection: "row", flexWrap: "wrap", gap: 20 },
+  requesterMetaItem: { flexDirection: "row", alignItems: "center", gap: 6 },
+  requesterMetaLabel: { fontSize: 10, color: "#64748b", fontWeight: "600" },
+  requesterMetaValue: { fontSize: 12, color: "#0f172a", fontWeight: "800" },
+
+  groupBlock: { borderTopWidth: 1, borderTopColor: "#e2e8f0" },
   categoryHeader: {
-    backgroundColor: "#0369a1", paddingVertical: 6, paddingHorizontal: 10,
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    paddingVertical: 5, paddingHorizontal: 14, minHeight: 30,
   },
-  categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 12, letterSpacing: 0.3 },
-  tableArea: { position: "relative" },
+  categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.3 },
+  categoryHeaderCount: { color: "rgba(255,255,255,0.85)", fontWeight: "700", fontSize: 11 },
+
+  tableArea: { position: "relative", backgroundColor: "#fff" },
   tableHeaderRow: {
-    flexDirection: "row", backgroundColor: "#fef9c3",
-    borderBottomWidth: 2, borderBottomColor: "#1e293b", paddingVertical: 2,
+    flexDirection: "row", backgroundColor: "#f1f5f9",
+    borderBottomWidth: 1, borderBottomColor: "#e2e8f0", paddingVertical: 10,
   },
-  headerCell: { fontSize: 12, fontWeight: "800", color: "#1e293b", paddingHorizontal: 3 },
+  headerCell: { fontSize: 12, fontWeight: "800", color: "#334155", paddingHorizontal: 6 },
   centerCell: { textAlign: "center" },
   itemGroupRow: {
     flexDirection: "row",
-    borderBottomWidth: 1.5, borderBottomColor: "#475569",
+    borderBottomWidth: 1, borderBottomColor: "#f1f5f9",
   },
   itemGroupRowAlt: { backgroundColor: "#f8fafc" },
   leftStrip: {
     flexDirection: "row", alignItems: "center",
-    paddingVertical: 4,
+    paddingVertical: 6,
   },
-  cell: { fontSize: 11, color: "#334155", paddingHorizontal: 3 },
+  cell: { fontSize: 12, color: "#334155", paddingHorizontal: 6 },
   itemCell: { fontWeight: "700", color: "#0f172a" },
   rightRequestRows: { flex: 1 },
   requestBlock: { flexDirection: "row" },
   requestRowDivider: {
-    borderBottomWidth: 1.5, borderBottomColor: "#475569",
+    borderBottomWidth: 1, borderBottomColor: "#f1f5f9",
   },
-  batchLineRow: { justifyContent: "center", paddingHorizontal: 3, paddingVertical: 2 },
+  batchLineRow: { justifyContent: "center", paddingHorizontal: 6, paddingVertical: 2 },
   batchRowDivider: {
-    borderBottomWidth: 1, borderBottomColor: "#94a3b8",
+    borderBottomWidth: 1, borderBottomColor: "#f8fafc",
   },
-  requestLevelCell: { justifyContent: "center", alignItems: "center", paddingHorizontal: 3 },
-  statusCellWrap: { flexDirection: "row", alignItems: "center", gap: 3 },
+  requestLevelCell: { justifyContent: "center", alignItems: "center", paddingHorizontal: 6 },
+
+  // ✅ FLAT status — no pill/background/border/shadow/elevation.
+  statusRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   statusDot: { width: 6, height: 6, borderRadius: 3 },
-  rejectionNoteText: { fontSize: 9, color: "#dc2626", fontWeight: "600", marginTop: 2, textAlign: "center" },
+  statusText: { fontSize: 11, fontWeight: "600" },
+
+  rejectionNoteText: { fontSize: 9, color: "#dc2626", fontWeight: "600", marginTop: 2 },
+  viewBtn: {
+    width: 26, height: 26, borderRadius: 6, backgroundColor: "#eff6ff",
+    alignItems: "center", justifyContent: "center",
+  },
 });

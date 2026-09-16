@@ -6,22 +6,19 @@
 //    compact horizontal row (icon+value+label), height 30px,
 //    Total/Pending/Approved/Issued/Rejected, day-scoped
 //    (selectedDate, not restaurant-wide totals).
-// ✅ selectedDate/day-navigation (useRequestHistory) owned HERE
-//    (lifted up from RequestHistoryScreen) so stat cards and the
-//    table share the same date state. Date navigator shows ONLY
-//    "Today" for the current date, or ONLY the formatted date for
-//    other days (not both together).
-// ✅ NEW — Monthly Report REUSES store-module's own
-//    MonthlyReportScreen component wholesale (same summary cards,
-//    category dropdown, live date range, batch-level rows, item/
-//    request-level totals) — no new component built. Kitchen and
-//    Store both report on the exact same underlying `requests`
-//    (IngredientRequest) collection, just from their own screen's
-//    entry point. Overlay is a sibling of the ScrollView (Fragment
-//    wrapper), NOT nested inside it — matching Store's own fix for
-//    the overlay-height-clipped-by-parent-ScrollView issue.
-// ✅ Stat cards + category dropdown + Monthly Report button all
-//    hidden while the New Request form is open.
+// ✅ NEW — Layout order now matches Store's own screen order
+//    exactly: Stat Cards -> Category Row (dropdown + Full Screen
+//    button) -> Date Navigator -> Table. Date Navigator was
+//    previously ABOVE stat cards; it's now directly above the table,
+//    right before Request History, same as StoreDateNavigator sits
+//    right before KitchenRequestTable in index.tsx.
+// ✅ Monthly Report REUSES store-module's own MonthlyReportScreen
+//    component wholesale.
+// ✅ "Full Screen" button lives on the same row as the category
+//    dropdown (dropdown left, button right), opening
+//    KitchenHistoryFullScreenModal.
+// ✅ Stat cards + category row + date navigator + Monthly Report
+//    button all hidden while the New Request form is open.
 // FROZEN
 // ============================================
 
@@ -39,6 +36,7 @@ import { useCategoriesForPicker } from "../../../modules/inventory-module/hooks/
 import { IngredientRequest } from "../types/kitchen-types";
 import { formatSelectedDate } from "../utils/kitchen-format";
 import { MonthlyReportScreen } from "../../store-module/components/MonthlyReportScreen";
+import { KitchenHistoryFullScreenModal } from "../components/KitchenHistoryFullScreenModal";
 import NewRequestScreen from "./NewRequestScreen";
 import RequestHistoryScreen from "./RequestHistoryScreen";
 import { todayISO } from "../../../utils/date-utils";
@@ -53,6 +51,7 @@ export default function KitchenScreen() {
 
   const [showForm, setShowForm] = useState(false);
   const [showMonthlyReport, setShowMonthlyReport] = useState(false);
+  const [showFullScreen, setShowFullScreen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(null);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
@@ -111,19 +110,6 @@ export default function KitchenScreen() {
         <View style={styles.body}>
           {!showForm && (
             <>
-              {/* Date Navigator */}
-              <View style={[styles.dateNav, { backgroundColor: theme.card }]}>
-                <TouchableOpacity onPress={goToPrevDay} style={styles.dateNavArrow}>
-                  <MaterialIcons name="chevron-left" size={20} color={theme.text} />
-                </TouchableOpacity>
-                <Text style={[styles.dateNavLabel, { color: theme.text }]}>
-                  {isToday ? "Today" : formatSelectedDate(selectedDate)}
-                </Text>
-                <TouchableOpacity onPress={goToNextDay} style={styles.dateNavArrow}>
-                  <MaterialIcons name="chevron-right" size={20} color={theme.text} />
-                </TouchableOpacity>
-              </View>
-
               {/* Stat cards — compact, matching StoreStats.tsx exactly */}
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statsRow}>
                 <TouchableOpacity
@@ -168,26 +154,47 @@ export default function KitchenScreen() {
                 </TouchableOpacity>
               </ScrollView>
 
-              {categories.length > 0 && (
-                <View style={styles.categoryDropdownWrap}>
-                  <TouchableOpacity style={styles.categoryDropdownButton} onPress={() => setShowCategoryDropdown((v) => !v)}>
-                    <Text style={styles.categoryDropdownButtonText}>{selectedCategoryName}</Text>
-                    <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={20} color="#059669" />
-                  </TouchableOpacity>
-                  {showCategoryDropdown && (
-                    <ScrollView style={styles.categoryDropdownList} nestedScrollEnabled>
-                      <TouchableOpacity style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(null); setShowCategoryDropdown(false); }}>
-                        <Text style={styles.categoryDropdownItemText}>All Categories</Text>
-                      </TouchableOpacity>
-                      {categories.map((cat) => (
-                        <TouchableOpacity key={cat.id} style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(cat.id); setShowCategoryDropdown(false); }}>
-                          <Text style={styles.categoryDropdownItemText}>{cat.icon} {cat.name}</Text>
+              {/* category dropdown + Full Screen button, same row */}
+              <View style={styles.categoryRow}>
+                {categories.length > 0 && (
+                  <View style={styles.categoryDropdownWrap}>
+                    <TouchableOpacity style={styles.categoryDropdownButton} onPress={() => setShowCategoryDropdown((v) => !v)}>
+                      <Text style={styles.categoryDropdownButtonText}>{selectedCategoryName}</Text>
+                      <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={20} color="#059669" />
+                    </TouchableOpacity>
+                    {showCategoryDropdown && (
+                      <ScrollView style={styles.categoryDropdownList} nestedScrollEnabled>
+                        <TouchableOpacity style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(null); setShowCategoryDropdown(false); }}>
+                          <Text style={styles.categoryDropdownItemText}>All Categories</Text>
                         </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-                  )}
-                </View>
-              )}
+                        {categories.map((cat) => (
+                          <TouchableOpacity key={cat.id} style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(cat.id); setShowCategoryDropdown(false); }}>
+                            <Text style={styles.categoryDropdownItemText}>{cat.icon} {cat.name}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    )}
+                  </View>
+                )}
+                <TouchableOpacity style={styles.fullScreenBtn} onPress={() => setShowFullScreen(true)}>
+                  <MaterialIcons name="fullscreen" size={16} color="#0369a1" />
+                  <Text style={styles.fullScreenBtnText}>Full Screen</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* ✅ MOVED — Date Navigator now right before the table
+                  (matches Store's own StoreDateNavigator position). */}
+              <View style={[styles.dateNav, { backgroundColor: theme.card }]}>
+                <TouchableOpacity onPress={goToPrevDay} style={styles.dateNavArrow}>
+                  <MaterialIcons name="chevron-left" size={20} color={theme.text} />
+                </TouchableOpacity>
+                <Text style={[styles.dateNavLabel, { color: theme.text }]}>
+                  {isToday ? "Today" : formatSelectedDate(selectedDate)}
+                </Text>
+                <TouchableOpacity onPress={goToNextDay} style={styles.dateNavArrow}>
+                  <MaterialIcons name="chevron-right" size={20} color={theme.text} />
+                </TouchableOpacity>
+              </View>
             </>
           )}
 
@@ -204,14 +211,12 @@ export default function KitchenScreen() {
           <RequestHistoryScreen
             historyRequests={historyRequests}
             selectedDate={selectedDate}
-            today={today}
             loading={loading}
             theme={theme}
             restaurantId={restaurantId}
             categories={categories}
             statusFilter={statusFilter}
             categoryFilter={categoryFilter}
-            allRequests={requests}
           />
         </View>
       </ScrollView>
@@ -225,6 +230,16 @@ export default function KitchenScreen() {
           />
         </View>
       )}
+
+      <KitchenHistoryFullScreenModal
+        visible={showFullScreen}
+        onClose={() => setShowFullScreen(false)}
+        restaurantId={restaurantId}
+        requests={requests}
+        categories={categories}
+        initialDate={selectedDate}
+        today={today}
+      />
     </>
   );
 }
@@ -264,7 +279,8 @@ const styles = StyleSheet.create({
   },
   statValue: { fontSize: 12, fontWeight: "800" },
   statLabel: { fontSize: 10, fontWeight: "600" },
-  categoryDropdownWrap: { width: 220, marginBottom: 14 },
+  categoryRow: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginBottom: 14 },
+  categoryDropdownWrap: { width: 220 },
   categoryDropdownButton: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
     borderWidth: 1.5, borderColor: "#059669", borderRadius: 8,
@@ -278,4 +294,10 @@ const styles = StyleSheet.create({
   },
   categoryDropdownItem: { paddingHorizontal: 14, paddingVertical: 10 },
   categoryDropdownItemText: { fontSize: 13, color: "#1e293b" },
+  fullScreenBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 12, paddingVertical: 9, borderRadius: 8,
+    borderWidth: 1, borderColor: "#0369a1", backgroundColor: "#eff6ff",
+  },
+  fullScreenBtnText: { fontSize: 12, fontWeight: "700", color: "#0369a1" },
 });

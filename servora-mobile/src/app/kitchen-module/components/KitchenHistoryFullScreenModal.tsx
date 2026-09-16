@@ -214,7 +214,7 @@ const styles = StyleSheet.create({
   dateNavArrow: { padding: 4 },
   dateNavArrowDisabled: { opacity: 0.5 },
   dateNavLabel: { fontSize: 14, fontWeight: "800", color: "#1e293b", minWidth: 160, textAlign: "center" },
-  categoryDropdownWrap: { width: 220, alignSelf: "center", marginTop: 10 },
+  categoryDropdownWrap: { width: 220, alignSelf: "flex-end", marginRight: 12, marginTop: 10 },
   categoryDropdownButton: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
     borderWidth: 1.5, borderColor: "#059669", borderRadius: 8,

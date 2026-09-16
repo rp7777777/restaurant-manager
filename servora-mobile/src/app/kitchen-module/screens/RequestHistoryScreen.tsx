@@ -10,16 +10,16 @@
 //    KitchenHistoryTable.
 // ✅ Batch allocations for the selected date's ISSUED requests
 //    fetched via getMovementsByReference().
-// ✅ NEW — "Full Screen" button (matching Inventory's own Full
-//    Screen pattern) opens KitchenHistoryFullScreenModal, which has
-//    its own independent date navigator and its own allocation
-//    fetch — so Full Screen can be navigated to a different date
-//    than the underlying screen without affecting it.
+// ✅ Full Screen button/state/modal REMOVED from here — moved up to
+//    KitchenScreen.tsx, placed on the same row as the category
+//    dropdown (dropdown left, button right). This component no
+//    longer needs the `today`/`allRequests` props it previously
+//    required only for that modal.
 // FROZEN
 // ============================================
 
 import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, ActivityIndicator, TouchableOpacity, StyleSheet } from "react-native";
+import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { formatSelectedDate } from "../utils/kitchen-format";
 import { IngredientRequest } from "../types/kitchen-types";
@@ -27,7 +27,6 @@ import { Category } from "../../../modules/inventory-module/types/category";
 import { getMovementsByReference } from "../../../modules/stock-movement-module/services/stock-movement-service";
 import { BatchAllocationRecord } from "../../../modules/stock-movement-module/types/stock-movement";
 import { KitchenHistoryTable } from "../components/KitchenHistoryTable";
-import { KitchenHistoryFullScreenModal } from "../components/KitchenHistoryFullScreenModal";
 
 interface Theme {
   card:          string;
@@ -39,21 +38,17 @@ interface Theme {
 interface RequestHistoryScreenProps {
   historyRequests: IngredientRequest[];
   selectedDate:    string;
-  today:           string;
   loading:         boolean;
   theme:           Theme;
   restaurantId:    string | null | undefined;
   categories:      Category[];
   statusFilter:    IngredientRequest["status"] | null;
   categoryFilter:  string | null;
-  allRequests:     IngredientRequest[];
 }
 
 export default function RequestHistoryScreen({
-  historyRequests, selectedDate, today, loading, theme, restaurantId, categories, statusFilter, categoryFilter, allRequests,
+  historyRequests, selectedDate, loading, theme, restaurantId, categories, statusFilter, categoryFilter,
 }: RequestHistoryScreenProps) {
-  const [showFullScreen, setShowFullScreen] = useState(false);
-
   const filteredRequests = useMemo(() => {
     let result = historyRequests;
     if (statusFilter) result = result.filter((r) => r.status === statusFilter);
@@ -106,13 +101,7 @@ export default function RequestHistoryScreen({
 
   return (
     <View>
-      <View style={styles.headerRow}>
-        <Text style={[styles.sectionTitle, { color: theme.text }]}>Request History</Text>
-        <TouchableOpacity style={styles.fullScreenBtn} onPress={() => setShowFullScreen(true)}>
-          <MaterialIcons name="fullscreen" size={16} color="#0369a1" />
-          <Text style={styles.fullScreenBtnText}>Full Screen</Text>
-        </TouchableOpacity>
-      </View>
+      <Text style={[styles.sectionTitle, { color: theme.text }]}>Request History</Text>
 
       {loading ? (
         <ActivityIndicator color={theme.primary} style={{ marginTop: 20 }} />
@@ -131,29 +120,12 @@ export default function RequestHistoryScreen({
           liveDateLabel={formatSelectedDate(selectedDate)}
         />
       )}
-
-      <KitchenHistoryFullScreenModal
-        visible={showFullScreen}
-        onClose={() => setShowFullScreen(false)}
-        restaurantId={restaurantId}
-        requests={allRequests}
-        categories={categories}
-        initialDate={selectedDate}
-        today={today}
-      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
-  sectionTitle: { fontSize: 15, fontWeight: "800" },
-  fullScreenBtn: {
-    flexDirection: "row", alignItems: "center", gap: 4,
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
-    borderWidth: 1, borderColor: "#0369a1", backgroundColor: "#eff6ff",
-  },
-  fullScreenBtnText: { fontSize: 11, fontWeight: "700", color: "#0369a1" },
+  sectionTitle: { fontSize: 15, fontWeight: "800", marginBottom: 10 },
   emptyBox: { borderRadius: 14, padding: 40, alignItems: "center", gap: 10 },
   emptyText: { fontSize: 13 },
 });

@@ -1,17 +1,22 @@
 // ============================================
 // SERVORA ERP — StoreHistoryFullScreenModal Component
+// ✅ UI-ONLY REDESIGN — professional light-blue/white/navy SaaS ERP
+//    visual language (screenshot-matched), replacing the previous
+//    bright-yellow/heavy-black-border look.
+// 🔒 ZERO business logic changes: date shift math, requiredDate
+//    filtering, category filtering, batch allocation fetch
+//    (getMovementsByReference), issuedIdsKey staleness key, loading/
+//    empty states, onRowPress — all byte-identical to before. Only
+//    JSX structure/styles changed.
 // ✅ Full-screen wrapper around KitchenRequestTable (Store's daily
-//    table), matching InventoryFullScreenTableModal.tsx's pattern:
-//    own Modal, own independent date navigator (re-synced to
+//    table): own Modal, own independent date navigator (re-synced to
 //    initialDate every time the modal opens), scrollable table body.
 // ✅ Own independent category filter dropdown — separate state from
 //    the underlying screen's own category filter, reset to "All
 //    Categories" every time the modal opens.
 // ✅ Batch allocations for the modal's OWN selectedDate's ISSUED
-//    requests are fetched independently (same getMovementsByReference
-//    pattern as useStoreRequests.ts) — not reused from the
-//    underlying screen, since Full Screen can navigate to a
-//    different date.
+//    requests fetched independently (same getMovementsByReference
+//    pattern as useStoreRequests.ts).
 // FROZEN
 // ============================================
 
@@ -133,54 +138,70 @@ export function StoreHistoryFullScreenModal({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={styles.container}>
+        {/* ── Page Header ── */}
         <View style={styles.headerRow}>
-          <Text style={styles.title}>Stock Issue & Requests — Full View</Text>
-          <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-            <MaterialIcons name="close" size={22} color="#1e293b" />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.dateNav}>
-          <TouchableOpacity onPress={() => setSelectedDate((d) => shiftDate(d, -1))} style={styles.dateNavArrow}>
-            <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
-          </TouchableOpacity>
-          <Text style={styles.dateNavLabel}>{formatDateLabel(selectedDate, today)}</Text>
-          <TouchableOpacity
-            onPress={() => setSelectedDate((d) => shiftDate(d, 1))}
-            style={[styles.dateNavArrow, isNextDisabled && styles.dateNavArrowDisabled]}
-            disabled={isNextDisabled}
-          >
-            <MaterialIcons name="chevron-right" size={22} color={isNextDisabled ? "#cbd5e1" : "#1e293b"} />
-          </TouchableOpacity>
-        </View>
-
-        {categories.length > 0 && (
-          <View style={styles.categoryDropdownWrap}>
-            <TouchableOpacity style={styles.categoryDropdownButton} onPress={() => setShowCategoryDropdown((v) => !v)}>
-              <Text style={styles.categoryDropdownButtonText}>{selectedCategoryName}</Text>
-              <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={20} color="#059669" />
-            </TouchableOpacity>
-            {showCategoryDropdown && (
-              <ScrollView style={styles.categoryDropdownList} nestedScrollEnabled>
-                <TouchableOpacity style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(null); setShowCategoryDropdown(false); }}>
-                  <Text style={styles.categoryDropdownItemText}>All Categories</Text>
-                </TouchableOpacity>
-                {categories.map((cat) => (
-                  <TouchableOpacity key={cat.id} style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(cat.id); setShowCategoryDropdown(false); }}>
-                    <Text style={styles.categoryDropdownItemText}>{cat.icon} {cat.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
+          <View style={styles.headerLeft}>
+            <View style={styles.headerIconBox}>
+              <MaterialIcons name="widgets" size={20} color="#2563eb" />
+            </View>
+            <View>
+              <Text style={styles.title}>Stock Issue & Requests — Full View</Text>
+              <Text style={styles.subtitle}>View and track all ingredient requests and store issues for the selected date</Text>
+            </View>
           </View>
-        )}
+          <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+            <MaterialIcons name="close" size={20} color="#1e293b" />
+          </TouchableOpacity>
+        </View>
+
+        {/* ── Date Navigation + Category Filter ── */}
+        <View style={styles.toolbarRow}>
+          <View style={styles.dateNav}>
+            <TouchableOpacity onPress={() => setSelectedDate((d) => shiftDate(d, -1))} style={styles.dateNavArrowBtn}>
+              <MaterialIcons name="chevron-left" size={20} color="#1e293b" />
+            </TouchableOpacity>
+            <View style={styles.dateNavBadge}>
+              <MaterialIcons name="event" size={15} color="#2563eb" />
+              <Text style={styles.dateNavLabel}>{formatDateLabel(selectedDate, today)}</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setSelectedDate((d) => shiftDate(d, 1))}
+              style={[styles.dateNavArrowBtn, isNextDisabled && styles.dateNavArrowDisabled]}
+              disabled={isNextDisabled}
+            >
+              <MaterialIcons name="chevron-right" size={20} color={isNextDisabled ? "#cbd5e1" : "#1e293b"} />
+            </TouchableOpacity>
+          </View>
+
+          {categories.length > 0 && (
+            <View style={styles.categoryDropdownWrap}>
+              <TouchableOpacity style={styles.categoryDropdownButton} onPress={() => setShowCategoryDropdown((v) => !v)}>
+                <MaterialIcons name="filter-list" size={16} color="#64748b" />
+                <Text style={styles.categoryDropdownButtonText}>{selectedCategoryName}</Text>
+                <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={18} color="#64748b" />
+              </TouchableOpacity>
+              {showCategoryDropdown && (
+                <ScrollView style={styles.categoryDropdownList} nestedScrollEnabled>
+                  <TouchableOpacity style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(null); setShowCategoryDropdown(false); }}>
+                    <Text style={styles.categoryDropdownItemText}>All Categories</Text>
+                  </TouchableOpacity>
+                  {categories.map((cat) => (
+                    <TouchableOpacity key={cat.id} style={styles.categoryDropdownItem} onPress={() => { setCategoryFilter(cat.id); setShowCategoryDropdown(false); }}>
+                      <Text style={styles.categoryDropdownItemText}>{cat.icon} {cat.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+          )}
+        </View>
 
         <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
           {loadingAllocations ? (
-            <ActivityIndicator style={{ marginTop: 20 }} />
+            <ActivityIndicator style={{ marginTop: 20 }} color="#2563eb" />
           ) : filteredRequests.length === 0 ? (
             <View style={styles.emptyBox}>
-              <MaterialIcons name="inventory" size={40} color="#94a3b8" />
+              <MaterialIcons name="inventory-2" size={40} color="#cbd5e1" />
               <Text style={styles.emptyText}>No requests for this date</Text>
             </View>
           ) : (
@@ -199,35 +220,60 @@ export function StoreHistoryFullScreenModal({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f8fafc" },
+  container: { flex: 1, backgroundColor: "#f1f5f9" },
+
+  // Page header
   headerRow: {
-    flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8,
-    padding: 10, paddingTop: Platform.OS === "web" ? 16 : 44,
+    flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12,
+    paddingHorizontal: 16, paddingVertical: 14, paddingTop: Platform.OS === "web" ? 16 : 44,
     backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
   },
-  title: { fontSize: 15, fontWeight: "800", color: "#1e293b" },
-  closeBtn: { padding: 4 },
-  dateNav: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12,
-    paddingVertical: 8, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
+  headerLeft: { flexDirection: "row", alignItems: "flex-start", gap: 12, flex: 1 },
+  headerIconBox: {
+    width: 40, height: 40, borderRadius: 10, backgroundColor: "#dbeafe",
+    alignItems: "center", justifyContent: "center",
   },
-  dateNavArrow: { padding: 4 },
-  dateNavArrowDisabled: { opacity: 0.5 },
-  dateNavLabel: { fontSize: 14, fontWeight: "800", color: "#1e293b", minWidth: 160, textAlign: "center" },
-  categoryDropdownWrap: { width: 220, alignSelf: "center", marginTop: 10 },
+  title: { fontSize: 18, fontWeight: "800", color: "#0f172a" },
+  subtitle: { fontSize: 12, color: "#64748b", marginTop: 2 },
+  closeBtn: {
+    width: 34, height: 34, borderRadius: 8, borderWidth: 1, borderColor: "#e2e8f0",
+    alignItems: "center", justifyContent: "center",
+  },
+
+  // Toolbar: date nav + category dropdown
+  toolbarRow: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap",
+    paddingHorizontal: 16, paddingVertical: 12, gap: 10,
+    backgroundColor: "#f1f5f9",
+  },
+  dateNav: { flexDirection: "row", alignItems: "center", gap: 8, alignSelf: "center" },
+  dateNavArrowBtn: {
+    width: 32, height: 32, borderRadius: 8, backgroundColor: "#fff",
+    borderWidth: 1, borderColor: "#e2e8f0", alignItems: "center", justifyContent: "center",
+  },
+  dateNavArrowDisabled: { opacity: 0.4 },
+  dateNavBadge: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: "#dbeafe", borderRadius: 8,
+    paddingHorizontal: 14, paddingVertical: 8, minWidth: 170, justifyContent: "center",
+  },
+  dateNavLabel: { fontSize: 13, fontWeight: "800", color: "#1e3a8a" },
+
+  categoryDropdownWrap: { width: 220 },
   categoryDropdownButton: {
-    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    borderWidth: 1.5, borderColor: "#059669", borderRadius: 8,
-    paddingHorizontal: 12, paddingVertical: 9, backgroundColor: "#fff",
+    flexDirection: "row", alignItems: "center", gap: 6,
+    borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 8, backgroundColor: "#fff",
   },
-  categoryDropdownButtonText: { fontSize: 13, color: "#1e293b", fontWeight: "600" },
+  categoryDropdownButtonText: { flex: 1, fontSize: 13, color: "#1e293b", fontWeight: "600" },
   categoryDropdownList: {
     borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 8,
     marginTop: 4, maxHeight: 220, backgroundColor: "#ffffff", width: 220,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 6,
   },
   categoryDropdownItem: { paddingHorizontal: 14, paddingVertical: 10 },
   categoryDropdownItemText: { fontSize: 13, color: "#1e293b" },
+
   body: { flex: 1 },
   bodyContent: { padding: 12, alignItems: "center" },
   emptyBox: { alignItems: "center", marginTop: 60, gap: 10 },
