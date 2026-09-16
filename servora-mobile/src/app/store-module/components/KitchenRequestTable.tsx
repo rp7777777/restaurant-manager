@@ -1,28 +1,30 @@
 // ============================================
 // SERVORA ERP — KitchenRequestTable Component
 // ✅ UI-ONLY REDESIGN — professional light-blue/white/navy SaaS ERP
-//    visual language (screenshot-matched):
-//    - Requester header: light-blue info card — navy headings, dark
-//      navy values, small blue icons, date badge on the right.
+//    visual language:
+//    - Requester header: light-blue info card, navy headings, date
+//      badge on the right.
 //    - Category headers: alternating blue/green accent (by index,
-//      purely a visual cycle, NOT tied to status/data), white bold
-//      title, item count on the right, compact height (30px).
+//      purely visual), white bold title, item count on the right,
+//      compact height (26px).
 //    - Table header: light blue-gray background, navy bold text,
-//      thin subtle borders.
-//    - Rows: white/very-light-gray alternating, thin light borders.
-//    - Status: FLAT — small colored dot + plain text, NO pill/
-//      background/border/shadow/elevation of any kind (removed
-//      entirely per explicit request — was a rounded pill background
-//      that rendered with an unwanted glow/shadow-like artifact).
+//      compact height (minHeight 32), vertically centered.
+//    - Table grid lines (borders): darkened to medium-dark gray
+//      (#94a3b8 for row/block/vertical-column dividers, #64748b for
+//      the table header's own bottom border) — was very light
+//      (#cbd5e1/#e2e8f0), making the table structure hard to see.
+//      Kept thin (1-1.5px), not heavy/thick.
+//    - Rows: white/very-light-gray alternating.
+//    - Status: FLAT — small colored dot + plain text, no pill/
+//      background/border/shadow/elevation.
 //    - View button: small rounded light-blue button with a blue
 //      chevron.
 // 🔒 ZERO business logic changes: requestedBy -> category -> item ->
 //    request -> batch-allocation grouping, date formatting functions,
 //    column data, request-level vs batch-level cell merging,
 //    rejectionNote display, onRowPress, and the existing Store
-//    Issued issuedQuantity fallback (pre-existing behavior,
-//    intentionally preserved, NOT the Monthly Report rule) — all
-//    unchanged. Only JSX/styles for presentation.
+//    Issued issuedQuantity fallback (pre-existing, intentionally
+//    preserved) — all unchanged. Only JSX/styles for presentation.
 // ✅ Table width fixed at 900px (unchanged).
 // ✅ Column header row shown ONLY ONCE — first category block of the
 //    first requester group (unchanged).
@@ -37,7 +39,7 @@ import { BatchAllocationRecord } from "../../../modules/stock-movement-module/ty
 import { Category } from "../../../modules/inventory-module/types/category";
 import { STATUS_COLORS } from "../utils/store-formatters";
 
-const ROW_HEIGHT = 28;
+const ROW_HEIGHT = 24;
 const COLS = { sn: 40, item: 250, batch: 200, req: 90, issued: 90, unit: 70, status: 100, chevron: 60 };
 const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.req + COLS.issued + COLS.unit + COLS.status + COLS.chevron;
 
@@ -204,7 +206,7 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                   <MaterialIcons name="event" size={13} color="#2563eb" />
                   <View>
                     <Text style={styles.requesterMetaLabel}>Required Date:</Text>
-                    <Text style={styles.requesterMetaValue}>{requesterGroup.requiredDate}</Text>
+                    <Text style={styles.requesterMetaValueGreen}>{requesterGroup.requiredDate}</Text>
                   </View>
                 </View>
               ) : null}
@@ -213,7 +215,7 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                   <MaterialIcons name="description" size={13} color="#2563eb" />
                   <View>
                     <Text style={styles.requesterMetaLabel}>Note:</Text>
-                    <Text style={styles.requesterMetaValue}>{requesterGroup.note}</Text>
+                    <Text style={styles.requesterMetaValueNote}>{requesterGroup.note}</Text>
                   </View>
                 </View>
               ) : null}
@@ -337,8 +339,6 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                                   <Text style={[styles.cell, styles.centerCell]}>{req.unit}</Text>
                                 </View>
 
-                                {/* ✅ FLAT status — dot + plain text only, no pill,
-                                    no background, no shadow/elevation. */}
                                 <View style={[styles.requestLevelCell, { width: COLS.status, minHeight: requestBlockHeight, alignItems: "flex-start" }]}>
                                   <View style={styles.statusRow}>
                                     <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
@@ -372,7 +372,7 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
                         top: 0,
                         height: measuredHeight + 4,
                         width: 1,
-                        backgroundColor: "#e2e8f0",
+                        backgroundColor: "#94a3b8",
                       }}
                     />
                   ))}
@@ -388,13 +388,13 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
 
 const styles = StyleSheet.create({
   requesterBlock: {
-    marginBottom: 20, borderRadius: 10, overflow: "hidden",
-    borderWidth: 1, borderColor: "#e2e8f0",
+    marginBottom: 10, borderRadius: 5, overflow: "hidden",
+    borderWidth: 1.5, borderColor: "#334155",
     shadowColor: "#0f172a", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4,
   },
 
   requesterCard: {
-    backgroundColor: "#eff6ff", padding: 14, gap: 10,
+    backgroundColor: "#eff6ff", paddingHorizontal: 8, paddingTop: 3, paddingBottom: 7, gap: 5,
   },
   requesterCardRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   requesterIconCircle: {
@@ -413,11 +413,13 @@ const styles = StyleSheet.create({
   requesterMetaItem: { flexDirection: "row", alignItems: "center", gap: 6 },
   requesterMetaLabel: { fontSize: 10, color: "#64748b", fontWeight: "600" },
   requesterMetaValue: { fontSize: 12, color: "#0f172a", fontWeight: "800" },
+  requesterMetaValueNote: { fontSize: 12, color: "#dc2626", fontWeight: "800" },
+  requesterMetaValueGreen: { fontSize: 12, color: "#059669", fontWeight: "800" },
 
-  groupBlock: { borderTopWidth: 1, borderTopColor: "#e2e8f0" },
+  groupBlock: { borderTopWidth: 1, borderTopColor: "#94a3b8" },
   categoryHeader: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    paddingVertical: 5, paddingHorizontal: 14, minHeight: 30,
+    paddingVertical: 4, paddingHorizontal: 14, minHeight: 20,
   },
   categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.3 },
   categoryHeaderCount: { color: "rgba(255,255,255,0.85)", fontWeight: "700", fontSize: 11 },
@@ -425,33 +427,32 @@ const styles = StyleSheet.create({
   tableArea: { position: "relative", backgroundColor: "#fff" },
   tableHeaderRow: {
     flexDirection: "row", backgroundColor: "#f1f5f9",
-    borderBottomWidth: 1, borderBottomColor: "#e2e8f0", paddingVertical: 10,
+    borderBottomWidth: 1.35, borderBottomColor: "#334155", paddingVertical: 3, minHeight: 20, alignItems: "center",
   },
   headerCell: { fontSize: 12, fontWeight: "800", color: "#334155", paddingHorizontal: 6 },
   centerCell: { textAlign: "center" },
   itemGroupRow: {
     flexDirection: "row",
-    borderBottomWidth: 1, borderBottomColor: "#f1f5f9",
+    borderBottomWidth: 1, borderBottomColor: "#94a3b8",
   },
   itemGroupRowAlt: { backgroundColor: "#f8fafc" },
   leftStrip: {
     flexDirection: "row", alignItems: "center",
-    paddingVertical: 6,
+    paddingVertical: 0,
   },
   cell: { fontSize: 12, color: "#334155", paddingHorizontal: 6 },
-  itemCell: { fontWeight: "700", color: "#0f172a" },
+  itemCell: { fontWeight: "700", color: "#0f172a", fontSize: 13 },
   rightRequestRows: { flex: 1 },
   requestBlock: { flexDirection: "row" },
   requestRowDivider: {
-    borderBottomWidth: 1, borderBottomColor: "#f1f5f9",
+    borderBottomWidth: 1, borderBottomColor: "#94a3b8",
   },
   batchLineRow: { justifyContent: "center", paddingHorizontal: 6, paddingVertical: 2 },
   batchRowDivider: {
-    borderBottomWidth: 1, borderBottomColor: "#f8fafc",
+    borderBottomWidth: 1, borderBottomColor: "#cbd5e1",
   },
   requestLevelCell: { justifyContent: "center", alignItems: "center", paddingHorizontal: 6 },
 
-  // ✅ FLAT status — no pill/background/border/shadow/elevation.
   statusRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   statusDot: { width: 6, height: 6, borderRadius: 3 },
   statusText: { fontSize: 11, fontWeight: "600" },

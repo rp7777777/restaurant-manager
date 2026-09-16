@@ -1,22 +1,18 @@
 // ============================================
 // SERVORA ERP — StoreHistoryFullScreenModal Component
 // ✅ UI-ONLY REDESIGN — professional light-blue/white/navy SaaS ERP
-//    visual language (screenshot-matched), replacing the previous
-//    bright-yellow/heavy-black-border look.
+//    visual language.
+// ✅ NEW — Date navigator now TRUE-CENTERED using symmetric invisible
+//    spacers (toolbarSpacerLeft/Right, each matching the category
+//    dropdown's own width, 220px) on either side of toolbarRow — so
+//    the prev/date/next group sits at the exact horizontal center of
+//    the row regardless of whether the category dropdown is present,
+//    rather than being pushed off-center by justify-content:
+//    space-between alone.
 // 🔒 ZERO business logic changes: date shift math, requiredDate
 //    filtering, category filtering, batch allocation fetch
 //    (getMovementsByReference), issuedIdsKey staleness key, loading/
-//    empty states, onRowPress — all byte-identical to before. Only
-//    JSX structure/styles changed.
-// ✅ Full-screen wrapper around KitchenRequestTable (Store's daily
-//    table): own Modal, own independent date navigator (re-synced to
-//    initialDate every time the modal opens), scrollable table body.
-// ✅ Own independent category filter dropdown — separate state from
-//    the underlying screen's own category filter, reset to "All
-//    Categories" every time the modal opens.
-// ✅ Batch allocations for the modal's OWN selectedDate's ISSUED
-//    requests fetched independently (same getMovementsByReference
-//    pattern as useStoreRequests.ts).
+//    empty states, onRowPress — all unchanged. Only JSX/styles.
 // FROZEN
 // ============================================
 
@@ -154,8 +150,10 @@ export function StoreHistoryFullScreenModal({
           </TouchableOpacity>
         </View>
 
-        {/* ── Date Navigation + Category Filter ── */}
+        {/* ── Date Navigation (true-centered) + Category Filter (right) ── */}
         <View style={styles.toolbarRow}>
+          <View style={styles.toolbarSpacerLeft} />
+
           <View style={styles.dateNav}>
             <TouchableOpacity onPress={() => setSelectedDate((d) => shiftDate(d, -1))} style={styles.dateNavArrowBtn}>
               <MaterialIcons name="chevron-left" size={20} color="#1e293b" />
@@ -173,7 +171,7 @@ export function StoreHistoryFullScreenModal({
             </TouchableOpacity>
           </View>
 
-          {categories.length > 0 && (
+          {categories.length > 0 ? (
             <View style={styles.categoryDropdownWrap}>
               <TouchableOpacity style={styles.categoryDropdownButton} onPress={() => setShowCategoryDropdown((v) => !v)}>
                 <MaterialIcons name="filter-list" size={16} color="#64748b" />
@@ -193,6 +191,8 @@ export function StoreHistoryFullScreenModal({
                 </ScrollView>
               )}
             </View>
+          ) : (
+            <View style={styles.toolbarSpacerRight} />
           )}
         </View>
 
@@ -222,7 +222,6 @@ export function StoreHistoryFullScreenModal({
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f1f5f9" },
 
-  // Page header
   headerRow: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12,
     paddingHorizontal: 16, paddingVertical: 14, paddingTop: Platform.OS === "web" ? 16 : 44,
@@ -240,13 +239,15 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
 
-  // Toolbar: date nav + category dropdown
+  // Toolbar: symmetric spacers true-center the date nav
   toolbarRow: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap",
     paddingHorizontal: 16, paddingVertical: 12, gap: 10,
     backgroundColor: "#f1f5f9",
   },
-  dateNav: { flexDirection: "row", alignItems: "center", gap: 8, alignSelf: "center" },
+  toolbarSpacerLeft: { width: 220 },
+  toolbarSpacerRight: { width: 220 },
+  dateNav: { flexDirection: "row", alignItems: "center", gap: 8 },
   dateNavArrowBtn: {
     width: 32, height: 32, borderRadius: 8, backgroundColor: "#fff",
     borderWidth: 1, borderColor: "#e2e8f0", alignItems: "center", justifyContent: "center",
