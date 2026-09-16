@@ -1,30 +1,25 @@
 // ============================================
 // SERVORA ERP — KitchenRequestTable Component
 // ✅ UI-ONLY REDESIGN — professional light-blue/white/navy SaaS ERP
-//    visual language:
-//    - Requester header: light-blue info card, navy headings, date
-//      badge on the right.
-//    - Category headers: alternating blue/green accent (by index,
-//      purely visual), white bold title, item count on the right,
-//      compact height (26px).
-//    - Table header: light blue-gray background, navy bold text,
-//      compact height (minHeight 32), vertically centered.
-//    - Table grid lines (borders): darkened to medium-dark gray
-//      (#94a3b8 for row/block/vertical-column dividers, #64748b for
-//      the table header's own bottom border) — was very light
-//      (#cbd5e1/#e2e8f0), making the table structure hard to see.
-//      Kept thin (1-1.5px), not heavy/thick.
-//    - Rows: white/very-light-gray alternating.
-//    - Status: FLAT — small colored dot + plain text, no pill/
-//      background/border/shadow/elevation.
-//    - View button: small rounded light-blue button with a blue
-//      chevron.
-// 🔒 ZERO business logic changes: requestedBy -> category -> item ->
-//    request -> batch-allocation grouping, date formatting functions,
-//    column data, request-level vs batch-level cell merging,
-//    rejectionNote display, onRowPress, and the existing Store
-//    Issued issuedQuantity fallback (pre-existing, intentionally
-//    preserved) — all unchanged. Only JSX/styles for presentation.
+//    visual language: requester info card, blue/green category
+//    accents, compact light table header, flat status, sharp thin
+//    grid lines, light-blue View button.
+// ✅ FIX — item grouping key now prefers inventoryId over
+//    itemName-only (was `const itemKey = req.itemName;`, which could
+//    silently merge two DIFFERENT inventory items that happen to
+//    share a display name into one row). Now matches
+//    KitchenHistoryTable.tsx's and MonthlyReportScreen.tsx's own
+//    grouping key exactly: `req.inventoryId ? req.inventoryId :
+//    ${req.itemName}::${req.unit}`. ItemGroup now carries both
+//    itemKey (grouping identity, used as the React key) and
+//    itemName (display text, taken from the first request in the
+//    group) as separate fields.
+// 🔒 ZERO OTHER business logic changes: requestedBy -> category ->
+//    item -> request -> batch-allocation grouping, date formatting
+//    functions, column data, request-level vs batch-level cell
+//    merging, rejectionNote display, onRowPress, and the existing
+//    Store Issued issuedQuantity fallback (pre-existing, intentionally
+//    preserved — NOT the Monthly Report rule) — all unchanged.
 // ✅ Table width fixed at 900px (unchanged).
 // ✅ Column header row shown ONLY ONCE — first category block of the
 //    first requester group (unchanged).
@@ -72,8 +67,9 @@ interface KitchenRequestTableProps {
 }
 
 interface ItemGroup {
-  itemName:  string;
-  requests:  IngredientRequest[];
+  itemKey:  string;
+  itemName: string;
+  requests: IngredientRequest[];
 }
 
 interface CategoryGroup {
@@ -131,7 +127,7 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
       for (const req of requesterRequests) {
         const catKey = req.categoryId && categoryById.has(req.categoryId) ? req.categoryId : UNCATEGORIZED_ID;
         const byItem = byCategory.get(catKey) ?? new Map<string, IngredientRequest[]>();
-        const itemKey = req.itemName;
+        const itemKey = req.inventoryId ? req.inventoryId : `${req.itemName}::${req.unit}`;
         const list = byItem.get(itemKey) ?? [];
         list.push(req);
         byItem.set(itemKey, list);
@@ -143,14 +139,14 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
         const byItem = byCategory.get(category.id);
         if (!byItem || byItem.size === 0) continue;
         const itemGroups: ItemGroup[] = Array.from(byItem.entries())
-          .map(([itemName, itemRequests]) => ({ itemName, requests: itemRequests }))
+          .map(([itemKey, itemRequests]) => ({ itemKey, itemName: itemRequests[0].itemName, requests: itemRequests }))
           .sort((a, b) => a.itemName.localeCompare(b.itemName));
         categoryGroups.push({ categoryId: category.id, categoryName: category.name, categoryIcon: category.icon, items: itemGroups });
       }
       const uncatByItem = byCategory.get(UNCATEGORIZED_ID);
       if (uncatByItem && uncatByItem.size > 0) {
         const itemGroups: ItemGroup[] = Array.from(uncatByItem.entries())
-          .map(([itemName, itemRequests]) => ({ itemName, requests: itemRequests }))
+          .map(([itemKey, itemRequests]) => ({ itemKey, itemName: itemRequests[0].itemName, requests: itemRequests }))
           .sort((a, b) => a.itemName.localeCompare(b.itemName));
         categoryGroups.push({ categoryId: UNCATEGORIZED_ID, categoryName: "Uncategorized", categoryIcon: undefined, items: itemGroups });
       }
@@ -271,7 +267,7 @@ export function KitchenRequestTable({ requests, batchAllocationsByRequestId, cat
 
                     return (
                       <View
-                        key={itemGroup.itemName}
+                        key={itemGroup.itemKey}
                         style={[
                           styles.itemGroupRow,
                           { minHeight: itemGroupHeight },

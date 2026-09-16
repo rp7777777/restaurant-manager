@@ -309,7 +309,7 @@ export function KitchenHistoryTable({ requests, batchAllocationsByRequestId, cat
                                       style={[styles.batchLineRow, { height: ROW_HEIGHT }, rowIdx < rows.length - 1 && styles.batchRowDivider]}
                                     >
                                       <Text style={[styles.cell, styles.centerCell]}>
-                                        {alloc ? alloc.quantity : (req.status === "ISSUED" ? (req.issuedQuantity ?? "—") : "—")}
+                                        {alloc ? alloc.quantity : "—"}
                                       </Text>
                                     </View>
                                   ))}

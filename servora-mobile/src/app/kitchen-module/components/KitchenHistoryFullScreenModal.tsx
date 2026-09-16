@@ -102,6 +102,7 @@ export function KitchenHistoryFullScreenModal({
     const issuedIds = filteredRequests.filter((r) => r.status === "ISSUED").map((r) => r.id);
     if (issuedIds.length === 0 || !restaurantId) {
       setBatchAllocationsByRequestId(new Map());
+      setLoadingAllocations(false);
       return;
     }
 
