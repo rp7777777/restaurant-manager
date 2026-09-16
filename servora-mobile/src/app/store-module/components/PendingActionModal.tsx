@@ -59,11 +59,9 @@ export function PendingActionModal({
   // ✅ Reset internal state whenever the modal is closed or a
   // different request is shown, so stale selections never leak.
   useEffect(() => {
-    if (!visible) {
-      setRejectMode(false);
-      setSelectedReason(null);
-      setCustomReason("");
-    }
+    setRejectMode(false);
+    setSelectedReason(null);
+    setCustomReason("");
   }, [visible, request?.id]);
 
   if (!request) return null;
