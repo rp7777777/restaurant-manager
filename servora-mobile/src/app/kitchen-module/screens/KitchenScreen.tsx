@@ -25,7 +25,7 @@
 // FROZEN
 // ============================================
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   View, Text, ScrollView, TouchableOpacity,
   RefreshControl, Platform, StyleSheet,
@@ -41,6 +41,7 @@ import { formatSelectedDate } from "../utils/kitchen-format";
 import { MonthlyReportScreen } from "../../store-module/components/MonthlyReportScreen";
 import NewRequestScreen from "./NewRequestScreen";
 import RequestHistoryScreen from "./RequestHistoryScreen";
+import { todayISO } from "../../../utils/date-utils";
 
 type StatusFilter = IngredientRequest["status"] | null;
 
@@ -67,6 +68,7 @@ export default function KitchenScreen() {
   const approvedCount = historyRequests.filter((r) => r.status === "APPROVED").length;
   const issuedCount   = historyRequests.filter((r) => r.status === "ISSUED").length;
   const rejectedCount = historyRequests.filter((r) => r.status === "REJECTED").length;
+  const today = useMemo(() => todayISO(), []);
 
   const selectedCategoryName = categoryFilter
     ? categories.find((c) => c.id === categoryFilter)?.name ?? "All Categories"
@@ -202,12 +204,14 @@ export default function KitchenScreen() {
           <RequestHistoryScreen
             historyRequests={historyRequests}
             selectedDate={selectedDate}
+            today={today}
             loading={loading}
             theme={theme}
             restaurantId={restaurantId}
             categories={categories}
             statusFilter={statusFilter}
             categoryFilter={categoryFilter}
+            allRequests={requests}
           />
         </View>
       </ScrollView>

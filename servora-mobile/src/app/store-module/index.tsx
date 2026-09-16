@@ -20,15 +20,17 @@
 //    KitchenRequestTable for category-wise grouping.
 // ✅ Category filter dropdown (normal document flow, pushes content
 //    down rather than overlaying), combinable with statusFilter.
-// ✅ NEW — KitchenRequestTable now receives liveDateLabel (formatted
-//    via formatLiveDate(selectedDate), e.g. "15 Sept 2026") — always
-//    the actual formatted date, NEVER the word "Today", shown in the
-//    category header alongside "Requested: [createdAt date]" so the
-//    two genuinely different dates (when the table is showing vs.
-//    when each request was actually created) are never ambiguous.
-// ✅ Overlay: Monthly Report is a sibling of the ScrollView (not
-//    nested inside it), so its absoluteFill correctly covers the
-//    full screen viewport.
+// ✅ KitchenRequestTable receives liveDateLabel (formatted via
+//    formatLiveDate(selectedDate), e.g. "15 Sept 2026") — always
+//    the actual formatted date, never the word "Today".
+// ✅ NEW — "Full Screen" button opens StoreHistoryFullScreenModal,
+//    which has its own independent date navigator and its own
+//    category filter and batch-allocation fetch — Full Screen can
+//    be navigated to a different date than the underlying screen
+//    without affecting it.
+// ✅ Overlays: both Monthly Report and the Full Screen modal are
+//    siblings of the ScrollView (not nested inside it), so they
+//    correctly cover the full screen viewport.
 // FROZEN
 // ============================================
 
@@ -55,11 +57,9 @@ import { PendingActionModal } from "./components/PendingActionModal";
 import { IssueKitchenRequestModal } from "./components/IssueKitchenRequestModal";
 import { RequestDetailModal } from "./components/RequestDetailModal";
 import { MonthlyReportScreen } from "./components/MonthlyReportScreen";
+import { StoreHistoryFullScreenModal } from "./components/StoreHistoryFullScreenModal";
 import { shiftDate } from "./utils/store-formatters";
 
-// ✅ NEW — always a formatted date string (e.g. "15 Sept 2026"),
-// never the word "Today" — used for KitchenRequestTable's category
-// header "Live:" label.
 function formatLiveDate(dateISO: string): string {
   const [year, month, day] = dateISO.split("-").map(Number);
   const d = new Date(Date.UTC(year, month - 1, day));
@@ -81,6 +81,7 @@ export default function StoreScreen() {
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [showMonthlyReport, setShowMonthlyReport] = useState(false);
+  const [showFullScreen, setShowFullScreen] = useState(false);
 
   const [pendingTarget, setPendingTarget] = useState<IngredientRequest | null>(null);
   const [issueTarget, setIssueTarget] = useState<IngredientRequest | null>(null);
@@ -177,10 +178,16 @@ export default function StoreScreen() {
       >
         <StoreHeader pendingCount={pendingCount} />
 
-        <TouchableOpacity style={styles.monthlyReportBtn} onPress={() => setShowMonthlyReport(true)}>
-          <MaterialIcons name="bar-chart" size={16} color="#0369a1" />
-          <Text style={styles.monthlyReportBtnText}>Monthly Report</Text>
-        </TouchableOpacity>
+        <View style={styles.actionBtnRow}>
+          <TouchableOpacity style={styles.monthlyReportBtn} onPress={() => setShowMonthlyReport(true)}>
+            <MaterialIcons name="bar-chart" size={16} color="#0369a1" />
+            <Text style={styles.monthlyReportBtnText}>Monthly Report</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.fullScreenBtn} onPress={() => setShowFullScreen(true)}>
+            <MaterialIcons name="fullscreen" size={16} color="#0369a1" />
+            <Text style={styles.fullScreenBtnText}>Full Screen</Text>
+          </TouchableOpacity>
+        </View>
 
         {categories.length > 0 && (
           <View style={styles.categoryDropdownWrap}>
@@ -282,6 +289,17 @@ export default function StoreScreen() {
           />
         </View>
       )}
+
+      <StoreHistoryFullScreenModal
+        visible={showFullScreen}
+        onClose={() => setShowFullScreen(false)}
+        restaurantId={restaurantId}
+        requests={requests}
+        categories={categories}
+        initialDate={selectedDate}
+        today={today}
+        onRowPress={handleRowPress}
+      />
     </>
   );
 }
@@ -291,13 +309,19 @@ const styles = StyleSheet.create({
   body: { padding: 12 },
   emptyBox: { alignItems: "center", padding: 40, borderRadius: 10, gap: 8 },
   emptyText: { fontSize: 13, fontWeight: "600" },
+  actionBtnRow: { flexDirection: "row", gap: 8, marginHorizontal: 12, marginTop: 8, marginBottom: 4 },
   monthlyReportBtn: {
-    flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start",
-    marginHorizontal: 12, marginTop: 8, marginBottom: 8,
+    flexDirection: "row", alignItems: "center", gap: 6,
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6,
     borderWidth: 1, borderColor: "#0369a1", backgroundColor: "#eff6ff",
   },
   monthlyReportBtnText: { fontSize: 12, fontWeight: "700", color: "#0369a1" },
+  fullScreenBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6,
+    borderWidth: 1, borderColor: "#0369a1", backgroundColor: "#eff6ff",
+  },
+  fullScreenBtnText: { fontSize: 12, fontWeight: "700", color: "#0369a1" },
   categoryDropdownWrap: { width: 220, marginHorizontal: 12, marginBottom: 8 },
   categoryDropdownButton: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
