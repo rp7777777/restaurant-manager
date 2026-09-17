@@ -112,7 +112,7 @@ export function useInventoryFilters(
   }, []);
 
   const filteredItems = useMemo(() => {
-    let result = items;
+    let result = items.filter((item) => item.isActive !== false);
 
     if (filters.searchQuery.trim()) {
       const q = filters.searchQuery.trim().toLowerCase();
