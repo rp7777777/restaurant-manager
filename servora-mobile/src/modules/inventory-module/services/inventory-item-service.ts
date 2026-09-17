@@ -11,12 +11,20 @@
 //    Increase/Decrease/Correction on batch-tracked items is PENDING
 //    (blocked on migrating Purchase Order's PURCHASE calls off this
 //    same function first — see inventory-service.ts's file header).
-// ✅ archiveInventoryItem()/restoreInventoryItem() — toggle isActive
-//    only. Deliberately do NOT touch currentStock/batches — archiving
-//    an item is purely a visibility/lifecycle flag, not a stock
+// ✅ archiveInventoryItem()/restoreInventoryItem() — toggle isActive.
+//    Deliberately do NOT touch currentStock/batches — archiving an
+//    item is purely a visibility/lifecycle flag, not a stock
 //    operation. A stock>0 + isActive=false item is a VALID state
 //    (the user consciously archived it) — NOT automatically treated
 //    as corruption.
+// ✅ NEW — archivedAt (serverTimestamp()) is now recorded on
+//    archive, and explicitly cleared (null) on restore. This lets
+//    Historical views distinguish "archived on date X" from "never
+//    archived" — a date BEFORE X can still show the item's real,
+//    unedited historical batches/movements, while dates on/after X
+//    correctly hide it from the active/current view. Restoring
+//    clears archivedAt so the item behaves as if never archived
+//    going forward.
 // ✅ duplicateInventoryItem() — creates a new item with currentStock
 //    always 0 (never copies the source's stock or its batches — a
 //    duplicated item starts genuinely empty, matching the confirmed
@@ -53,9 +61,10 @@ export async function archiveInventoryItem(
   if (!itemId) throw new Error("Inventory item is required");
 
   await updateDoc(inventoryDoc(restaurantId, itemId), {
-    isActive:  false,
-    updatedAt: serverTimestamp(),
-    updatedBy: auth.currentUser.uid,
+    isActive:   false,
+    archivedAt: serverTimestamp(),
+    updatedAt:  serverTimestamp(),
+    updatedBy:  auth.currentUser.uid,
   });
 }
 
@@ -69,9 +78,10 @@ export async function restoreInventoryItem(
   if (!itemId) throw new Error("Inventory item is required");
 
   await updateDoc(inventoryDoc(restaurantId, itemId), {
-    isActive:  true,
-    updatedAt: serverTimestamp(),
-    updatedBy: auth.currentUser.uid,
+    isActive:   true,
+    archivedAt: null,
+    updatedAt:  serverTimestamp(),
+    updatedBy:  auth.currentUser.uid,
   });
 }
 

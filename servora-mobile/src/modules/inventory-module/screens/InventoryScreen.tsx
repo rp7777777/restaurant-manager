@@ -19,6 +19,16 @@
 //    discriminated union: newItem/existingItem/edit — UNCHANGED.
 // ✅ ARCHITECTURE NOTE — purchaseDate is currently set equal to
 //    receivedDate for the "existingItem" (Receive Batch) path.
+// ✅ FIX — activeItems (isActive-filtered) is now ONLY used for the
+//    "current/live" concerns: HistoricalInventoryTableView's
+//    inventoryItems prop (category-name lookups, and Today-mode's
+//    own display, which should never show archived items). It is
+//    NO LONGER passed into useHistoricalInventory() — that hook now
+//    receives the full, unfiltered `items` and does its own
+//    date-aware archivedAt check internally, so an item archived
+//    today still correctly shows its real historical data for any
+//    date BEFORE it was archived (history doesn't retroactively
+//    change just because an item was archived later).
 // FROZEN
 // ============================================
 
@@ -81,7 +91,10 @@ export default function InventoryScreen() {
   
 
   const activeItems = useMemo(() => items.filter((item) => item.isActive !== false), [items]);
-  const { itemsWithHistoricalStock } = useHistoricalInventory(restaurantId, selectedDate, activeItems);
+  // ✅ FIX — pass ALL items (not activeItems) so the hook's own
+  // date-aware archivedAt check can decide per-date, instead of
+  // archived items being excluded from every date unconditionally.
+  const { itemsWithHistoricalStock } = useHistoricalInventory(restaurantId, selectedDate, items);
   const historicalStats = useHistoricalInventoryStats(
     itemsWithHistoricalStock,
     items,
