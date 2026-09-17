@@ -177,6 +177,7 @@ export function useHistoricalInventory(
 
       const existing = byItem.get(batch.inventoryId);
       const meta = itemMetaByInventoryId.get(batch.inventoryId);
+      if (!meta) continue; // ✅ item not in the filtered/active set (e.g. archived) — skip its batches entirely, prevents it from falling into "Uncategorized"
 
       const entry: HistoricalItemStock = existing ?? {
         inventoryId:      batch.inventoryId,
