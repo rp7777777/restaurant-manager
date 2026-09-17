@@ -78,8 +78,10 @@ export default function InventoryScreen() {
   const [tableCategoryId, setTableCategoryId] = React.useState<string | null>(null);
   const [tableSort, setTableSort] = React.useState<"name-asc" | "stock-asc">("name-asc");
   const [showFullScreenTable, setShowFullScreenTable] = React.useState(false);
+  
 
-  const { itemsWithHistoricalStock } = useHistoricalInventory(restaurantId, selectedDate, items);
+  const activeItems = useMemo(() => items.filter((item) => item.isActive !== false), [items]);
+  const { itemsWithHistoricalStock } = useHistoricalInventory(restaurantId, selectedDate, activeItems);
   const historicalStats = useHistoricalInventoryStats(
     itemsWithHistoricalStock,
     items,
@@ -273,7 +275,7 @@ export default function InventoryScreen() {
         restaurantId={safeRestaurantId}
         selectedDate={selectedDate}
         categories={categories}
-        inventoryItems={items}
+        inventoryItems={activeItems}
         searchQuery={tableSearchQuery}
         setSearchQuery={setTableSearchQuery}
         categoryId={tableCategoryId}
