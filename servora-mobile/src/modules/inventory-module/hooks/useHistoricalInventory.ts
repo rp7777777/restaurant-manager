@@ -1,19 +1,50 @@
 // ============================================
 // SERVORA ERP — useHistoricalInventory Hook
-// ⚠️ TEMPORARY DEBUG BUILD — console.log tracing added to find why
-//    "apple" (archived today, received 07 Sept) is missing from the
-//    07 Sept historical view. REMOVE once root cause is found.
 // ✅ Firestore querying + caching + item-level aggregation layer for
 //    the date-navigated historical Inventory view. The PURE replay
 //    logic lives entirely in historical-batch-replay-service.ts —
 //    this hook only fetches data and hands it to that service.
-// ✅ RESTORED ORIGINAL INTENT + FIXED — archived items still show
-//    real historical data for dates BEFORE archivedAt, hidden on/
-//    after.
-// FROZEN (except debug logging, which is temporary)
+// ✅ Batches — reuses useAllInventoryBatches() UNCHANGED.
+// ✅ Archived items still show real historical batches/movements for
+//    any selectedDate up to AND INCLUDING archivedAt's own date, and
+//    are hidden from the day AFTER archivedAt onward.
+// ✅ FIX — isArchivedAsOfDate() was using `selectedDate >=
+//    toDateKey(archivedDate)`, which incorrectly hid the item on its
+//    OWN archive date too (the item was still active for part of
+//    that day). Changed to `selectedDate > toDateKey(archivedDate)`
+//    — the archive date itself now shows the item, hidden only from
+//    the following day onward. E.g. received 15 Sep, archived 18
+//    Sep: 15/16/17/18 Sep all show it, 19 Sep onward hides it.
+// ✅ FIX — item metadata lookup (from inventoryItems) can
+//    intermittently miss for a given inventoryId across renders (an
+//    observed timing inconsistency between useInventory()'s and
+//    useAllInventoryBatches()'s independent Firestore listeners —
+//    not yet root-caused with certainty). Two layers of defense:
+//    1) A persistent cache (categoryByInventoryIdRef) remembers the
+//       last-known categoryId for each inventoryId the FIRST time
+//       meta was successfully found, used as a fallback when meta is
+//       missing this render — prevents items from incorrectly
+//       appearing under "Uncategorized" due to a transient lookup
+//       miss.
+//    2) The archive-date exclusion only runs when meta IS found this
+//       render — if meta is missing, the item is never hidden
+//       outright (real batch data is never silently dropped).
+// ✅ CONFIRMED ARCHITECTURE — Option A: full movement history loaded
+//    ONCE via a single live subscription, kept in memory.
+// ✅ CONFIRMED FINAL SEMANTICS —
+//    - HistoricalBatchState.quantity (from replayBatchAsOfDate) =
+//      OPENING quantity for selectedDate.
+//    - HistoricalItemStock.historicalStock (Total QTY) = CLOSING
+//      quantity — computed HERE via same-date deduction subtraction.
+//    - itemsWithHistoricalStock excludes items whose batches are ALL
+//      invisible (depleted before selectedDate).
+// ✅ depletedItems: items where EVERY one of their batches is
+//    depleted (invisible) as of selectedDate. depletedSince is the
+//    LATEST (max) depletedDate among the item's batches.
+// FROZEN
 // ============================================
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { collection, onSnapshot, query } from "firebase/firestore";
 import { db } from "../../../firebase";
 import { COL, RCOL } from "../../../constants/firestore-collections";
@@ -59,26 +90,19 @@ export interface UseHistoricalInventoryResult {
   error:                    string | null;
 }
 
+// ✅ Returns true if this item should be EXCLUDED from the historical
+// view for selectedDate — i.e. it was archived BEFORE selectedDate
+// (the archive date itself still shows the item). Legacy archived
+// items with no archivedAt recorded are always excluded (no date to
+// compare against).
 function isArchivedAsOfDate(meta: InventoryItem, selectedDate: string): boolean {
   if (meta.isActive !== false) return false; // never archived
   if (!meta.archivedAt) return true; // archived, but no date recorded — always hidden
   const archivedDate = toJsDate(meta.archivedAt);
   if (!archivedDate) return true;
-  const archivedDateKey = toDateKey(archivedDate);
-  const result = selectedDate >= archivedDateKey;
-
-  if (meta.itemName === "apple") {
-    console.log("[DEBUG apple isArchivedAsOfDate]", {
-      selectedDate,
-      isActive: meta.isActive,
-      archivedAtRaw: meta.archivedAt,
-      archivedDateParsed: archivedDate?.toString(),
-      archivedDateKey,
-      excluded: result,
-    });
-  }
-
-  return result;
+  // ✅ FIX — archive date itself still shows the item; hidden only
+  // from the following day onward.
+  return selectedDate > toDateKey(archivedDate);
 }
 
 export function useHistoricalInventory(
@@ -91,6 +115,12 @@ export function useHistoricalInventory(
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [movementsLoading, setMovementsLoading] = useState(true);
   const [movementsError, setMovementsError] = useState<string | null>(null);
+
+  // ✅ Persistent cache of the last-known categoryId for each
+  // inventoryId — populated whenever meta IS found, read when meta
+  // is missing. A plain ref, not state, since it's a side-channel
+  // cache and should not itself trigger a re-render.
+  const categoryByInventoryIdRef = useRef<Map<string, string | null>>(new Map());
 
   useEffect(() => {
     if (!restaurantId) {
@@ -118,14 +148,6 @@ export function useHistoricalInventory(
     return unsubscribe;
   }, [restaurantId]);
 
-  // ⚠️ TEMP DEBUG — log the raw inventoryItems array as soon as it changes
-  useEffect(() => {
-    console.log("[DEBUG inventoryItems array]", {
-      length: inventoryItems.length,
-      names: inventoryItems.map((i) => ({ name: i.itemName, id: i.id, isActive: i.isActive })),
-    });
-  }, [inventoryItems]);
-
   const { batchStates, closingQuantityByBatchId } = useMemo(() => {
     const movementsByBatchId = new Map<string, StockMovement[]>();
     for (const movement of movements) {
@@ -137,12 +159,6 @@ export function useHistoricalInventory(
     }
 
     const replayed = replayBatchesAsOfDate(batches, movements, selectedDate);
-
-    // ⚠️ TEMP DEBUG
-    const appleBatchesRaw = batches.filter((b) => b.itemName === "apple");
-    const appleReplayed = replayed.filter((s) => s.itemName === "apple");
-    console.log("[DEBUG apple batches raw]", appleBatchesRaw.map((b) => ({ id: b.id, inventoryId: b.inventoryId, receivedDate: b.receivedDate, quantity: b.quantity })));
-    console.log("[DEBUG apple replayed for", selectedDate, "]", appleReplayed.map((s) => ({ batchId: s.batchId, quantity: s.quantity, visible: s.visible, receivedDate: s.receivedDate })));
 
     const states: HistoricalBatchWithIssues[] = replayed.map((state) => ({
       ...state,
@@ -184,9 +200,6 @@ export function useHistoricalInventory(
     const itemMetaByInventoryId = new Map<string, InventoryItem>();
     for (const item of inventoryItems) itemMetaByInventoryId.set(item.id, item);
 
-    const appleMeta = inventoryItems.find((i) => i.itemName === "apple");
-    console.log("[DEBUG apple meta lookup]", appleMeta ? { id: appleMeta.id, isActive: appleMeta.isActive, archivedAt: appleMeta.archivedAt, categoryId: appleMeta.categoryId } : "NOT FOUND IN inventoryItems ARRAY");
-
     const byItem = new Map<string, HistoricalItemStock>();
 
     for (const state of batchStates) {
@@ -196,18 +209,25 @@ export function useHistoricalInventory(
       const existing = byItem.get(batch.inventoryId);
       const meta = itemMetaByInventoryId.get(batch.inventoryId);
 
-      if (state.itemName === "apple") {
-        console.log("[DEBUG apple in batchStates loop]", { batchId: state.batchId, inventoryId: batch.inventoryId, metaFound: !!meta, visible: state.visible, willInclude: !!meta && !isArchivedAsOfDate(meta, selectedDate) });
+      // ✅ Update the cache whenever meta IS found this render.
+      if (meta) {
+        categoryByInventoryIdRef.current.set(batch.inventoryId, meta.categoryId ?? null);
       }
 
-      if (!meta) continue; // item metadata truly not found — skip
+      // ✅ Only exclude for archive-date when meta is found. If meta
+      // is missing this render, never hide the item outright.
+      if (meta && isArchivedAsOfDate(meta, selectedDate)) continue;
 
-      if (isArchivedAsOfDate(meta, selectedDate)) continue;
+      // ✅ Resolve categoryId: prefer fresh meta, fall back to the
+      // cached last-known value if meta is missing this render.
+      const resolvedCategoryId = meta
+        ? (meta.categoryId ?? null)
+        : (categoryByInventoryIdRef.current.get(batch.inventoryId) ?? null);
 
       const entry: HistoricalItemStock = existing ?? {
         inventoryId:      batch.inventoryId,
         itemName:         state.itemName,
-        categoryId:       meta?.categoryId ?? null,
+        categoryId:       resolvedCategoryId,
         unit:             state.unit,
         historicalStock:  0,
         batches:          [],
