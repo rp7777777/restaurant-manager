@@ -10,13 +10,23 @@
 //    + text) → EditBatchModal.
 // ✅ Action grid pinned OUTSIDE the ScrollView, always visible at
 //    the bottom of the sheet.
-// ✅ NEW — InventoryBatchTable's "no batches yet" empty state is
-//    now tappable, wired to the SAME handleReceiveBatchPress used
-//    by the drawer's own "Receive Batch" action button — a single
-//    handler, two entry points (the dedicated action button, and
-//    the in-context prompt inside the batch section itself), both
-//    doing exactly the same thing (close this drawer, open
-//    ReceiveBatchModal via the parent's onReceiveBatch).
+// ✅ InventoryBatchTable's "no batches yet" empty state is tappable,
+//    wired to the SAME handleReceiveBatchPress used by the drawer's
+//    own "Receive Batch" action button.
+// ✅ NEW (Step 3 caller wiring, batch-level archive) —
+//    onArchiveBatch/onRestoreBatch now call
+//    archiveInventoryBatch()/restoreInventoryBatch()
+//    (inventory-batch-repository.ts) directly — a BATCH-level
+//    operation, completely separate from the item-level Archive/
+//    Restore action button (which still calls
+//    archiveInventoryItem()/restoreInventoryItem()). A local
+//    archivingBatchId state tracks which SINGLE row is mid-request,
+//    passed to InventoryBatchTable so only that row shows a spinner
+//    (the rest of the table, and the drawer's own item-level busy
+//    state, stay independent). No confirmation prompt for batch
+//    archive (unlike the item-level Archive, which confirms) — a
+//    single batch is a much lower-stakes, easily-reversible action
+//    reachable directly from its own row.
 // FROZEN
 // ============================================
 
@@ -30,6 +40,9 @@ import { Category } from "../types/category";
 import {
   archiveInventoryItem, restoreInventoryItem,
 } from "../services/inventory-item-service";
+import {
+  archiveInventoryBatch, restoreInventoryBatch,
+} from "../repository/inventory-batch-repository";
 import { useBatchesForItem } from "../hooks/useBatchesForItem";
 import { InventoryBatchTable } from "./InventoryBatchTable";
 import { InventoryBatch } from "../types/inventory-batch";
@@ -61,6 +74,7 @@ export function ItemDetailsDrawer({
 }: ItemDetailsDrawerProps) {
   const [busy, setBusy] = useState(false);
   const [editingBatch, setEditingBatch] = useState<InventoryBatch | undefined>(undefined);
+  const [archivingBatchId, setArchivingBatchId] = useState<string | null>(null);
 
   const { batches, loading: batchesLoading } = useBatchesForItem(restaurantId, item?.id);
 
@@ -130,6 +144,38 @@ export function ItemDetailsDrawer({
     }
   };
 
+  // ✅ Batch-level archive/restore — completely independent of the
+  // item-level Archive/Restore above. Only the tapped row's batchId
+  // is tracked as busy, so InventoryBatchTable shows a spinner on
+  // just that one row.
+  const handleArchiveBatch = async (batch: InventoryBatch) => {
+    if (archivingBatchId || !restaurantId) return;
+    setArchivingBatchId(batch.id);
+    try {
+      await archiveInventoryBatch(restaurantId, batch.id);
+    } catch (err: any) {
+      const msg = err?.message ?? "Failed to archive batch";
+      if (isWeb) window.alert(`Error: ${msg}`);
+      else Alert.alert("Error", msg);
+    } finally {
+      setArchivingBatchId(null);
+    }
+  };
+
+  const handleRestoreBatch = async (batch: InventoryBatch) => {
+    if (archivingBatchId || !restaurantId) return;
+    setArchivingBatchId(batch.id);
+    try {
+      await restoreInventoryBatch(restaurantId, batch.id);
+    } catch (err: any) {
+      const msg = err?.message ?? "Failed to restore batch";
+      if (isWeb) window.alert(`Error: ${msg}`);
+      else Alert.alert("Error", msg);
+    } finally {
+      setArchivingBatchId(null);
+    }
+  };
+
   return (
     <>
       <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
@@ -185,20 +231,6 @@ export function ItemDetailsDrawer({
               </View>
               <View style={styles.row}>
                 <Text style={styles.rowLabel}>Inventory Value</Text>
-                {/* ✅ FIX — computed live (currentStock × unitCost)
-                    instead of reading the stored item.totalValue
-                    field. Root cause of the "€NaN" bug: totalValue
-                    is a denormalized snapshot field that isn't
-                    guaranteed to be recomputed by every code path
-                    that changes currentStock (e.g. the DEV
-                    reconciliation script that fixed the "beer"/
-                    "water" stale-stock issue updated currentStock
-                    directly but never touched totalValue, leaving it
-                    undefined on any item it modified). Computing
-                    live from the two source values that are always
-                    present and correct (currentStock, unitCost)
-                    eliminates this entire class of staleness —
-                    there's no snapshot left to go stale. */}
                 <Text style={styles.rowValue}>{fmt(item.currentStock * item.unitCost)}</Text>
               </View>
               {item.storageLocation && (
@@ -214,6 +246,9 @@ export function ItemDetailsDrawer({
                 loading={batchesLoading}
                 onEditBatch={setEditingBatch}
                 onReceiveBatchPress={handleReceiveBatchPress}
+                onArchiveBatch={handleArchiveBatch}
+                onRestoreBatch={handleRestoreBatch}
+                archivingBatchId={archivingBatchId}
               />
 
               {(item.expiryDate || item.batchNo) && (
