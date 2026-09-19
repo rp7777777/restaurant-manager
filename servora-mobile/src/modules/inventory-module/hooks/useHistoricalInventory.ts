@@ -11,25 +11,11 @@
 // ✅ isArchivedAsOfDate() uses `selectedDate > toDateKey(archivedDate)`
 //    — the archive date itself still shows the item, hidden only
 //    from the following day onward.
-// ✅ FIX (this revision) — the metadata cache now stores the FULL
+// ✅ Metadata cache (metaSnapshotByInventoryIdRef) stores the FULL
 //    snapshot needed for the archive-date decision (isActive AND
-//    archivedAt), not just categoryId. Previously, when the live
-//    meta lookup missed for a render, the code could show a
-//    just-archived item's data under "Uncategorized" INSTEAD OF
-//    correctly hiding it — because `if (meta && isArchivedAsOfDate(...))`
-//    only ever ran the archive check when fresh meta was found; a
-//    missing lookup skipped the check entirely rather than falling
-//    back to a cached decision. Now: whenever fresh meta IS found,
-//    its full { categoryId, isActive, archivedAt } snapshot is
-//    cached. When meta is missing this render, the cached snapshot
-//    (if any) is used to run the EXACT SAME archive-date check, so
-//    an item correctly stays hidden past its archive date even
-//    during a render where the live lookup momentarily misses. Only
-//    truly never-seen items (no cache entry ever populated) fall
-//    through to being shown under Uncategorized as a last resort —
-//    this preserves the original goal (never silently drop real
-//    batch data) without letting a stale/missing lookup resurrect an
-//    item that should be hidden.
+//    archivedAt), not just categoryId — protects against a momentary
+//    meta-lookup miss incorrectly resurrecting an item that should
+//    be hidden, or showing it under Uncategorized.
 // ✅ CONFIRMED ARCHITECTURE — Option A: full movement history loaded
 //    ONCE via a single live subscription, kept in memory.
 // ✅ CONFIRMED FINAL SEMANTICS —
@@ -39,6 +25,20 @@
 //      quantity — computed HERE via same-date deduction subtraction.
 //    - itemsWithHistoricalStock excludes items whose batches are ALL
 //      invisible (depleted before selectedDate).
+// ✅ NEW — Total QTY now EXCLUDES a batch's own quantity starting on
+//    (and including) the exact date it was batch-level archived, per
+//    the confirmed rule: "archive date itself still shows the batch
+//    ROW (with its 'Archived' indicator), but Total QTY stops
+//    counting it from that same day onward" — NOT the day after
+//    (that's the item-level archive's own separate rule, unchanged).
+//    Example: batch archived 19 Sep — 18 Sep's Total QTY still
+//    includes it, 19 Sep's Total QTY excludes it (row still shows,
+//    marked Archived), 20 Sep the row itself is hidden entirely (via
+//    historical-batch-replay-service.ts's own visible:false, Step 4
+//    — unrelated to this Total QTY change). This does NOT modify
+//    batch.quantity itself (still preserved as historical/audit
+//    record) — only what gets summed into the item's displayed
+//    Total QTY for dates on/after the batch's own archive date.
 // ✅ depletedItems: items where EVERY one of their batches is
 //    depleted (invisible) as of selectedDate. depletedSince is the
 //    LATEST (max) depletedDate among the item's batches.
@@ -262,8 +262,19 @@ export function useHistoricalInventory(
       if (state.inconsistent) entry.hasInconsistency = true;
 
       if (state.visible) {
-        const closingQuantity = closingQuantityByBatchId.get(state.batchId) ?? state.quantity;
-        entry.historicalStock += closingQuantity;
+        // ✅ NEW — Total QTY excludes this batch's own quantity
+        // starting on (and including) its own archive date. The
+        // batch ROW itself still gets pushed below (still visible,
+        // still shows its "Archived" indicator via
+        // isBatchArchived/batchArchivedDate) — only the SUM changes.
+        const isArchivedOnOrBeforeSelectedDate =
+          state.isBatchArchived && state.batchArchivedDate !== null && selectedDate >= state.batchArchivedDate;
+
+        if (!isArchivedOnOrBeforeSelectedDate) {
+          const closingQuantity = closingQuantityByBatchId.get(state.batchId) ?? state.quantity;
+          entry.historicalStock += closingQuantity;
+        }
+
         entry.batches.push(state);
       }
 
