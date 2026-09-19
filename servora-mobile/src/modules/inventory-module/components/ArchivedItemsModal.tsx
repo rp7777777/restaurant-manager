@@ -1,32 +1,27 @@
 // ============================================
 // SERVORA ERP — ArchivedItemsModal Component
 // ✅ UI REDESIGN — category-grouped, batch-level table (matching
-//    HistoricalInventoryTableView's own design language), replacing
-//    the previous simple item-level card list.
-// ✅ NEW — "Archived Date" column shows item.archivedAt (formatted),
-//    so it's immediately clear WHEN each item was archived — needed
-//    to cross-check against Historical Inventory's date-navigated
-//    view (an item archived on 18 Sep should still show its real
-//    data for 13-18 Sep, hidden only from 19 Sep onward).
-// ✅ Batch-level rows: each archived item's batches (fetched via
-//    useAllInventoryBatches, same hook the Historical table uses)
-//    are listed individually under that item — Lot/Batch No. and
-//    Batch QTY are per-batch; Item Name, Archived Date, Unit are
-//    item-level (merged/vertically centered across that item's own
-//    batch rows), matching the merged-cell pattern used throughout
-//    Store/Kitchen/Historical tables in this app.
+//    HistoricalInventoryTableView's own design language).
+// ✅ "Archived Date" column shows item.archivedAt (formatted), now
+//    styled in red for visual emphasis — makes it immediately clear
+//    WHEN each item was archived, for cross-checking against
+//    Historical Inventory's date-navigated view.
+// ✅ Batch-level rows: each archived item's batches are listed
+//    individually under that item — Lot/Batch No. and Batch QTY are
+//    per-batch; Item Name, Archived Date, Unit are item-level
+//    (merged/vertically centered across that item's own batch rows).
+// ✅ NEW — column divider lines (vertical, absolute-positioned,
+//    matching Historical/Store/Kitchen tables' own divider pattern)
+//    added — previously this table had row borders but no vertical
+//    column separators.
+// ✅ NEW — table width fixed at exactly 900px (column widths tuned:
+//    sn 35 + item 220 + batch 210 + archived 105 + qty 90 + unit 65
+//    + action 175 = 900), matching the 900px convention used across
+//    Store/Kitchen Full Screen tables.
 // ✅ Category header shown ONLY with the category name (no date —
-//    each row already carries its own Archived Date, so a single
-//    header date would be misleading when items in the same
-//    category were archived on different dates).
+//    each row already carries its own Archived Date).
 // ✅ Restore calls restoreInventoryItem() (inventory-item-service.ts,
-//    FROZEN) — sets isActive back to true and clears archivedAt,
-//    which makes the item reappear in the live table immediately.
-// ✅ "View" action (chevron) — placeholder for a future detail view;
-//    for now, tapping it does nothing extra beyond what Restore
-//    already provides on this screen (kept as a visual affordance
-//    matching the other tables' "View" column, per the requested
-//    heading).
+//    FROZEN) — sets isActive back to true and clears archivedAt.
 // FROZEN
 // ============================================
 
@@ -74,8 +69,20 @@ interface ArchivedCategoryGroup {
 
 const UNCATEGORIZED_ID = "__uncategorized__";
 const ROW_HEIGHT = 26;
-const COLS = { sn: 35, item: 170, batch: 150, archived: 100, qty: 75, unit: 55, action: 60 };
+const COLS = { sn: 35, item: 220, batch: 210, archived: 105, qty: 90, unit: 65, action: 175 };
 const TABLE_WIDTH = COLS.sn + COLS.item + COLS.batch + COLS.archived + COLS.qty + COLS.unit + COLS.action;
+
+const DIVIDER_X_POSITIONS = (() => {
+  const positions: number[] = [];
+  let x = 0;
+  x += COLS.sn; positions.push(x);
+  x += COLS.item; positions.push(x);
+  x += COLS.batch; positions.push(x);
+  x += COLS.archived; positions.push(x);
+  x += COLS.qty; positions.push(x);
+  x += COLS.unit; positions.push(x);
+  return positions;
+})();
 
 function formatArchivedDate(archivedAt: unknown): string {
   if (!archivedAt) return "—";
@@ -89,6 +96,7 @@ export function ArchivedItemsModal({
   visible, items, categoryMap, restaurantId, fmt, onClose,
 }: ArchivedItemsModalProps) {
   const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [tableAreaHeights, setTableAreaHeights] = useState<Record<string, number>>({});
   const { batches, loading: batchesLoading } = useAllInventoryBatches(restaurantId);
 
   const archivedItems = useMemo(() => {
@@ -168,81 +176,110 @@ export function ArchivedItemsModal({
             </View>
           ) : (
             <View style={{ width: TABLE_WIDTH }}>
-              {categoryGroups.map((group) => (
-                <View key={group.categoryId} style={styles.categoryBlock}>
-                  <View style={styles.categoryHeader}>
-                    <Text style={styles.categoryHeaderText}>
-                      {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
-                    </Text>
-                  </View>
+              {categoryGroups.map((group) => {
+                const measuredHeight = tableAreaHeights[group.categoryId] ?? 0;
 
-                  <View style={styles.tableHeaderRow}>
-                    <Text style={[styles.headerCell, { width: COLS.sn }]}>S.N.</Text>
-                    <Text style={[styles.headerCell, { width: COLS.item }]}>Item Name</Text>
-                    <Text style={[styles.headerCell, { width: COLS.batch }]}>Lot/Batch No.</Text>
-                    <Text style={[styles.headerCell, styles.centerCell, { width: COLS.archived }]}>Archived Date</Text>
-                    <Text style={[styles.headerCell, styles.centerCell, { width: COLS.qty }]}>Batch QTY</Text>
-                    <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
-                    <Text style={[styles.headerCell, styles.centerCell, { width: COLS.action }]}>Action</Text>
-                  </View>
+                return (
+                  <View key={group.categoryId} style={styles.categoryBlock}>
+                    <View style={styles.categoryHeader}>
+                      <Text style={styles.categoryHeaderText}>
+                        {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
+                      </Text>
+                    </View>
 
-                  {group.items.map((item, itemIndex) => {
-                    const rows = item.batches.length > 0 ? item.batches : [null];
-                    const rowsHeight = rows.length * ROW_HEIGHT;
-                    const isEvenRow = itemIndex % 2 === 1;
-                    const isRestoringThis = restoringId === item.inventoryId;
-
-                    return (
-                      <View
-                        key={item.inventoryId}
-                        style={[styles.itemRow, { minHeight: rowsHeight }, isEvenRow && styles.itemRowAlt]}
-                      >
-                        <Text style={[styles.cell, { width: COLS.sn }]}>{itemIndex + 1}</Text>
-                        <Text style={[styles.cell, styles.itemNameCell, { width: COLS.item }]}>{item.itemName}</Text>
-
-                        <View style={{ width: COLS.batch }}>
-                          {rows.map((b, i) => (
-                            <View key={b ? b.batchId : "no-batch"} style={[styles.batchLine, { height: ROW_HEIGHT }, i < rows.length - 1 && styles.batchLineDivider]}>
-                              <Text style={styles.cell} numberOfLines={1}>{b ? b.batchNo : "—"}</Text>
-                            </View>
-                          ))}
-                        </View>
-
-                        <View style={[styles.mergedCell, { width: COLS.archived, minHeight: rowsHeight }]}>
-                          <Text style={[styles.cell, styles.centerCell]}>{item.archivedDate}</Text>
-                        </View>
-
-                        <View style={{ width: COLS.qty }}>
-                          {rows.map((b, i) => (
-                            <View key={b ? b.batchId : "no-batch"} style={[styles.batchLine, { height: ROW_HEIGHT }, i < rows.length - 1 && styles.batchLineDivider]}>
-                              <Text style={[styles.cell, styles.centerCell]}>{b ? b.quantity : "—"}</Text>
-                            </View>
-                          ))}
-                        </View>
-
-                        <View style={[styles.mergedCell, { width: COLS.unit, minHeight: rowsHeight }]}>
-                          <Text style={[styles.cell, styles.centerCell]}>{item.unit}</Text>
-                        </View>
-
-                        <View style={[styles.mergedCell, { width: COLS.action, minHeight: rowsHeight }]}>
-                          <TouchableOpacity
-                            style={styles.restoreBtn}
-                            onPress={() => handleRestore(item.inventoryId)}
-                            disabled={!!restoringId}
-                            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                          >
-                            {isRestoringThis ? (
-                              <ActivityIndicator size="small" color="#0369a1" />
-                            ) : (
-                              <MaterialIcons name="unarchive" size={16} color="#0369a1" />
-                            )}
-                          </TouchableOpacity>
-                        </View>
+                    <View
+                      style={styles.tableArea}
+                      onLayout={(e) => {
+                        const h = e.nativeEvent.layout.height;
+                        setTableAreaHeights((prev) =>
+                          prev[group.categoryId] === h ? prev : { ...prev, [group.categoryId]: h }
+                        );
+                      }}
+                    >
+                      <View style={styles.tableHeaderRow}>
+                        <Text style={[styles.headerCell, { width: COLS.sn }]}>S.N.</Text>
+                        <Text style={[styles.headerCell, { width: COLS.item }]}>Item Name</Text>
+                        <Text style={[styles.headerCell, { width: COLS.batch }]}>Lot/Batch No.</Text>
+                        <Text style={[styles.headerCell, styles.centerCell, { width: COLS.archived }]}>Archived Date</Text>
+                        <Text style={[styles.headerCell, styles.centerCell, { width: COLS.qty }]}>Batch QTY</Text>
+                        <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
+                        <Text style={[styles.headerCell, styles.centerCell, { width: COLS.action }]}>Action</Text>
                       </View>
-                    );
-                  })}
-                </View>
-              ))}
+
+                      {group.items.map((item, itemIndex) => {
+                        const rows = item.batches.length > 0 ? item.batches : [null];
+                        const rowsHeight = rows.length * ROW_HEIGHT;
+                        const isEvenRow = itemIndex % 2 === 1;
+                        const isRestoringThis = restoringId === item.inventoryId;
+
+                        return (
+                          <View
+                            key={item.inventoryId}
+                            style={[styles.itemRow, { minHeight: rowsHeight }, isEvenRow && styles.itemRowAlt]}
+                          >
+                            <Text style={[styles.cell, { width: COLS.sn }]}>{itemIndex + 1}</Text>
+                            <Text style={[styles.cell, styles.itemNameCell, { width: COLS.item }]}>{item.itemName}</Text>
+
+                            <View style={{ width: COLS.batch }}>
+                              {rows.map((b, i) => (
+                                <View key={b ? b.batchId : "no-batch"} style={[styles.batchLine, { height: ROW_HEIGHT }, i < rows.length - 1 && styles.batchLineDivider]}>
+                                  <Text style={styles.cell} numberOfLines={1}>{b ? b.batchNo : "—"}</Text>
+                                </View>
+                              ))}
+                            </View>
+
+                            <View style={[styles.mergedCell, { width: COLS.archived, minHeight: rowsHeight }]}>
+                              <Text style={[styles.cell, styles.centerCell, styles.archivedDateText]}>{item.archivedDate}</Text>
+                            </View>
+
+                            <View style={{ width: COLS.qty }}>
+                              {rows.map((b, i) => (
+                                <View key={b ? b.batchId : "no-batch"} style={[styles.batchLine, { height: ROW_HEIGHT }, i < rows.length - 1 && styles.batchLineDivider]}>
+                                  <Text style={[styles.cell, styles.centerCell]}>{b ? b.quantity : "—"}</Text>
+                                </View>
+                              ))}
+                            </View>
+
+                            <View style={[styles.mergedCell, { width: COLS.unit, minHeight: rowsHeight }]}>
+                              <Text style={[styles.cell, styles.centerCell]}>{item.unit}</Text>
+                            </View>
+
+                            <View style={[styles.mergedCell, { width: COLS.action, minHeight: rowsHeight }]}>
+                              <TouchableOpacity
+                                style={styles.restoreBtn}
+                                onPress={() => handleRestore(item.inventoryId)}
+                                disabled={!!restoringId}
+                                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                              >
+                                {isRestoringThis ? (
+                                  <ActivityIndicator size="small" color="#0369a1" />
+                                ) : (
+                                  <MaterialIcons name="unarchive" size={16} color="#0369a1" />
+                                )}
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        );
+                      })}
+
+                      {measuredHeight > 0 && DIVIDER_X_POSITIONS.map((x) => (
+                        <View
+                          key={x}
+                          pointerEvents="none"
+                          style={{
+                            position: "absolute",
+                            left: x,
+                            top: 0,
+                            height: measuredHeight + 4,
+                            width: 1,
+                            backgroundColor: "#94a3b8",
+                          }}
+                        />
+                      ))}
+                    </View>
+                  </View>
+                );
+              })}
             </View>
           )}
         </ScrollView>
@@ -272,6 +309,7 @@ const styles = StyleSheet.create({
   },
   categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.6 },
 
+  tableArea: { position: "relative" },
   tableHeaderRow: {
     flexDirection: "row", backgroundColor: "#f1f5f9",
     borderBottomWidth: 2, borderBottomColor: "#1e293b", paddingVertical: 6,
@@ -283,6 +321,7 @@ const styles = StyleSheet.create({
   itemRowAlt: { backgroundColor: "#f8fafc" },
   cell: { fontSize: 11, color: "#334155", paddingHorizontal: 4 },
   itemNameCell: { fontWeight: "700", color: "#0f172a", alignSelf: "center" },
+  archivedDateText: { color: "#dc2626", fontWeight: "700" },
 
   batchLine: { justifyContent: "center", paddingHorizontal: 4, paddingVertical: 2 },
   batchLineDivider: { borderBottomWidth: 1, borderBottomColor: "#94a3b8" },
