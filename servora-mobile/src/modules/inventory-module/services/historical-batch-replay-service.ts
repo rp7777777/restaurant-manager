@@ -16,29 +16,33 @@
 //      since same-date movements are now excluded from replay, a
 //      batch that becomes fully depleted ON selectedDate itself will
 //      NOT have depletedDate set to selectedDate by this function —
-//      that is expected and correct under opening-quantity semantics:
-//      this function no longer controls same-day visibility the way
-//      it did under the earlier (now reverted) closing-quantity
-//      design. Visibility (`visible`) still correctly reflects
-//      whether the batch had already been fully depleted on some
-//      PRIOR date, per this same opening-quantity replay.
+//      that is expected and correct under opening-quantity semantics.
 // ✅ CRITICAL — relevantMovements filters to an explicit
 //    DEDUCTING_MOVEMENT_TYPES allowlist (KITCHEN_ISSUE, WASTE,
 //    TRANSFER_OUT) BEFORE checking batchAllocations.
-// ✅ isRealStockDeduction() — EXPORTED (was private) so
-//    useHistoricalInventory.ts can reuse the EXACT SAME deduction
-//    rule when computing each batch's same-date closing quantity —
-//    never re-derived or duplicated.
-// ✅ toJsDate()/toDateKey() — EXPORTED (were private) for the same
-//    reason: useHistoricalInventory.ts needs identical date-parsing
-//    behavior (Firestore Timestamp vs JS Date, local-timezone date
-//    key) when checking "did this movement happen on selectedDate."
-// ✅ originalQuantity is EXPOSED on the returned state — the batch's
-//    original receipt quantity, fixed at creation, independent of
-//    selectedDate. Used by the "Received Qty" column (shown only
-//    when receivedDate === selectedDate).
+// ✅ isRealStockDeduction() — EXPORTED so useHistoricalInventory.ts
+//    can reuse the EXACT SAME deduction rule when computing each
+//    batch's same-date closing quantity — never re-derived.
+// ✅ toJsDate()/toDateKey() — EXPORTED for the same reason.
+// ✅ originalQuantity is EXPOSED on the returned state.
 // ✅ SAFETY — quantity is NEVER allowed to go negative. Malformed
 //    allocation quantities are caught and flagged inconsistent.
+// ✅ NEW (Step 4 of batch-level archive) — HistoricalBatchState now
+//    carries isBatchArchived + batchArchivedDate, so the UI can show
+//    a diagonal-line/badge indicator on an archived batch's row
+//    without needing to separately look up InventoryBatch.isActive.
+//    Archive visibility follows the SAME date-aware rule already
+//    used for item-level archive (isArchivedAsOfDate() in
+//    useHistoricalInventory.ts): the archive date itself STILL shows
+//    the batch (visible stays whatever the quantity-replay result
+//    was), hidden only from the day AFTER archivedAt onward — this
+//    check is applied AFTER the existing depletion-based visible
+//    calculation, so a batch that's both depleted AND archived stays
+//    correctly invisible either way, and an archived-but-not-yet-
+//    depleted batch is hidden only once its archive date has passed.
+//    This is INDEPENDENT of the parent InventoryItem's own archive —
+//    that's handled entirely in useHistoricalInventory.ts and never
+//    touches batch-level state.
 // FROZEN
 // ============================================
 
@@ -46,17 +50,19 @@ import { InventoryBatch } from "../types/inventory-batch";
 import { StockMovement } from "../../stock-movement-module/types/stock-movement";
 
 export interface HistoricalBatchState {
-  batchId:          string;
-  batchNo:          string;
-  itemName:         string;
-  unit:             string;
-  receivedDate:     string;    // YYYY-MM-DD
-  expiryDate:       string | null;
-  originalQuantity: number;
-  quantity:         number;    // OPENING quantity as of selectedDate
-  visible:          boolean;
-  depletedDate:     string | null;
-  inconsistent:     boolean;
+  batchId:            string;
+  batchNo:            string;
+  itemName:           string;
+  unit:               string;
+  receivedDate:       string;    // YYYY-MM-DD
+  expiryDate:         string | null;
+  originalQuantity:   number;
+  quantity:           number;    // OPENING quantity as of selectedDate
+  visible:            boolean;
+  depletedDate:       string | null;
+  inconsistent:       boolean;
+  isBatchArchived:    boolean;   // true if this batch itself was archived (independent of the parent item)
+  batchArchivedDate:  string | null; // YYYY-MM-DD the batch was archived on, or null if never
 }
 
 export function toJsDate(value: unknown): Date | null {
@@ -84,19 +90,43 @@ export function isRealStockDeduction(movement: StockMovement): boolean {
   return true;
 }
 
+// ✅ Returns true if this BATCH should be hidden for selectedDate due
+// to its own batch-level archive — i.e. archived BEFORE selectedDate
+// (the archive date itself still shows the batch). A batch with no
+// archivedAt recorded, or isActive !== false, is never hidden by
+// this check.
+function isBatchArchivedAsOfDate(batch: InventoryBatch, selectedDate: string): boolean {
+  if (batch.isActive !== false) return false;
+  if (!batch.archivedAt) return false; // archived flag set but no date — don't hide (conservative: never silently drop real data)
+  const archivedDate = toJsDate(batch.archivedAt);
+  if (!archivedDate) return false;
+  return selectedDate > toDateKey(archivedDate);
+}
+
+function getBatchArchivedDateKey(batch: InventoryBatch): string | null {
+  if (batch.isActive !== false || !batch.archivedAt) return null;
+  const d = toJsDate(batch.archivedAt);
+  return d ? toDateKey(d) : null;
+}
+
 export function replayBatchAsOfDate(
   batch: InventoryBatch,
   movements: StockMovement[],
   selectedDate: string
 ): HistoricalBatchState {
+  const batchArchivedDate = getBatchArchivedDateKey(batch);
+  const isBatchArchived = batch.isActive === false;
+
   const base: Omit<HistoricalBatchState, "quantity" | "visible" | "depletedDate" | "inconsistent"> = {
-    batchId:          batch.id,
-    batchNo:          batch.batchNo,
-    itemName:         batch.itemName,
-    unit:             batch.unit,
-    receivedDate:     batch.receivedDate,
-    expiryDate:       batch.expiryDate ?? null,
-    originalQuantity: batch.originalQuantity,
+    batchId:           batch.id,
+    batchNo:           batch.batchNo,
+    itemName:          batch.itemName,
+    unit:              batch.unit,
+    receivedDate:      batch.receivedDate,
+    expiryDate:        batch.expiryDate ?? null,
+    originalQuantity:  batch.originalQuantity,
+    isBatchArchived,
+    batchArchivedDate,
   };
 
   if (selectedDate < batch.receivedDate) {
@@ -119,8 +149,6 @@ export function replayBatchAsOfDate(
 
   // ✅ CONFIRMED FINAL SEMANTICS — opening quantity: excludes
   // selectedDate's own movements (`dateKey >= selectedDate` breaks).
-  // See FROZEN header for the full rationale and for how Total QTY
-  // (closing) is computed separately in useHistoricalInventory.ts.
   for (const { dateKey, movement } of relevantMovements) {
     if (dateKey >= selectedDate) break;
 
@@ -143,6 +171,14 @@ export function replayBatchAsOfDate(
 
   if (depletedDate !== null && selectedDate > depletedDate) {
     return { ...base, quantity: 0, visible: false, depletedDate, inconsistent };
+  }
+
+  // ✅ Batch-level archive check — applied AFTER the depletion-based
+  // visibility above, so an already-invisible (depleted) batch stays
+  // invisible either way, and an archived-but-still-stocked batch
+  // becomes invisible only once its own archive date has passed.
+  if (isBatchArchivedAsOfDate(batch, selectedDate)) {
+    return { ...base, quantity, visible: false, depletedDate, inconsistent };
   }
 
   return { ...base, quantity, visible: true, depletedDate, inconsistent };
