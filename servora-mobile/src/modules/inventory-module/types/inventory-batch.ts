@@ -124,7 +124,7 @@ export interface CreateInventoryBatchInput {
 //    item's total stock) regardless of status. Depleted batches (0)
 //    stay in Firestore for audit but are filtered out here. ──
 export function isActiveBatch(batch: InventoryBatch): boolean {
-  return batch.quantity > 0;
+  return batch.quantity > 0 && batch.isActive !== false;
 }
 
 // ── A batch is eligible to be drawn from during FEFO deduction only
