@@ -523,10 +523,10 @@ export function HistoricalInventoryTableView({
                                 {batch.receivedDate}
                               </Text>
                               <View style={{ width: RIGHT_COLS.batch, position: "relative" }}>
-                                <Text style={[styles.tableCell, batch.isBatchArchived && styles.archivedBatchNoText]} numberOfLines={1}>
+                                <Text style={[styles.tableCell, isArchivedToday && styles.archivedBatchNoText]} numberOfLines={1}>
                                   {batch.batchNo}
                                 </Text>
-                                {batch.isBatchArchived && <View style={styles.diagonalStrike} pointerEvents="none" />}
+                                {isArchivedToday && <View style={styles.diagonalStrike} pointerEvents="none" />}
                               </View>
                               <Text style={[styles.tableCell, styles.receivedQtyCell, { width: RIGHT_COLS.receivedQty }]}>
                                 {wasReceivedToday ? String(batch.originalQuantity) : "—"}
