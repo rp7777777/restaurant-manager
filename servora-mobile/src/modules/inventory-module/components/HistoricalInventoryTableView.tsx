@@ -19,31 +19,36 @@
 // ✅ Category header shows the currently-viewed date (always the
 //    actual formatted date, never "Today").
 // ✅ Received Date/Lot-Batch-No/Issue/Unit/Expiry are vertically
-//    center-aligned within each batch row (batchRow alignItems:
-//    "center", was "flex-start").
+//    center-aligned within each batch row.
 // ✅ Issue column: batches with MORE THAN 2 entries show them PAIRED,
 //    2 entries per line joined by " / ". 1-2 entries render on a
 //    single line joined by " • ".
-// ✅ batch-to-batch divider line (within a multi-batch item)
-//    darkened to match the visibility of other table lines.
+// ✅ batch-to-batch divider line darkened to match other table lines.
 // ✅ Edit arrow icon is red (#dc2626). Lot/Batch QTY and Total QTY
 //    numbers are fixed black (#0f172a).
 // ✅ Column widths fit within 900px without horizontal scrolling.
-//    Text wrapping (no numberOfLines truncation) on Item Name/Batch No.
 // ✅ oosRow uses minHeight so wrapped text never clips.
-// ✅ FIX — Out of Stock filter (Today mode only) now guards against
-//    archived items leaking in: `inventoryItems` now receives the
-//    FULL (unfiltered) item list from InventoryScreen (needed so
-//    useHistoricalInventory's internal metadata lookup can correctly
-//    resolve each archived item's own isActive/archivedAt/categoryId
-//    for the main historical table). Since Out of Stock reads
-//    directly from `inventoryItems` rather than the already-archive-
-//    aware itemsWithHistoricalStock, this is a defensive backstop:
-//    `isHistorical || item.isActive !== false` — Historical mode
-//    (isHistorical === true) never reaches this branch anyway (Out
-//    of Stock is Today-only, per the isShowingOutOfStock guard
-//    below), so this only actually filters in Today mode, where it
-//    now correctly excludes archived items from ever appearing.
+// ✅ Out of Stock filter (Today mode only) guards against archived
+//    items leaking in via `isHistorical || item.isActive !== false`.
+// ✅ NEW (Step 5 of batch-level archive, UI-only — no hook/service
+//    changes) —
+//    - Lot/Batch No. cell: an archived batch (batch.isBatchArchived)
+//      shows its batch number in muted gray with a diagonal red
+//      strike line overlaid (position: absolute, rotated -8deg) —
+//      only that cell is struck, not the whole row.
+//    - Issue column: on the EXACT date the batch was archived
+//      (batch.batchArchivedDate === selectedDate), an "Archived"
+//      line is shown ABOVE any real issue data for that date — real
+//      issue data (if any) is NEVER hidden or replaced, it renders
+//      normally right below. On any other date, the Issue column
+//      behaves exactly as before (no "—" placeholder is shown
+//      alongside "Archived" when there's no real issue that day —
+//      "Archived" itself fills that visual slot).
+//    - Both come entirely from HistoricalBatchState fields already
+//      forwarded by useHistoricalInventory.ts (no changes needed
+//      there) — isBatchArchived/batchArchivedDate, set by
+//      historical-batch-replay-service.ts's own batch-level archive
+//      check (Step 4).
 // FROZEN
 // ============================================
 
@@ -245,9 +250,6 @@ export function HistoricalInventoryTableView({
 
   const outOfStockGroups = useMemo<OutOfStockGroup[]>(() => {
     const depletedSinceByInventoryId = new Map(depletedItems.map((d) => [d.inventoryId, d.depletedSince]));
-    // ✅ Defensive guard: never show an archived item under Out of
-    // Stock. isHistorical is included in the condition for clarity/
-    // symmetry, but this branch only ever renders in Today mode.
     const outOfStockItems = inventoryItems.filter(
       (item) => (isHistorical || item.isActive !== false) && item.currentStock <= 0
     );
@@ -502,6 +504,7 @@ export function HistoricalInventoryTableView({
                         {item.batches.map((batch, batchIndex) => {
                           const batchRowHeight = getBatchRowHeight(batch.issues.length);
                           const wasReceivedToday = batch.receivedDate === selectedDate;
+                          const isArchivedToday = batch.isBatchArchived && batch.batchArchivedDate === selectedDate;
 
                           return (
                             <View
@@ -519,13 +522,21 @@ export function HistoricalInventoryTableView({
                               ]}>
                                 {batch.receivedDate}
                               </Text>
-                              <Text style={[styles.tableCell, { width: RIGHT_COLS.batch }]}>{batch.batchNo}</Text>
+                              <View style={{ width: RIGHT_COLS.batch, position: "relative" }}>
+                                <Text style={[styles.tableCell, batch.isBatchArchived && styles.archivedBatchNoText]} numberOfLines={1}>
+                                  {batch.batchNo}
+                                </Text>
+                                {batch.isBatchArchived && <View style={styles.diagonalStrike} pointerEvents="none" />}
+                              </View>
                               <Text style={[styles.tableCell, styles.receivedQtyCell, { width: RIGHT_COLS.receivedQty }]}>
                                 {wasReceivedToday ? String(batch.originalQuantity) : "—"}
                               </Text>
                               <View style={{ width: RIGHT_COLS.issue }}>
+                                {isArchivedToday && (
+                                  <Text style={[styles.tableCell, styles.archivedIndicatorText]}>Archived</Text>
+                                )}
                                 {batch.issues.length === 0 ? (
-                                  <Text style={[styles.tableCell, styles.issueCell]}>—</Text>
+                                  !isArchivedToday && <Text style={[styles.tableCell, styles.issueCell]}>—</Text>
                                 ) : batch.issues.length <= 2 ? (
                                   <Text style={[styles.tableCell, styles.issueCell]} numberOfLines={1}>
                                     {batch.issues.map((iss) => `${iss.quantity} ${batch.unit} ${iss.source}`).join(" • ")}
@@ -675,6 +686,13 @@ const styles = StyleSheet.create({
   issueMultiLine: { marginBottom: 1 },
   batchQtyCell: { fontWeight: "800", fontSize: 11, color: "#0f172a", textAlign: "center" },
   totalCell: { fontWeight: "800", fontSize: 11, color: "#0f172a", textAlign: "center" },
+  archivedBatchNoText: { color: "#94a3b8" },
+  diagonalStrike: {
+    position: "absolute", left: 0, right: 0, top: "50%",
+    height: 1.5, backgroundColor: "#dc2626",
+    transform: [{ rotate: "-8deg" }],
+  },
+  archivedIndicatorText: { color: "#dc2626", fontWeight: "800", fontStyle: "italic" },
   oosTableHeaderRow: {
     flexDirection: "row", backgroundColor: "#f1f5f9",
     borderBottomWidth: 2, borderBottomColor: "#1e293b", paddingVertical: 8, paddingHorizontal: 10,
