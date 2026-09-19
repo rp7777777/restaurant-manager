@@ -48,6 +48,20 @@
 //    inventory-batch-repository.ts's updateBatchQuantity()/
 //    updateBatchStatus() — never by createInventoryBatch() (a fresh
 //    batch has no "update" yet).
+// ✅ NEW — isActive/archivedAt: batch-level archive, INDEPENDENT of
+//    the parent InventoryItem.isActive. Archiving one batch never
+//    affects the item or its other batches (e.g. Item has Batch A
+//    archived, Batch B/C still active — the item itself stays fully
+//    live). Archiving is a visibility/lifecycle flag, NOT a stock
+//    removal — an archived batch's quantity is intentionally still
+//    counted by isActiveBatch()/calculateTotalFromBatches() (stays
+//    in currentStock/history), but is EXCLUDED from FEFO deduction
+//    eligibility (see isEligibleForFEFO() below) — an archived batch
+//    must never be drawn from again. Same date-aware semantics as
+//    InventoryItem.archivedAt: the archive date itself still shows
+//    the batch, hidden only from the following day onward (UI/
+//    historical-replay visibility logic — later steps, not yet
+//    wired here).
 // FROZEN
 // ============================================
 
@@ -82,6 +96,12 @@ export interface InventoryBatch {
                                // creation — see repository FROZEN header
   createdAt?:        unknown;
   updatedAt?:         unknown;
+  isActive?:        boolean;  // undefined/true = active. Batch-level
+                               // archive, INDEPENDENT of the parent
+                               // InventoryItem.isActive.
+  archivedAt?:      unknown;  // Firestore Timestamp of when this batch
+                               // was archived — null/undefined when
+                               // never archived.
 }
 
 export interface CreateInventoryBatchInput {
@@ -108,9 +128,10 @@ export function isActiveBatch(batch: InventoryBatch): boolean {
 }
 
 // ── A batch is eligible to be drawn from during FEFO deduction only
-//    if it has remaining quantity AND its status is ACTIVE. ──
+//    if it has remaining quantity, its status is ACTIVE, AND it has
+//    not been batch-level archived. ──
 export function isEligibleForFEFO(batch: InventoryBatch): boolean {
-  return batch.quantity > 0 && batch.status === "ACTIVE";
+  return batch.quantity > 0 && batch.status === "ACTIVE" && batch.isActive !== false;
 }
 
 // ── Sum of all batches with remaining quantity for one item — this

@@ -14,21 +14,22 @@
 //    ASCENDING — NOT FEFO order.
 // ✅ subscribeAllBatches() — restaurant-wide live subscription, for
 //    InventoryBatchReport / InventoryTableView.
-// ✅ NEW — updateBatchDetails() (correction/typo-fix support):
-//    for a HUMAN correcting a mistake — a mistyped batchNo, a wrong
+// ✅ updateBatchDetails() (correction/typo-fix support): for a
+//    HUMAN correcting a mistake — a mistyped batchNo, a wrong
 //    expiryDate, or a mis-keyed quantity. Distinct from
 //    updateBatchQuantity() (the FEFO engine's deduction path) and
 //    updateBatchStatus() (lifecycle changes) — this is the manual-
-//    correction entry point. Updates whichever of batchNo/
-//    expiryDate/quantity are provided (all optional). Does NOT
-//    check for duplicate batchNo across batches the way
-//    createInventoryBatch() does at creation time — an accepted gap
-//    for this manual-correction path, not the automated receiving
-//    path. Does NOT touch status/unitCost/purchaseDate/
-//    receivedDate/supplierId/locationId/notes — outside this
-//    correction flow's confirmed scope.
+//    correction entry point.
+// ✅ NEW — archiveInventoryBatch()/restoreInventoryBatch() (Step 2
+//    of batch-level archive rollout): sets/clears isActive+
+//    archivedAt on the BATCH document only — never touches the
+//    parent InventoryItem or any other batch. Both check the batch
+//    actually exists first (getDoc) and throw a clear error if not,
+//    same pattern as getBatchById(). No transaction needed — this
+//    is a single-document field update, same as updateBatchStatus().
 // ✅ No delete function — batches are never deleted, only depleted
-//    or status-changed. This preserves the audit trail permanently.
+//    or status-changed/archived. This preserves the audit trail
+//    permanently.
 // FROZEN
 // ============================================
 
@@ -269,4 +270,51 @@ export function subscribeAllBatches(
     },
     (err) => onError?.(err)
   );
+}
+
+// ── Batch-level archive — INDEPENDENT of InventoryItem.isActive.
+//    Archiving/restoring a single batch never touches the parent
+//    item or its other batches. See FROZEN header. ──
+export async function archiveInventoryBatch(
+  restaurantId: string,
+  batchId: string
+): Promise<void> {
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
+
+  const snap = await getDoc(batchDoc(restaurantId, batchId));
+  if (!snap.exists()) throw new Error("Batch not found");
+  const existing = snap.data() as Omit<InventoryBatch, "id">;
+  if (existing.isActive === false) {
+    throw new Error("This batch is already archived");
+  }
+
+  await updateDoc(batchDoc(restaurantId, batchId), {
+    isActive:   false,
+    archivedAt: serverTimestamp(),
+    updatedAt:  serverTimestamp(),
+    updatedBy:  auth.currentUser.uid,
+  });
+}
+
+export async function restoreInventoryBatch(
+  restaurantId: string,
+  batchId: string
+): Promise<void> {
+  if (!restaurantId) throw new Error("Restaurant not configured");
+  if (!auth.currentUser) throw new Error("User not authenticated");
+
+  const snap = await getDoc(batchDoc(restaurantId, batchId));
+  if (!snap.exists()) throw new Error("Batch not found");
+  const existing = snap.data() as Omit<InventoryBatch, "id">;
+  if (existing.isActive !== false) {
+    throw new Error("This batch is not archived");
+  }
+
+  await updateDoc(batchDoc(restaurantId, batchId), {
+    isActive:   true,
+    archivedAt: null,
+    updatedAt:  serverTimestamp(),
+    updatedBy:  auth.currentUser.uid,
+  });
 }
