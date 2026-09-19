@@ -19,16 +19,23 @@
 //    discriminated union: newItem/existingItem/edit — UNCHANGED.
 // ✅ ARCHITECTURE NOTE — purchaseDate is currently set equal to
 //    receivedDate for the "existingItem" (Receive Batch) path.
-// ✅ FIX — activeItems (isActive-filtered) is now ONLY used for the
-//    "current/live" concerns: HistoricalInventoryTableView's
-//    inventoryItems prop (category-name lookups, and Today-mode's
-//    own display, which should never show archived items). It is
-//    NO LONGER passed into useHistoricalInventory() — that hook now
-//    receives the full, unfiltered `items` and does its own
-//    date-aware archivedAt check internally, so an item archived
-//    today still correctly shows its real historical data for any
-//    date BEFORE it was archived (history doesn't retroactively
-//    change just because an item was archived later).
+// ✅ FIX (root cause of the missing archived items in Historical
+//    Inventory bug — e.g. sushi rice/tuna/oil not appearing on their
+//    valid historical dates) — HistoricalInventoryTableView's own
+//    inventoryItems prop was STILL passed activeItems (isActive-
+//    filtered), even though useHistoricalInventory (called INSIDE
+//    HistoricalInventoryTableView, not here) needs the FULL,
+//    unfiltered item list to look up each archived item's own
+//    isActive/archivedAt/categoryId metadata. With activeItems, that
+//    internal meta lookup missed for every archived item, so the
+//    archive-date check inside useHistoricalInventory never ran at
+//    all for them — which (combined with the hook's own "never
+//    silently drop real batch data" safety fallback) meant archived
+//    items either vanished entirely or fell back to "Uncategorized"
+//    depending on cache state, rather than correctly showing on
+//    dates before their archive date and hiding after. Now passes
+//    the full `items` (archived items included) so the hook can make
+//    its own correct, date-aware decision per item.
 // FROZEN
 // ============================================
 
@@ -88,12 +95,7 @@ export default function InventoryScreen() {
   const [tableCategoryId, setTableCategoryId] = React.useState<string | null>(null);
   const [tableSort, setTableSort] = React.useState<"name-asc" | "stock-asc">("name-asc");
   const [showFullScreenTable, setShowFullScreenTable] = React.useState(false);
-  
 
-  const activeItems = useMemo(() => items.filter((item) => item.isActive !== false), [items]);
-  // ✅ FIX — pass ALL items (not activeItems) so the hook's own
-  // date-aware archivedAt check can decide per-date, instead of
-  // archived items being excluded from every date unconditionally.
   const { itemsWithHistoricalStock } = useHistoricalInventory(restaurantId, selectedDate, items);
   const historicalStats = useHistoricalInventoryStats(
     itemsWithHistoricalStock,
@@ -288,7 +290,7 @@ export default function InventoryScreen() {
         restaurantId={safeRestaurantId}
         selectedDate={selectedDate}
         categories={categories}
-        inventoryItems={activeItems}
+        inventoryItems={items}
         searchQuery={tableSearchQuery}
         setSearchQuery={setTableSearchQuery}
         categoryId={tableCategoryId}

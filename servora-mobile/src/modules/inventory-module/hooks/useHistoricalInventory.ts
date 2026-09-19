@@ -8,27 +8,28 @@
 // ✅ Archived items still show real historical batches/movements for
 //    any selectedDate up to AND INCLUDING archivedAt's own date, and
 //    are hidden from the day AFTER archivedAt onward.
-// ✅ FIX — isArchivedAsOfDate() was using `selectedDate >=
-//    toDateKey(archivedDate)`, which incorrectly hid the item on its
-//    OWN archive date too (the item was still active for part of
-//    that day). Changed to `selectedDate > toDateKey(archivedDate)`
-//    — the archive date itself now shows the item, hidden only from
-//    the following day onward. E.g. received 15 Sep, archived 18
-//    Sep: 15/16/17/18 Sep all show it, 19 Sep onward hides it.
-// ✅ FIX — item metadata lookup (from inventoryItems) can
-//    intermittently miss for a given inventoryId across renders (an
-//    observed timing inconsistency between useInventory()'s and
-//    useAllInventoryBatches()'s independent Firestore listeners —
-//    not yet root-caused with certainty). Two layers of defense:
-//    1) A persistent cache (categoryByInventoryIdRef) remembers the
-//       last-known categoryId for each inventoryId the FIRST time
-//       meta was successfully found, used as a fallback when meta is
-//       missing this render — prevents items from incorrectly
-//       appearing under "Uncategorized" due to a transient lookup
-//       miss.
-//    2) The archive-date exclusion only runs when meta IS found this
-//       render — if meta is missing, the item is never hidden
-//       outright (real batch data is never silently dropped).
+// ✅ isArchivedAsOfDate() uses `selectedDate > toDateKey(archivedDate)`
+//    — the archive date itself still shows the item, hidden only
+//    from the following day onward.
+// ✅ FIX (this revision) — the metadata cache now stores the FULL
+//    snapshot needed for the archive-date decision (isActive AND
+//    archivedAt), not just categoryId. Previously, when the live
+//    meta lookup missed for a render, the code could show a
+//    just-archived item's data under "Uncategorized" INSTEAD OF
+//    correctly hiding it — because `if (meta && isArchivedAsOfDate(...))`
+//    only ever ran the archive check when fresh meta was found; a
+//    missing lookup skipped the check entirely rather than falling
+//    back to a cached decision. Now: whenever fresh meta IS found,
+//    its full { categoryId, isActive, archivedAt } snapshot is
+//    cached. When meta is missing this render, the cached snapshot
+//    (if any) is used to run the EXACT SAME archive-date check, so
+//    an item correctly stays hidden past its archive date even
+//    during a render where the live lookup momentarily misses. Only
+//    truly never-seen items (no cache entry ever populated) fall
+//    through to being shown under Uncategorized as a last resort —
+//    this preserves the original goal (never silently drop real
+//    batch data) without letting a stale/missing lookup resurrect an
+//    item that should be hidden.
 // ✅ CONFIRMED ARCHITECTURE — Option A: full movement history loaded
 //    ONCE via a single live subscription, kept in memory.
 // ✅ CONFIRMED FINAL SEMANTICS —
@@ -90,18 +91,35 @@ export interface UseHistoricalInventoryResult {
   error:                    string | null;
 }
 
+// ✅ The minimal snapshot of item metadata needed for the archive-
+// date decision + display. Cached per-inventoryId so a momentary
+// live-lookup miss can still make the correct archive/show decision.
+interface MetaSnapshot {
+  categoryId: string | null;
+  isActive:   boolean;
+  archivedAt: unknown;
+}
+
+function toMetaSnapshot(meta: InventoryItem): MetaSnapshot {
+  return {
+    categoryId: meta.categoryId ?? null,
+    isActive:   meta.isActive !== false,
+    archivedAt: meta.archivedAt ?? null,
+  };
+}
+
 // ✅ Returns true if this item should be EXCLUDED from the historical
 // view for selectedDate — i.e. it was archived BEFORE selectedDate
 // (the archive date itself still shows the item). Legacy archived
 // items with no archivedAt recorded are always excluded (no date to
 // compare against).
-function isArchivedAsOfDate(meta: InventoryItem, selectedDate: string): boolean {
-  if (meta.isActive !== false) return false; // never archived
-  if (!meta.archivedAt) return true; // archived, but no date recorded — always hidden
-  const archivedDate = toJsDate(meta.archivedAt);
+function isArchivedAsOfDate(snapshot: MetaSnapshot, selectedDate: string): boolean {
+  if (snapshot.isActive) return false; // never archived
+  if (!snapshot.archivedAt) return true; // archived, but no date recorded — always hidden
+  const archivedDate = toJsDate(snapshot.archivedAt);
   if (!archivedDate) return true;
-  // ✅ FIX — archive date itself still shows the item; hidden only
-  // from the following day onward.
+  // Archive date itself still shows the item; hidden only from the
+  // following day onward.
   return selectedDate > toDateKey(archivedDate);
 }
 
@@ -116,11 +134,12 @@ export function useHistoricalInventory(
   const [movementsLoading, setMovementsLoading] = useState(true);
   const [movementsError, setMovementsError] = useState<string | null>(null);
 
-  // ✅ Persistent cache of the last-known categoryId for each
-  // inventoryId — populated whenever meta IS found, read when meta
-  // is missing. A plain ref, not state, since it's a side-channel
-  // cache and should not itself trigger a re-render.
-  const categoryByInventoryIdRef = useRef<Map<string, string | null>>(new Map());
+  // ✅ Persistent cache of the last-known FULL metadata snapshot for
+  // each inventoryId — populated whenever meta IS found, read (for
+  // both the archive check AND the display categoryId) when meta is
+  // missing this render. A plain ref, not state, since it's a
+  // side-channel cache and should not itself trigger a re-render.
+  const metaSnapshotByInventoryIdRef = useRef<Map<string, MetaSnapshot>>(new Map());
 
   useEffect(() => {
     if (!restaurantId) {
@@ -209,20 +228,26 @@ export function useHistoricalInventory(
       const existing = byItem.get(batch.inventoryId);
       const meta = itemMetaByInventoryId.get(batch.inventoryId);
 
-      // ✅ Update the cache whenever meta IS found this render.
+      // ✅ Resolve the snapshot to use for THIS render: fresh meta
+      // if found (and update the cache with it), otherwise fall
+      // back to whatever was last cached for this inventoryId.
+      let snapshot: MetaSnapshot | undefined;
       if (meta) {
-        categoryByInventoryIdRef.current.set(batch.inventoryId, meta.categoryId ?? null);
+        snapshot = toMetaSnapshot(meta);
+        metaSnapshotByInventoryIdRef.current.set(batch.inventoryId, snapshot);
+      } else {
+        snapshot = metaSnapshotByInventoryIdRef.current.get(batch.inventoryId);
       }
 
-      // ✅ Only exclude for archive-date when meta is found. If meta
-      // is missing this render, never hide the item outright.
-      if (meta && isArchivedAsOfDate(meta, selectedDate)) continue;
+      // ✅ Run the SAME archive check regardless of whether this
+      // render's meta was fresh or cached — a just-archived item
+      // stays correctly hidden past its archive date even during a
+      // render where the live lookup momentarily misses. Only items
+      // with NO snapshot at all (never once seen) fall through
+      // unfiltered, as a last-resort "never drop real data" guard.
+      if (snapshot && isArchivedAsOfDate(snapshot, selectedDate)) continue;
 
-      // ✅ Resolve categoryId: prefer fresh meta, fall back to the
-      // cached last-known value if meta is missing this render.
-      const resolvedCategoryId = meta
-        ? (meta.categoryId ?? null)
-        : (categoryByInventoryIdRef.current.get(batch.inventoryId) ?? null);
+      const resolvedCategoryId = snapshot?.categoryId ?? null;
 
       const entry: HistoricalItemStock = existing ?? {
         inventoryId:      batch.inventoryId,

@@ -21,23 +21,29 @@
 // ✅ Received Date/Lot-Batch-No/Issue/Unit/Expiry are vertically
 //    center-aligned within each batch row (batchRow alignItems:
 //    "center", was "flex-start").
-// ✅ NEW — Issue column: batches with MORE THAN 2 entries now show
-//    them PAIRED, 2 entries per line joined by " / ", instead of one
-//    entry per line — reduces row height for batches with many
-//    issues (e.g. 4 entries -> 2 lines, not 4). 1-2 entries still
-//    render on a single line joined by " • ", unchanged.
-//    getBatchRowHeight() updated to match: height scales by
-//    ceil(issueCount / 2) lines, not issueCount lines.
-// ✅ NEW — batch-to-batch divider line (within a multi-batch item)
-//    darkened (#cbd5e1 -> #94a3b8) to match the visibility of other
-//    table lines. (Known remaining cosmetic gap: this divider spans
-//    only the batch-detail columns, not the item-level Total QTY/
-//    Edit columns to their right — deferred, not fixed here.)
+// ✅ Issue column: batches with MORE THAN 2 entries show them PAIRED,
+//    2 entries per line joined by " / ". 1-2 entries render on a
+//    single line joined by " • ".
+// ✅ batch-to-batch divider line (within a multi-batch item)
+//    darkened to match the visibility of other table lines.
 // ✅ Edit arrow icon is red (#dc2626). Lot/Batch QTY and Total QTY
 //    numbers are fixed black (#0f172a).
 // ✅ Column widths fit within 900px without horizontal scrolling.
 //    Text wrapping (no numberOfLines truncation) on Item Name/Batch No.
 // ✅ oosRow uses minHeight so wrapped text never clips.
+// ✅ FIX — Out of Stock filter (Today mode only) now guards against
+//    archived items leaking in: `inventoryItems` now receives the
+//    FULL (unfiltered) item list from InventoryScreen (needed so
+//    useHistoricalInventory's internal metadata lookup can correctly
+//    resolve each archived item's own isActive/archivedAt/categoryId
+//    for the main historical table). Since Out of Stock reads
+//    directly from `inventoryItems` rather than the already-archive-
+//    aware itemsWithHistoricalStock, this is a defensive backstop:
+//    `isHistorical || item.isActive !== false` — Historical mode
+//    (isHistorical === true) never reaches this branch anyway (Out
+//    of Stock is Today-only, per the isShowingOutOfStock guard
+//    below), so this only actually filters in Today mode, where it
+//    now correctly excludes archived items from ever appearing.
 // FROZEN
 // ============================================
 
@@ -123,8 +129,6 @@ const OOS_COLS = { sn: 50, item: 260, date: 160, note: 180 };
 
 const UNCATEGORIZED_ID = "__uncategorized__";
 
-// ✅ UPDATED — 2 issue entries per line (was 1 per line for >2
-// entries). issueCount <= 2 stays a single line.
 function getBatchRowHeight(issueCount: number): number {
   if (issueCount <= 2) return ROW_HEIGHT;
   const lineCount = Math.ceil(issueCount / 2);
@@ -241,7 +245,12 @@ export function HistoricalInventoryTableView({
 
   const outOfStockGroups = useMemo<OutOfStockGroup[]>(() => {
     const depletedSinceByInventoryId = new Map(depletedItems.map((d) => [d.inventoryId, d.depletedSince]));
-    const outOfStockItems = inventoryItems.filter((item) => item.currentStock <= 0);
+    // ✅ Defensive guard: never show an archived item under Out of
+    // Stock. isHistorical is included in the condition for clarity/
+    // symmetry, but this branch only ever renders in Today mode.
+    const outOfStockItems = inventoryItems.filter(
+      (item) => (isHistorical || item.isActive !== false) && item.currentStock <= 0
+    );
 
     const rows: OutOfStockRow[] = outOfStockItems
       .filter((item) => {
@@ -279,7 +288,7 @@ export function HistoricalInventoryTableView({
     }
     groups.sort((a, b) => a.categoryName.localeCompare(b.categoryName));
     return groups;
-  }, [depletedItems, inventoryItems, categories, categoryId, searchQuery]);
+  }, [depletedItems, inventoryItems, categories, categoryId, searchQuery, isHistorical]);
 
   if (loading) {
     return <ActivityIndicator size="large" color={theme.headerBg} style={styles.loadingIndicator} />;
