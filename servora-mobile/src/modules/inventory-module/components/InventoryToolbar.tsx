@@ -5,13 +5,13 @@
 // ✅ Pure presentation — no state, no Firestore calls.
 // ✅ "Batch Report" and "Archived" buttons alongside "Add Item".
 // ✅ "Movement History" button, opening MovementHistoryModal.
-// ✅ FIX — "History" button now has its own distinct highlight color
-//    (indigo, #4f46e5) instead of the same plain grey as "Archived"
-//    — previously the two buttons were visually indistinguishable
-//    at a glance, making it harder to spot History quickly. The
-//    indigo tint ties it visually to MovementHistoryModal's own
-//    "history" iconography without needing to touch that FROZEN
-//    file.
+// ✅ "History" button has its own distinct highlight color (indigo,
+//    #4f46e5) instead of the same plain grey as "Archived".
+// ✅ NEW — "Monthly Report" button (Step 3 of the Inventory Monthly
+//    Report feature), opening InventoryMonthlyReportScreen. Styled
+//    consistently with the other secondary buttons, purple (#7c3aed)
+//    to loosely echo the seed banner's own accent without implying
+//    any functional relationship.
 // FROZEN
 // ============================================
 
@@ -25,6 +25,7 @@ interface InventoryToolbarProps {
   onOpenBatchReport:        () => void;
   onOpenArchivedItems:      () => void;
   onOpenMovementHistory:    () => void;
+  onOpenMonthlyReport:      () => void;
   shouldShowSeedBanner:     boolean;
   seeding:                  boolean;
   onSeedStoreDefaults:      () => void;
@@ -32,7 +33,7 @@ interface InventoryToolbarProps {
 
 export function InventoryToolbar({
   canEditInventory, onAddItem, onOpenBatchReport, onOpenArchivedItems, onOpenMovementHistory,
-  shouldShowSeedBanner, seeding, onSeedStoreDefaults,
+  onOpenMonthlyReport, shouldShowSeedBanner, seeding, onSeedStoreDefaults,
 }: InventoryToolbarProps) {
   return (
     <>
@@ -44,6 +45,10 @@ export function InventoryToolbar({
         <TouchableOpacity style={styles.historyBtn} onPress={onOpenMovementHistory}>
           <MaterialIcons name="history" size={16} color="#4f46e5" />
           <Text style={styles.historyBtnText}>History</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.monthlyReportBtn} onPress={onOpenMonthlyReport}>
+          <MaterialIcons name="bar-chart" size={16} color="#7c3aed" />
+          <Text style={styles.monthlyReportBtnText}>Monthly Report</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.secondaryBtn} onPress={onOpenArchivedItems}>
           <MaterialIcons name="archive" size={16} color="#64748b" />
@@ -97,6 +102,12 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: "#c7d2fe",
   },
   historyBtnText: { color: "#4f46e5", fontWeight: "700", fontSize: 13 },
+  monthlyReportBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: "#f5f3ff", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
+    borderWidth: 1, borderColor: "#ddd6fe",
+  },
+  monthlyReportBtnText: { color: "#7c3aed", fontWeight: "700", fontSize: 13 },
   secondaryBtn: {
     flexDirection: "row", alignItems: "center", gap: 6,
     backgroundColor: "#f1f5f9", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
