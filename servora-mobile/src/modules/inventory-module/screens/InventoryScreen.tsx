@@ -3,13 +3,7 @@
 // ✅ COMPOSITION ONLY — data-fetching hooks, filtering logic,
 //    permissions, business-logic handlers, top-level JSX wiring.
 // ✅ Migration Step 5 (FINAL) — Today and Historical now share ONE
-//    table component: HistoricalInventoryTableView. The old
-//    isHistorical ? <HistoricalInventoryTableView/> :
-//    <InventoryTableView/> branch, InventoryFilters.tsx, and
-//    InventoryTableView.tsx usage are REMOVED from this screen.
-//    stockStatus (from useInventoryFilters, driven by InventoryStats'
-//    card clicks) is wired directly into HistoricalInventoryTableView,
-//    which applies it ONLY in Today mode (isHistorical === false).
+//    table component: HistoricalInventoryTableView.
 // ✅ UI/modal state → useInventoryScreenState.
 // ✅ Date navigation → useInventoryDateNavigation.
 // ✅ "New Supplier" detour timing/return → useSupplierDetourNavigation.
@@ -17,25 +11,17 @@
 // ✅ All other modal/drawer rendering → InventoryModalsGroup.
 // ✅ handleSubmit branches on InventoryFormSubmitPayload's
 //    discriminated union: newItem/existingItem/edit — UNCHANGED.
-// ✅ ARCHITECTURE NOTE — purchaseDate is currently set equal to
-//    receivedDate for the "existingItem" (Receive Batch) path.
-// ✅ FIX (root cause of the missing archived items in Historical
-//    Inventory bug — e.g. sushi rice/tuna/oil not appearing on their
-//    valid historical dates) — HistoricalInventoryTableView's own
-//    inventoryItems prop was STILL passed activeItems (isActive-
-//    filtered), even though useHistoricalInventory (called INSIDE
-//    HistoricalInventoryTableView, not here) needs the FULL,
-//    unfiltered item list to look up each archived item's own
-//    isActive/archivedAt/categoryId metadata. With activeItems, that
-//    internal meta lookup missed for every archived item, so the
-//    archive-date check inside useHistoricalInventory never ran at
-//    all for them — which (combined with the hook's own "never
-//    silently drop real batch data" safety fallback) meant archived
-//    items either vanished entirely or fell back to "Uncategorized"
-//    depending on cache state, rather than correctly showing on
-//    dates before their archive date and hiding after. Now passes
-//    the full `items` (archived items included) so the hook can make
-//    its own correct, date-aware decision per item.
+// ✅ HistoricalInventoryTableView receives the FULL `items` (archived
+//    included) so its internal useHistoricalInventory call can make
+//    its own correct, date-aware archive decision per item.
+// ✅ NEW (Step 3, final step of the Inventory Monthly Report feature)
+//    — showMonthlyReport state + InventoryMonthlyReportScreen,
+//    rendered as an absolute-fill overlay SIBLING of the screen's
+//    main content (not nested inside any ScrollView), matching the
+//    exact same overlay pattern already used by Store/Kitchen's own
+//    MonthlyReportScreen — necessary so the overlay actually covers
+//    the full viewport rather than being constrained by a scrollable
+//    parent's own layout.
 // FROZEN
 // ============================================
 
@@ -69,6 +55,7 @@ import { InventoryStats } from "../components/InventoryStats";
 import { HistoricalInventoryTableView } from "../components/HistoricalInventoryTableView";
 import { InventoryModalsGroup } from "../components/InventoryModalsGroup";
 import { InventoryFullScreenTableModal } from "../components/InventoryFullScreenTableModal";
+import { InventoryMonthlyReportScreen } from "../components/InventoryMonthlyReportScreen";
 
 const isWeb = Platform.OS === "web";
 
@@ -95,6 +82,7 @@ export default function InventoryScreen() {
   const [tableCategoryId, setTableCategoryId] = React.useState<string | null>(null);
   const [tableSort, setTableSort] = React.useState<"name-asc" | "stock-asc">("name-asc");
   const [showFullScreenTable, setShowFullScreenTable] = React.useState(false);
+  const [showMonthlyReport, setShowMonthlyReport] = React.useState(false);
 
   const { itemsWithHistoricalStock } = useHistoricalInventory(restaurantId, selectedDate, items);
   const historicalStats = useHistoricalInventoryStats(
@@ -243,116 +231,131 @@ export default function InventoryScreen() {
   const shouldShowSeedBanner = !categoriesLoading && categories.length === 0 && canEditInventory;
 
   return (
-    <View style={styles.container}>
-      <InventoryToolbar
-        canEditInventory={canEditInventory}
-        onAddItem={openCreate}
-        onOpenBatchReport={openBatchReport}
-        onOpenArchivedItems={openArchivedItems}
-        onOpenMovementHistory={openMovementHistory}
-        shouldShowSeedBanner={shouldShowSeedBanner}
-        seeding={seeding}
-        onSeedStoreDefaults={handleSeedDefaults}
-      />
+    <>
+      <View style={styles.container}>
+        <InventoryToolbar
+          canEditInventory={canEditInventory}
+          onAddItem={openCreate}
+          onOpenBatchReport={openBatchReport}
+          onOpenArchivedItems={openArchivedItems}
+          onOpenMovementHistory={openMovementHistory}
+          onOpenMonthlyReport={() => setShowMonthlyReport(true)}
+          shouldShowSeedBanner={shouldShowSeedBanner}
+          seeding={seeding}
+          onSeedStoreDefaults={handleSeedDefaults}
+        />
 
-      <View style={styles.dateNav}>
-        <TouchableOpacity onPress={goToPreviousDay} style={styles.dateNavArrow}>
-          <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
-        </TouchableOpacity>
-        <Text style={styles.dateNavLabel}>{dateLabel}</Text>
-        <TouchableOpacity onPress={goToNextDay} style={styles.dateNavArrow} disabled={isNextDisabled}>
-          <MaterialIcons name="chevron-right" size={22} color={isNextDisabled ? "#cbd5e1" : "#1e293b"} />
-        </TouchableOpacity>
+        <View style={styles.dateNav}>
+          <TouchableOpacity onPress={goToPreviousDay} style={styles.dateNavArrow}>
+            <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
+          </TouchableOpacity>
+          <Text style={styles.dateNavLabel}>{dateLabel}</Text>
+          <TouchableOpacity onPress={goToNextDay} style={styles.dateNavArrow} disabled={isNextDisabled}>
+            <MaterialIcons name="chevron-right" size={22} color={isNextDisabled ? "#cbd5e1" : "#1e293b"} />
+          </TouchableOpacity>
+        </View>
+
+        {!loading && (
+          <View style={styles.statsSearchRow}>
+            <InventoryStats
+              items={items}
+              categoryMap={categoryMap}
+              todayISO={today}
+              restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
+              fmt={fmt}
+              activeStockStatus={filters.stockStatus}
+              onStatusPress={handleStatusPress}
+              statsOverride={isHistorical ? historicalStats : undefined}
+            />
+          </View>
+        )}
+
+        {itemsError && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>{itemsError}</Text>
+          </View>
+        )}
+
+        <HistoricalInventoryTableView
+          restaurantId={safeRestaurantId}
+          selectedDate={selectedDate}
+          categories={categories}
+          inventoryItems={items}
+          searchQuery={tableSearchQuery}
+          setSearchQuery={setTableSearchQuery}
+          categoryId={tableCategoryId}
+          setCategoryId={setTableCategoryId}
+          onItemPress={openDrawer}
+          sort={tableSort}
+          setSort={setTableSort}
+          isHistorical={isHistorical}
+          onOpenFullScreen={() => setShowFullScreenTable(true)}
+          stockStatus={filters.stockStatus}
+          todayISO={today}
+          categoryMapForExpiry={categoryMap}
+          restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
+        />
+
+        <InventoryModalsGroup
+          drawerItem={drawerItem}
+          categoryMap={categoryMap}
+          restaurantId={safeRestaurantId}
+          todayISO={today}
+          restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
+          fmt={fmt}
+          canEditInventory={canEditInventory}
+          actorName={actorName}
+          onCloseDrawer={closeDrawer}
+          onEditItem={openEdit}
+          onAdjustStock={openAdjustStock}
+          onReceiveBatch={openReceiveBatch}
+          showForm={showForm}
+          editingItem={editingItem}
+          categoryGroups={categoryGroups}
+          suppliers={suppliers}
+          allItems={items}
+          onSubmit={handleSubmit}
+          onCancelForm={closeForm}
+          onDeleteItem={handleDelete}
+          onAddSupplier={triggerSupplierDetour}
+          adjustingItem={adjustingItem}
+          onCloseAdjustStock={closeAdjustStock}
+          showBatchReport={showBatchReport}
+          onCloseBatchReport={closeBatchReport}
+          receiveBatchItem={receiveBatchItem}
+          onCloseReceiveBatch={closeReceiveBatch}
+          items={items}
+          showArchivedItems={showArchivedItems}
+          onCloseArchivedItems={closeArchivedItems}
+          categories={categories}
+          showMovementHistory={showMovementHistory}
+          onCloseMovementHistory={closeMovementHistory}
+        />
+        <InventoryFullScreenTableModal
+          visible={showFullScreenTable}
+          onClose={() => setShowFullScreenTable(false)}
+          restaurantId={safeRestaurantId}
+          items={items}
+          categories={categories}
+          initialDate={selectedDate}
+          today={today}
+          onItemPress={openDrawer}
+          restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
+        />
       </View>
 
-      {!loading && (
-        <View style={styles.statsSearchRow}>
-          <InventoryStats
+      {showMonthlyReport && (
+        <View style={[StyleSheet.absoluteFill, { zIndex: 9999, elevation: 9999 }]}>
+          <InventoryMonthlyReportScreen
+            restaurantId={safeRestaurantId}
             items={items}
-            categoryMap={categoryMap}
-            todayISO={today}
-            restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
+            categories={categories}
             fmt={fmt}
-            activeStockStatus={filters.stockStatus}
-            onStatusPress={handleStatusPress}
-            statsOverride={isHistorical ? historicalStats : undefined}
+            onClose={() => setShowMonthlyReport(false)}
           />
         </View>
       )}
-
-      {itemsError && (
-        <View style={styles.errorBanner}>
-          <Text style={styles.errorBannerText}>{itemsError}</Text>
-        </View>
-      )}
-
-      <HistoricalInventoryTableView
-        restaurantId={safeRestaurantId}
-        selectedDate={selectedDate}
-        categories={categories}
-        inventoryItems={items}
-        searchQuery={tableSearchQuery}
-        setSearchQuery={setTableSearchQuery}
-        categoryId={tableCategoryId}
-        setCategoryId={setTableCategoryId}
-        onItemPress={openDrawer}
-        sort={tableSort}
-        setSort={setTableSort}
-        isHistorical={isHistorical}
-        onOpenFullScreen={() => setShowFullScreenTable(true)}
-        stockStatus={filters.stockStatus}
-        todayISO={today}
-        categoryMapForExpiry={categoryMap}
-        restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
-      />
-
-      <InventoryModalsGroup
-        drawerItem={drawerItem}
-        categoryMap={categoryMap}
-        restaurantId={safeRestaurantId}
-        todayISO={today}
-        restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
-        fmt={fmt}
-        canEditInventory={canEditInventory}
-        actorName={actorName}
-        onCloseDrawer={closeDrawer}
-        onEditItem={openEdit}
-        onAdjustStock={openAdjustStock}
-        onReceiveBatch={openReceiveBatch}
-        showForm={showForm}
-        editingItem={editingItem}
-        categoryGroups={categoryGroups}
-        suppliers={suppliers}
-        allItems={items}
-        onSubmit={handleSubmit}
-        onCancelForm={closeForm}
-        onDeleteItem={handleDelete}
-        onAddSupplier={triggerSupplierDetour}
-        adjustingItem={adjustingItem}
-        onCloseAdjustStock={closeAdjustStock}
-        showBatchReport={showBatchReport}
-        onCloseBatchReport={closeBatchReport}
-        receiveBatchItem={receiveBatchItem}
-        onCloseReceiveBatch={closeReceiveBatch}
-        items={items}
-        showArchivedItems={showArchivedItems}
-        onCloseArchivedItems={closeArchivedItems}
-        categories={categories}
-        showMovementHistory={showMovementHistory}
-        onCloseMovementHistory={closeMovementHistory}
-      />
-      <InventoryFullScreenTableModal
-        visible={showFullScreenTable}
-        onClose={() => setShowFullScreenTable(false)}
-        restaurantId={safeRestaurantId}
-        items={items}
-        categories={categories}
-        initialDate={selectedDate}
-        today={today}
-        onItemPress={openDrawer}
-        restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
-      />
-    </View>
+    </>
   );
 }
 
