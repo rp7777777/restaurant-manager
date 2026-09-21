@@ -1,25 +1,21 @@
 // ============================================
 // SERVORA ERP — InventoryMonthlyReportScreen Component
-// ✅ Step 2 of the Inventory Monthly Report feature — UI layer,
-//    reusing useInventoryMonthlyReport() (Step 1) for all data.
 // ✅ Design language matches Store's own MonthlyReportScreen.tsx
-//    EXACTLY: month navigator, clickable stat cards (filter by event
-//    kind), category dropdown, category-grouped table with the
-//    category header INSIDE the same bordered categoryBlock as its
-//    table (no gap between header and table — a single continuous
-//    bordered block per category, same as Store's own).
-// ✅ Month navigator — reuses the same shiftMonth()/currentMonthKey()
-//    pattern as Store's MonthlyReportScreen.tsx (UTC-based).
-// ✅ Stat cards (clickable, filter the table by event kind):
-//    Received / Issued / Waste / Archived. Current Stock Value shown
-//    as a non-clickable info card (it's not month-scoped — see Step
-//    1's FROZEN header — so it can't meaningfully "filter" a
-//    month's events).
+//    EXACTLY: month navigator, clickable stat cards, category
+//    dropdown, category-grouped table with the category header
+//    INSIDE the same bordered categoryBlock as its table.
+// ✅ NEW — category header now shows the month's date range on the
+//    right (e.g. "01 SEPT 2026 - 30 SEPT 2026"), reusing the exact
+//    same formatMonthRange() logic as Store's own MonthlyReportScreen
+//    (current month clamps its end date to today; past months show
+//    the full calendar month).
+// ✅ NEW — "All" stat card (non-filtering-exclusive — clicking it
+//    clears any active stat filter, showing every event) added
+//    alongside Received/Issued/Waste/Archived, matching Store's own
+//    "Total" card pattern.
 // ✅ Table columns: S.N. / Item Name / Date / Event / Lot/Batch No. /
 //    Quantity / Unit / Note. Item Name merged/vertically-centered
-//    per item (matching the merged-cell pattern used throughout
-//    Store/Kitchen/Historical tables); Date/Event/Batch/Quantity/
-//    Note are per-EVENT rows within that item.
+//    per item; Date/Event/Batch/Quantity/Note are per-EVENT rows.
 // ✅ Event kind color coding: RECEIVED green, ISSUED blue, WASTE red,
 //    TRANSFER amber, ADJUSTMENT gray, ARCHIVED_ITEM/ARCHIVED_BATCH
 //    purple — purely visual, does not alter underlying data.
@@ -116,10 +112,40 @@ function currentMonthKey(): string {
   return `${yyyy}-${mm}`;
 }
 
+function todayFullDateKey(): string {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// ✅ Same pattern as Store's own MonthlyReportScreen.tsx —
+// current month clamps its end date to today, past months show the
+// full calendar month.
+function formatMonthRange(monthKey: string, currentMonthKeyVal: string, todayFullDate: string): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  const firstDay = new Date(Date.UTC(year, month - 1, 1));
+
+  const isCurrentMonth = monthKey === currentMonthKeyVal;
+  let endDay: Date;
+  if (isCurrentMonth) {
+    const [ty, tm, td] = todayFullDate.split("-").map(Number);
+    endDay = new Date(Date.UTC(ty, tm - 1, td));
+  } else {
+    endDay = new Date(Date.UTC(year, month, 0));
+  }
+
+  const fmt = (d: Date) =>
+    d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).toUpperCase();
+  return `${fmt(firstDay)} - ${fmt(endDay)}`;
+}
+
 export function InventoryMonthlyReportScreen({
   restaurantId, items, categories, fmt, onClose,
 }: InventoryMonthlyReportScreenProps) {
   const today = useMemo(() => currentMonthKey(), []);
+  const todayFullDate = useMemo(() => todayFullDateKey(), []);
   const [selectedMonth, setSelectedMonth] = useState(today);
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [statFilter, setStatFilter] = useState<StatFilter>(null);
@@ -131,11 +157,7 @@ export function InventoryMonthlyReportScreen({
     currentStockValue, loading, error,
   } = useInventoryMonthlyReport(restaurantId, selectedMonth, items);
 
-  const itemById = useMemo(() => {
-    const map = new Map<string, InventoryItem>();
-    for (const it of items) map.set(it.id, it);
-    return map;
-  }, [items]);
+  const totalEventCount = events.length;
 
   const filteredEvents = useMemo(() => {
     let result = events;
@@ -189,6 +211,8 @@ export function InventoryMonthlyReportScreen({
     ? categories.find((c) => c.id === categoryFilter)?.name ?? "All Categories"
     : "All Categories";
 
+  const monthRangeLabel = formatMonthRange(selectedMonth, today, todayFullDate);
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -216,6 +240,7 @@ export function InventoryMonthlyReportScreen({
         <View style={styles.pageContainer}>
           <View style={styles.topControlsRow}>
             <View style={styles.summaryRow}>
+              <StatCard label="All" value={totalEventCount} color="#1e293b" icon="list-alt" active={statFilter === null} onPress={() => setStatFilter(null)} />
               <StatCard label="Received" value={totalReceivedQty} color="#059669" icon="move-to-inbox" active={statFilter === "RECEIVED"} onPress={() => setStatFilter((s) => s === "RECEIVED" ? null : "RECEIVED")} />
               <StatCard label="Issued" value={totalIssuedQty} color="#2563eb" icon="outbox" active={statFilter === "ISSUED"} onPress={() => setStatFilter((s) => s === "ISSUED" ? null : "ISSUED")} />
               <StatCard label="Waste" value={totalWasteQty} color="#dc2626" icon="delete-outline" active={statFilter === "WASTE"} onPress={() => setStatFilter((s) => s === "WASTE" ? null : "WASTE")} />
@@ -272,6 +297,7 @@ export function InventoryMonthlyReportScreen({
                     <Text style={styles.categoryHeaderText}>
                       {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
                     </Text>
+                    <Text style={styles.categoryHeaderDate}>{monthRangeLabel}</Text>
                   </View>
 
                   <View
@@ -433,6 +459,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#1e3a5f", paddingVertical: 7, paddingHorizontal: 10,
   },
   categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.4 },
+  categoryHeaderDate: { color: "#dbeafe", fontWeight: "700", fontSize: 11 },
   tableArea: { position: "relative" },
   tableHeaderRow: {
     flexDirection: "row", backgroundColor: "#f1f5f9",
