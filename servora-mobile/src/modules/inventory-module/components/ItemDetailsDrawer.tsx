@@ -37,7 +37,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { InventoryItem, classifyExpiry, resolveExpiryAlertDays } from "../types/inventory";
 import { Category } from "../types/category";
 import {
-  archiveInventoryItem, restoreInventoryItem,
+  archiveInventoryItem, restoreInventoryItem, syncItemStockFromBatches,
 } from "../services/inventory-item-service";
 import {
   archiveInventoryBatch, restoreInventoryBatch,
@@ -46,6 +46,7 @@ import { useBatchesForItem } from "../hooks/useBatchesForItem";
 import { InventoryBatchTable } from "./InventoryBatchTable";
 import { InventoryBatch } from "../types/inventory-batch";
 import { EditBatchModal } from "./EditBatchModal";
+
 
 const isWeb = Platform.OS === "web";
 
@@ -161,6 +162,7 @@ export function ItemDetailsDrawer({
     setArchivingBatchId(batch.id);
     try {
       await archiveInventoryBatch(restaurantId, batch.id);
+      await syncItemStockFromBatches(restaurantId, batch.inventoryId);
     } catch (err: any) {
       const msg = err?.message ?? "Failed to archive batch";
       if (isWeb) window.alert(`Error: ${msg}`);
@@ -175,6 +177,7 @@ export function ItemDetailsDrawer({
     setArchivingBatchId(batch.id);
     try {
       await restoreInventoryBatch(restaurantId, batch.id);
+      await syncItemStockFromBatches(restaurantId, batch.inventoryId);
     } catch (err: any) {
       const msg = err?.message ?? "Failed to restore batch";
       if (isWeb) window.alert(`Error: ${msg}`);

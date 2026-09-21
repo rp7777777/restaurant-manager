@@ -1,31 +1,18 @@
 // ============================================
 // SERVORA ERP — ArchivedItemsModal Component
 // ✅ Single merged table (no separate item/batch tabs), including
-//    BOTH item-level archived items (whole InventoryItem.isActive
-//    === false) AND items that only have one or more BATCH-level
-//    archived batches while the item itself stays active — merged
-//    into ONE row per item: Item Name merged/vertically-centered,
-//    Lot/Batch No. one row per batch.
-//    - Item-level archived item: shows ALL its batches.
-//    - Batch-only archived item: shows ONLY its archived batch(es)
-//      matching the active date filter.
-//    - Restore is per-ROW-GROUP: item-level → restoreInventoryItem()
-//      (whole item); batch-only → per-BATCH restoreInventoryBatch()
-//      (independent button per archived batch).
-// ✅ NEW — "Daily" / "Monthly" toggle:
-//    - Daily (default, unchanged behavior): date navigator
-//      ("< [date] >"), EXACT-DATE filter — only items/batches
-//      archived ON selectedDate.
-//    - Monthly (new): month navigator ("< [Month Year] >"),
-//      CUMULATIVE filter for the whole calendar month — every item/
-//      batch whose archivedAt falls anywhere in that month. Lets the
-//      user see "how much was archived this month" at a glance,
-//      complementing the Inventory Monthly Report's own Archived
-//      stat (which only gives a COUNT, not this per-item/batch
-//      detail).
-// ✅ Both modes share the exact same table rendering — only the
-//    filtering predicate (exact-date vs in-month) and the nav
-//    control (day-shift vs month-shift) differ.
+//    BOTH item-level archived items AND items that only have one or
+//    more BATCH-level archived batches while the item itself stays
+//    active — merged into ONE row per item.
+// ✅ Daily / Monthly toggle — Daily: exact-date filter. Monthly:
+//    cumulative for the whole calendar month.
+// ✅ NEW — all category groups now render inside ONE continuous
+//    bordered table container (no gap between categories, column
+//    header shown only once for the first category), matching
+//    Inventory Monthly Report's and Kitchen Request History's own
+//    design — was previously giving each category its OWN separate
+//    bordered categoryBlock with a 16px gap between them, and
+//    repeating the column header row for every category.
 // FROZEN
 // ============================================
 
@@ -41,6 +28,7 @@ import { restoreInventoryItem } from "../services/inventory-item-service";
 import { restoreInventoryBatch } from "../repository/inventory-batch-repository";
 import { useAllInventoryBatches } from "../hooks/useAllInventoryBatches";
 import { todayISO } from "../../../utils/date-utils";
+import { syncItemStockFromBatches } from "../services/inventory-item-service";
 
 const isWeb = Platform.OS === "web";
 
@@ -48,7 +36,7 @@ type ViewMode = "daily" | "monthly";
 
 interface ArchivedItemsModalProps {
   visible:      boolean;
-  items:        InventoryItem[]; // full, unfiltered list — this component filters to archived itself
+  items:        InventoryItem[];
   categoryMap:  Map<string, Category>;
   restaurantId: string;
   fmt:          (n: number) => string;
@@ -59,18 +47,15 @@ interface DisplayBatchRow {
   batchId:  string;
   batchNo:  string;
   quantity: number;
-  archivedDateLabel: string; // per-batch, since Monthly mode can mix dates within the same item row
+  archivedDateLabel: string;
 }
 
-// ✅ One row per ITEM — whether it's item-level archived (shows all
-// its batches) or only has batch-level archived batches (shows only
-// those). isItemLevel decides which Restore action applies.
 interface ArchivedDisplayRow {
   inventoryId:  string;
   itemName:     string;
   unit:         string;
-  isItemLevel:  boolean; // true = whole item archived; false = only some batches archived
-  itemArchivedDateLabel: string | null; // formatted label for the item-level archive date, when isItemLevel
+  isItemLevel:  boolean;
+  itemArchivedDateLabel: string | null;
   batches:      DisplayBatchRow[];
 }
 
@@ -97,6 +82,11 @@ const DIVIDER_X_POSITIONS = (() => {
   x += COLS.unit; positions.push(x);
   return positions;
 })();
+
+const CATEGORY_ACCENTS = [
+  { bg: "#2563eb" },
+  { bg: "#059669" },
+];
 
 function shiftDate(dateISO: string, deltaDays: number): string {
   const [year, month, day] = dateISO.split("-").map(Number);
@@ -186,8 +176,6 @@ export function ArchivedItemsModal({
     return map;
   }, [batches]);
 
-  // ✅ Matches the current mode's filter: Daily = exact date match;
-  // Monthly = same YYYY-MM prefix (cumulative for the whole month).
   const matchesSelectedPeriod = (dateKey: string | null): boolean => {
     if (!dateKey) return false;
     if (viewMode === "daily") return dateKey === selectedDate;
@@ -197,7 +185,6 @@ export function ArchivedItemsModal({
   const categoryGroups = useMemo<ArchivedCategoryGroup[]>(() => {
     const byCategory = new Map<string, ArchivedDisplayRow[]>();
 
-    // Item-level archived items whose archivedAt matches the selected period.
     for (const item of items) {
       if (item.isActive !== false) continue;
       const itemDateKey = archivedAtDateKey(item.archivedAt);
@@ -206,11 +193,6 @@ export function ArchivedItemsModal({
       const key = item.categoryId && categoryMap.has(item.categoryId) ? item.categoryId : UNCATEGORIZED_ID;
       const list = byCategory.get(key) ?? [];
 
-      // ✅ Daily: unchanged — show ALL batches for an item-level
-      // archived item. Monthly: only batches whose OWN archivedAt
-      // falls within the selected month — an active batch, or one
-      // archived in a different month, is excluded even though the
-      // parent item itself was archived in the selected month.
       const rawItemBatches = batchesByInventoryId.get(item.id) ?? [];
       const relevantItemBatches = viewMode === "monthly"
         ? rawItemBatches.filter((b) => b.isActive !== false || matchesSelectedPeriod(archivedAtDateKey(b.archivedAt)))
@@ -232,12 +214,10 @@ export function ArchivedItemsModal({
       byCategory.set(key, list);
     }
 
-    // Batch-only archived: item still active, but has one or more
-    // batches archived within the selected period.
     for (const [inventoryId, itemBatches] of batchesByInventoryId.entries()) {
       const parentItem = itemById.get(inventoryId);
       if (!parentItem) continue;
-      if (parentItem.isActive === false) continue; // item-level archived — handled above
+      if (parentItem.isActive === false) continue;
 
       const archivedInPeriod = itemBatches.filter(
         (b) => b.isActive === false && matchesSelectedPeriod(archivedAtDateKey(b.archivedAt))
@@ -296,7 +276,11 @@ export function ArchivedItemsModal({
     if (restoringId) return;
     setRestoringId(batchId);
     try {
+      const batch = batches.find((b) => b.id === batchId);
       await restoreInventoryBatch(restaurantId, batchId);
+      if (batch) {
+        await syncItemStockFromBatches(restaurantId, batch.inventoryId);
+      }
     } catch (err: any) {
       const msg = err?.message ?? "Failed to restore batch";
       if (isWeb) window.alert(`Error: ${msg}`);
@@ -308,6 +292,9 @@ export function ArchivedItemsModal({
 
   const isNextDayDisabled = selectedDate >= today;
   const isNextMonthDisabled = selectedMonth >= currentMonth;
+
+  let hasShownColumnHeader = false;
+  let categoryAccentIndex = 0;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -375,13 +362,17 @@ export function ArchivedItemsModal({
               </Text>
             </View>
           ) : (
-            <View style={{ width: TABLE_WIDTH }}>
+            <View style={[styles.tableOuterBlock, { width: TABLE_WIDTH }]}>
               {categoryGroups.map((group) => {
                 const measuredHeight = tableAreaHeights[group.categoryId] ?? 0;
+                const accent = CATEGORY_ACCENTS[categoryAccentIndex % CATEGORY_ACCENTS.length];
+                categoryAccentIndex += 1;
+                const showColumnHeader = !hasShownColumnHeader;
+                if (showColumnHeader) hasShownColumnHeader = true;
 
                 return (
-                  <View key={group.categoryId} style={styles.categoryBlock}>
-                    <View style={styles.categoryHeader}>
+                  <View key={group.categoryId}>
+                    <View style={[styles.categoryHeader, { backgroundColor: accent.bg }]}>
                       <Text style={styles.categoryHeaderText}>
                         {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
                       </Text>
@@ -396,15 +387,17 @@ export function ArchivedItemsModal({
                         );
                       }}
                     >
-                      <View style={styles.tableHeaderRow}>
-                        <Text style={[styles.headerCell, { width: COLS.sn }]}>S.N.</Text>
-                        <Text style={[styles.headerCell, { width: COLS.item }]}>Item Name</Text>
-                        <Text style={[styles.headerCell, { width: COLS.batch }]}>Lot/Batch No.</Text>
-                        <Text style={[styles.headerCell, styles.centerCell, { width: COLS.archived }]}>Archived Date</Text>
-                        <Text style={[styles.headerCell, styles.centerCell, { width: COLS.qty }]}>Batch QTY</Text>
-                        <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
-                        <Text style={[styles.headerCell, styles.centerCell, { width: COLS.action }]}>Action</Text>
-                      </View>
+                      {showColumnHeader && (
+                        <View style={styles.tableHeaderRow}>
+                          <Text style={[styles.headerCell, { width: COLS.sn }]}>S.N.</Text>
+                          <Text style={[styles.headerCell, { width: COLS.item }]}>Item Name</Text>
+                          <Text style={[styles.headerCell, { width: COLS.batch }]}>Lot/Batch No.</Text>
+                          <Text style={[styles.headerCell, styles.centerCell, { width: COLS.archived }]}>Archived Date</Text>
+                          <Text style={[styles.headerCell, styles.centerCell, { width: COLS.qty }]}>Batch QTY</Text>
+                          <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
+                          <Text style={[styles.headerCell, styles.centerCell, { width: COLS.action }]}>Action</Text>
+                        </View>
+                      )}
 
                       {group.rows.map((row, rowIndex) => {
                         const rows = row.batches.length > 0 ? row.batches : [null];
@@ -555,11 +548,11 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: "center", marginTop: 60, gap: 8 },
   emptyStateText: { color: "#94a3b8", fontSize: 14, fontWeight: "600" },
 
-  categoryBlock: {
-    marginBottom: 16, borderWidth: 1.5, borderColor: "#475569", borderRadius: 4, overflow: "hidden",
+  tableOuterBlock: {
+    borderWidth: 1.5, borderColor: "#475569", borderRadius: 4, overflow: "hidden",
   },
   categoryHeader: {
-    backgroundColor: "#1e3a5f", paddingVertical: 7, paddingHorizontal: 10,
+    paddingVertical: 7, paddingHorizontal: 10,
   },
   categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.6 },
 
