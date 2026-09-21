@@ -1,18 +1,21 @@
 // ============================================
 // SERVORA ERP — InventoryMonthlyReportScreen Component
-// ✅ Design language matches Store's own MonthlyReportScreen.tsx
-//    EXACTLY: month navigator, clickable stat cards, category
-//    dropdown, category-grouped table with the category header
-//    INSIDE the same bordered categoryBlock as its table.
-// ✅ NEW — category header now shows the month's date range on the
-//    right (e.g. "01 SEPT 2026 - 30 SEPT 2026"), reusing the exact
-//    same formatMonthRange() logic as Store's own MonthlyReportScreen
-//    (current month clamps its end date to today; past months show
-//    the full calendar month).
-// ✅ NEW — "All" stat card (non-filtering-exclusive — clicking it
-//    clears any active stat filter, showing every event) added
-//    alongside Received/Issued/Waste/Archived, matching Store's own
-//    "Total" card pattern.
+// ✅ Design language matches Store's own MonthlyReportScreen.tsx and
+//    Kitchen's Request History Full View: category-grouped table,
+//    continuous (no gap between category blocks — a single visual
+//    table with alternating category header colors), category
+//    header shows the month's date range on the right.
+// ✅ NEW LAYOUT ORDER — Header → Stat Cards + Category Dropdown row →
+//    Month Navigator → Table. Month navigator moved from directly
+//    under the header to just above the table (was between header
+//    and stat cards).
+// ✅ NEW — categories no longer have their own separate bordered
+//    block with a gap between them; instead ALL categories render
+//    inside ONE continuous bordered table container, category
+//    headers act as in-table section dividers (matches Kitchen's own
+//    Request History Full View design).
+// ✅ "All" stat card (clears any active filter, shows total event
+//    count) alongside Received/Issued/Waste/Archived.
 // ✅ Table columns: S.N. / Item Name / Date / Event / Lot/Batch No. /
 //    Quantity / Unit / Note. Item Name merged/vertically-centered
 //    per item; Date/Event/Batch/Quantity/Note are per-EVENT rows.
@@ -30,7 +33,7 @@ import { Category } from "../types/category";
 import { useInventoryMonthlyReport, ReportEvent, ReportEventKind } from "../hooks/useInventoryMonthlyReport";
 
 const ROW_HEIGHT = 26;
-const COLS = { sn: 40, item: 190, date: 90, event: 100, batch: 150, qty: 80, unit: 60, note: 120 };
+const COLS = { sn: 35, item: 160, date: 85, event: 90, batch: 140, qty: 65, unit: 55, note: 210 };
 const TABLE_WIDTH = COLS.sn + COLS.item + COLS.date + COLS.event + COLS.batch + COLS.qty + COLS.unit + COLS.note;
 
 const DIVIDER_X_POSITIONS = (() => {
@@ -47,6 +50,11 @@ const DIVIDER_X_POSITIONS = (() => {
 })();
 
 const UNCATEGORIZED_ID = "__uncategorized__";
+
+const CATEGORY_ACCENTS = [
+  { bg: "#2563eb" },
+  { bg: "#059669" },
+];
 
 const EVENT_LABEL: Record<ReportEventKind, string> = {
   RECEIVED:       "Received",
@@ -120,9 +128,6 @@ function todayFullDateKey(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-// ✅ Same pattern as Store's own MonthlyReportScreen.tsx —
-// current month clamps its end date to today, past months show the
-// full calendar month.
 function formatMonthRange(monthKey: string, currentMonthKeyVal: string, todayFullDate: string): string {
   const [year, month] = monthKey.split("-").map(Number);
   const firstDay = new Date(Date.UTC(year, month - 1, 1));
@@ -213,26 +218,15 @@ export function InventoryMonthlyReportScreen({
 
   const monthRangeLabel = formatMonthRange(selectedMonth, today, todayFullDate);
 
+  let hasShownColumnHeader = false;
+  let categoryAccentIndex = 0;
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Inventory Monthly Report</Text>
         <TouchableOpacity onPress={onClose}>
           <MaterialIcons name="close" size={22} color="#1e293b" />
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.monthNav}>
-        <TouchableOpacity onPress={() => setSelectedMonth((m) => shiftMonth(m, -1))} style={styles.monthNavArrow}>
-          <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
-        </TouchableOpacity>
-        <Text style={styles.monthNavLabel}>{formatMonthLabel(selectedMonth)}</Text>
-        <TouchableOpacity
-          onPress={() => setSelectedMonth((m) => shiftMonth(m, 1))}
-          style={[styles.monthNavArrow, selectedMonth >= today && styles.monthNavArrowDisabled]}
-          disabled={selectedMonth >= today}
-        >
-          <MaterialIcons name="chevron-right" size={22} color={selectedMonth >= today ? "#cbd5e1" : "#1e293b"} />
         </TouchableOpacity>
       </View>
 
@@ -274,6 +268,20 @@ export function InventoryMonthlyReportScreen({
             )}
           </View>
 
+          <View style={styles.monthNav}>
+            <TouchableOpacity onPress={() => setSelectedMonth((m) => shiftMonth(m, -1))} style={styles.monthNavArrow}>
+              <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
+            </TouchableOpacity>
+            <Text style={styles.monthNavLabel}>{formatMonthLabel(selectedMonth)}</Text>
+            <TouchableOpacity
+              onPress={() => setSelectedMonth((m) => shiftMonth(m, 1))}
+              style={[styles.monthNavArrow, selectedMonth >= today && styles.monthNavArrowDisabled]}
+              disabled={selectedMonth >= today}
+            >
+              <MaterialIcons name="chevron-right" size={22} color={selectedMonth >= today ? "#cbd5e1" : "#1e293b"} />
+            </TouchableOpacity>
+          </View>
+
           {loading ? (
             <ActivityIndicator style={{ marginTop: 40 }} color="#1e3a5f" />
           ) : error ? (
@@ -287,94 +295,108 @@ export function InventoryMonthlyReportScreen({
               <Text style={styles.emptyStateText}>No activity this month</Text>
             </View>
           ) : (
-            categoryGroups.map((group) => {
-              const groupHeights = group.items.map((ig) => ig.events.length * ROW_HEIGHT);
-              const measuredHeight = tableAreaHeights[group.categoryId] ?? 0;
+            // ✅ NEW — single continuous bordered table container; all
+            // category groups render inside it, one after another,
+            // with NO gap between them (category headers act as
+            // in-table section dividers, matching Kitchen's own
+            // Request History Full View design).
+            <View style={[styles.tableOuterBlock, { width: TABLE_WIDTH }]}>
+              {categoryGroups.map((group) => {
+                const groupHeights = group.items.map((ig) => ig.events.length * ROW_HEIGHT);
+                const key = group.categoryId;
+                const measuredHeight = tableAreaHeights[key] ?? 0;
+                const accent = CATEGORY_ACCENTS[categoryAccentIndex % CATEGORY_ACCENTS.length];
+                categoryAccentIndex += 1;
+                const showColumnHeader = !hasShownColumnHeader;
+                if (showColumnHeader) hasShownColumnHeader = true;
 
-              return (
-                <View key={group.categoryId} style={[styles.categoryBlock, { width: TABLE_WIDTH }]}>
-                  <View style={styles.categoryHeader}>
-                    <Text style={styles.categoryHeaderText}>
-                      {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
-                    </Text>
-                    <Text style={styles.categoryHeaderDate}>{monthRangeLabel}</Text>
-                  </View>
-
-                  <View
-                    style={styles.tableArea}
-                    onLayout={(e) => {
-                      const h = e.nativeEvent.layout.height;
-                      setTableAreaHeights((prev) =>
-                        prev[group.categoryId] === h ? prev : { ...prev, [group.categoryId]: h }
-                      );
-                    }}
-                  >
-                    <View style={styles.tableHeaderRow}>
-                      <Text style={[styles.headerCell, { width: COLS.sn }]}>S.N.</Text>
-                      <Text style={[styles.headerCell, { width: COLS.item }]}>Item Name</Text>
-                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.date }]}>Date</Text>
-                      <Text style={[styles.headerCell, { width: COLS.event }]}>Event</Text>
-                      <Text style={[styles.headerCell, { width: COLS.batch }]}>Lot/Batch No.</Text>
-                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.qty }]}>Quantity</Text>
-                      <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
-                      <Text style={[styles.headerCell, { width: COLS.note }]}>Note</Text>
+                return (
+                  <View key={key}>
+                    <View style={[styles.categoryHeader, { backgroundColor: accent.bg }]}>
+                      <Text style={styles.categoryHeaderText}>
+                        {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
+                      </Text>
+                      <Text style={styles.categoryHeaderDate}>{monthRangeLabel}</Text>
                     </View>
 
-                    {group.items.map((itemGroup, itemIndex) => {
-                      const groupHeight = groupHeights[itemIndex];
-                      const isEvenRow = itemIndex % 2 === 1;
-
-                      return (
-                        <View
-                          key={itemGroup.itemKey}
-                          style={[styles.itemGroupRow, { minHeight: groupHeight }, isEvenRow && styles.itemGroupRowAlt]}
-                        >
-                          <View style={[styles.leftStrip, { width: COLS.sn + COLS.item, minHeight: groupHeight }]}>
-                            <Text style={[styles.cell, { width: COLS.sn }]}>{itemIndex + 1}</Text>
-                            <Text style={[styles.cell, styles.itemCell, { width: COLS.item }]}>{itemGroup.itemName}</Text>
-                          </View>
-
-                          <View style={styles.rightEventRows}>
-                            {itemGroup.events.map((e, eIdx) => (
-                              <View
-                                key={e.id}
-                                style={[
-                                  styles.eventRow,
-                                  { height: ROW_HEIGHT },
-                                  eIdx < itemGroup.events.length - 1 && styles.eventRowDivider,
-                                ]}
-                              >
-                                <Text style={[styles.cell, styles.centerCell, { width: COLS.date }]}>{e.dateKey}</Text>
-                                <Text style={[styles.cell, { width: COLS.event, color: EVENT_COLOR[e.kind], fontWeight: "700" }]}>{EVENT_LABEL[e.kind]}</Text>
-                                <Text style={[styles.cell, { width: COLS.batch }]} numberOfLines={1}>{e.batchNo ?? "—"}</Text>
-                                <Text style={[styles.cell, styles.centerCell, { width: COLS.qty }]}>{e.quantity ?? "—"}</Text>
-                                <Text style={[styles.cell, styles.centerCell, { width: COLS.unit }]}>{e.unit}</Text>
-                                <Text style={[styles.cell, { width: COLS.note }]} numberOfLines={1}>{e.note ?? "—"}</Text>
-                              </View>
-                            ))}
-                          </View>
+                    <View
+                      style={styles.tableArea}
+                      onLayout={(e) => {
+                        const h = e.nativeEvent.layout.height;
+                        setTableAreaHeights((prev) =>
+                          prev[key] === h ? prev : { ...prev, [key]: h }
+                        );
+                      }}
+                    >
+                      {showColumnHeader && (
+                        <View style={styles.tableHeaderRow}>
+                          <Text style={[styles.headerCell, { width: COLS.sn }]}>S.N.</Text>
+                          <Text style={[styles.headerCell, { width: COLS.item }]}>Item Name</Text>
+                          <Text style={[styles.headerCell, styles.centerCell, { width: COLS.date }]}>Date</Text>
+                          <Text style={[styles.headerCell, { width: COLS.event }]}>Event</Text>
+                          <Text style={[styles.headerCell, { width: COLS.batch }]}>Lot/Batch No.</Text>
+                          <Text style={[styles.headerCell, styles.centerCell, { width: COLS.qty }]}>Quantity</Text>
+                          <Text style={[styles.headerCell, styles.centerCell, { width: COLS.unit }]}>Unit</Text>
+                          <Text style={[styles.headerCell, { width: COLS.note }]}>Note</Text>
                         </View>
-                      );
-                    })}
+                      )}
 
-                    {measuredHeight > 0 && DIVIDER_X_POSITIONS.map((x) => (
-                      <View
-                        key={x}
-                        pointerEvents="none"
-                        style={{
-                          position: "absolute",
-                          left: x,
-                          top: 0,
-                          height: measuredHeight + 4,
-                          width: 1,
-                          backgroundColor: "#94a3b8",
-                        }}
-                      />
-                    ))}
+                      {group.items.map((itemGroup, itemIndex) => {
+                        const groupHeight = groupHeights[itemIndex];
+                        const isEvenRow = itemIndex % 2 === 1;
+
+                        return (
+                          <View
+                            key={itemGroup.itemKey}
+                            style={[styles.itemGroupRow, { minHeight: groupHeight }, isEvenRow && styles.itemGroupRowAlt]}
+                          >
+                            <View style={[styles.leftStrip, { width: COLS.sn + COLS.item, minHeight: groupHeight }]}>
+                              <Text style={[styles.cell, { width: COLS.sn }]}>{itemIndex + 1}</Text>
+                              <Text style={[styles.cell, styles.itemCell, { width: COLS.item }]}>{itemGroup.itemName}</Text>
+                            </View>
+
+                            <View style={styles.rightEventRows}>
+                              {itemGroup.events.map((e, eIdx) => (
+                                <View
+                                  key={e.id}
+                                  style={[
+                                    styles.eventRow,
+                                    { height: ROW_HEIGHT },
+                                    eIdx < itemGroup.events.length - 1 && styles.eventRowDivider,
+                                  ]}
+                                >
+                                  <Text style={[styles.cell, styles.centerCell, { width: COLS.date }]}>{e.dateKey}</Text>
+                                  <Text style={[styles.cell, { width: COLS.event, color: EVENT_COLOR[e.kind], fontWeight: "700" }]}>{EVENT_LABEL[e.kind]}</Text>
+                                  <Text style={[styles.cell, { width: COLS.batch }]} numberOfLines={1}>{e.batchNo ?? "—"}</Text>
+                                  <Text style={[styles.cell, styles.centerCell, { width: COLS.qty }]}>{e.quantity ?? "—"}</Text>
+                                  <Text style={[styles.cell, styles.centerCell, { width: COLS.unit }]}>{e.unit}</Text>
+                                  <Text style={[styles.cell, { width: COLS.note }]} numberOfLines={1}>{e.note ?? "—"}</Text>
+                                </View>
+                              ))}
+                            </View>
+                          </View>
+                        );
+                      })}
+
+                      {measuredHeight > 0 && DIVIDER_X_POSITIONS.map((x) => (
+                        <View
+                          key={x}
+                          pointerEvents="none"
+                          style={{
+                            position: "absolute",
+                            left: x,
+                            top: 0,
+                            height: measuredHeight + 4,
+                            width: 1,
+                            backgroundColor: "#94a3b8",
+                          }}
+                        />
+                      ))}
+                    </View>
                   </View>
-                </View>
-              );
-            })
+                );
+              })}
+            </View>
           )}
         </View>
       </ScrollView>
@@ -406,19 +428,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
   },
   title: { fontSize: 18, fontWeight: "700", color: "#1e293b" },
-  monthNav: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
-    paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
-  },
-  monthNavArrow: { padding: 4 },
-  monthNavArrowDisabled: { opacity: 0.4 },
-  monthNavLabel: { fontSize: 15, fontWeight: "800", color: "#1e293b", minWidth: 170, textAlign: "center" },
   body: { flex: 1 },
   bodyContent: { padding: 12, alignItems: "center", flexGrow: 1 },
   pageContainer: { width: "100%", maxWidth: 900, alignItems: "center" },
   topControlsRow: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start",
-    width: "100%", maxWidth: 900, marginBottom: 14, gap: 10,
+    width: "100%", maxWidth: 900, marginBottom: 10, gap: 10,
   },
   summaryRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, alignItems: "center" },
   summaryCard: {
@@ -449,17 +464,24 @@ const styles = StyleSheet.create({
   },
   dropdownItem: { paddingHorizontal: 14, paddingVertical: 10 },
   dropdownItemText: { fontSize: 13, color: "#1e293b" },
+  monthNav: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
+    width: "100%", maxWidth: 900, paddingVertical: 8, marginBottom: 10,
+  },
+  monthNavArrow: { padding: 4 },
+  monthNavArrowDisabled: { opacity: 0.4 },
+  monthNavLabel: { fontSize: 15, fontWeight: "800", color: "#1e293b", minWidth: 170, textAlign: "center" },
   emptyState: { alignItems: "center", marginTop: 60, gap: 8 },
   emptyStateText: { color: "#94a3b8", fontSize: 13, fontWeight: "600" },
-  categoryBlock: {
-    marginBottom: 16, borderWidth: 1, borderColor: "#475569", borderRadius: 4, overflow: "hidden",
+  tableOuterBlock: {
+    borderWidth: 1.5, borderColor: "#475569", borderRadius: 4, overflow: "hidden",
   },
   categoryHeader: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    backgroundColor: "#1e3a5f", paddingVertical: 7, paddingHorizontal: 10,
+    paddingVertical: 3, paddingHorizontal: 10, minHeight: 24,
   },
   categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.4 },
-  categoryHeaderDate: { color: "#dbeafe", fontWeight: "700", fontSize: 11 },
+  categoryHeaderDate: { color: "rgba(255,255,255,0.85)", fontWeight: "700", fontSize: 11 },
   tableArea: { position: "relative" },
   tableHeaderRow: {
     flexDirection: "row", backgroundColor: "#f1f5f9",
