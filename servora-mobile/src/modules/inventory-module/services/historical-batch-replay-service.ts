@@ -5,44 +5,28 @@
 //    - "quantity" (Lot/Batch QTY, per-row) is the OPENING quantity
 //      for selectedDate: movements dated STRICTLY BEFORE selectedDate
 //      are applied (`dateKey >= selectedDate` breaks the loop,
-//      excluding that day's own movements). This is what each
-//      batch's individual row displays.
+//      excluding that day's own movements).
 //    - Total QTY (item-level, computed in useHistoricalInventory.ts,
-//      NOT here) is the CLOSING quantity — opening minus that same
-//      date's own real deductions, computed separately using the
-//      SAME isRealStockDeduction() rule and toJsDate()/toDateKey()
-//      helpers exported below.
-//    - depletedDate is detected within the replay loop as before, but
-//      since same-date movements are now excluded from replay, a
-//      batch that becomes fully depleted ON selectedDate itself will
-//      NOT have depletedDate set to selectedDate by this function —
-//      that is expected and correct under opening-quantity semantics.
+//      NOT here) is the CLOSING quantity.
 // ✅ CRITICAL — relevantMovements filters to an explicit
-//    DEDUCTING_MOVEMENT_TYPES allowlist (KITCHEN_ISSUE, WASTE,
-//    TRANSFER_OUT) BEFORE checking batchAllocations.
-// ✅ isRealStockDeduction() — EXPORTED so useHistoricalInventory.ts
-//    can reuse the EXACT SAME deduction rule when computing each
-//    batch's same-date closing quantity — never re-derived.
-// ✅ toJsDate()/toDateKey() — EXPORTED for the same reason.
+//    DEDUCTING_MOVEMENT_TYPES allowlist BEFORE checking
+//    batchAllocations.
+// ✅ isRealStockDeduction()/toJsDate()/toDateKey() — EXPORTED for
+//    useHistoricalInventory.ts to reuse.
 // ✅ originalQuantity is EXPOSED on the returned state.
-// ✅ SAFETY — quantity is NEVER allowed to go negative. Malformed
-//    allocation quantities are caught and flagged inconsistent.
-// ✅ NEW (Step 4 of batch-level archive) — HistoricalBatchState now
-//    carries isBatchArchived + batchArchivedDate, so the UI can show
-//    a diagonal-line/badge indicator on an archived batch's row
-//    without needing to separately look up InventoryBatch.isActive.
-//    Archive visibility follows the SAME date-aware rule already
-//    used for item-level archive (isArchivedAsOfDate() in
-//    useHistoricalInventory.ts): the archive date itself STILL shows
-//    the batch (visible stays whatever the quantity-replay result
-//    was), hidden only from the day AFTER archivedAt onward — this
-//    check is applied AFTER the existing depletion-based visible
-//    calculation, so a batch that's both depleted AND archived stays
-//    correctly invisible either way, and an archived-but-not-yet-
-//    depleted batch is hidden only once its archive date has passed.
-//    This is INDEPENDENT of the parent InventoryItem's own archive —
-//    that's handled entirely in useHistoricalInventory.ts and never
-//    touches batch-level state.
+// ✅ SAFETY — quantity is NEVER allowed to go negative.
+// ✅ isBatchArchived/batchArchivedDate — batch-level archive
+//    visibility: archived batch stays visible through its own
+//    archive date, hidden from the day after.
+// ✅ NEW — isBatchRestoredToday/batchRestoredDate: mirrors the
+//    archive indicator, but for RESTORE. isBatchRestoredToday is
+//    true ONLY when selectedDate exactly equals the batch's
+//    restoredAt date (batchRestoredDate) — a purely cosmetic,
+//    single-day indicator for the UI (Step 4) to show "Restored" on
+//    that exact date's row, with no effect on any other date
+//    (unlike the archive flag, restoredAt does NOT affect visibility
+//    or quantity at all — a restored batch is simply active again,
+//    fully governed by the normal quantity/visible logic below).
 // FROZEN
 // ============================================
 
@@ -63,6 +47,8 @@ export interface HistoricalBatchState {
   inconsistent:       boolean;
   isBatchArchived:    boolean;   // true if this batch itself was archived (independent of the parent item)
   batchArchivedDate:  string | null; // YYYY-MM-DD the batch was archived on, or null if never
+  isBatchRestoredToday: boolean; // true ONLY when selectedDate exactly matches batchRestoredDate — cosmetic, single-day UI indicator only
+  batchRestoredDate:  string | null; // YYYY-MM-DD the batch was last restored on, or null if never
 }
 
 export function toJsDate(value: unknown): Date | null {
@@ -90,14 +76,9 @@ export function isRealStockDeduction(movement: StockMovement): boolean {
   return true;
 }
 
-// ✅ Returns true if this BATCH should be hidden for selectedDate due
-// to its own batch-level archive — i.e. archived BEFORE selectedDate
-// (the archive date itself still shows the batch). A batch with no
-// archivedAt recorded, or isActive !== false, is never hidden by
-// this check.
 function isBatchArchivedAsOfDate(batch: InventoryBatch, selectedDate: string): boolean {
   if (batch.isActive !== false) return false;
-  if (!batch.archivedAt) return false; // archived flag set but no date — don't hide (conservative: never silently drop real data)
+  if (!batch.archivedAt) return false;
   const archivedDate = toJsDate(batch.archivedAt);
   if (!archivedDate) return false;
   return selectedDate > toDateKey(archivedDate);
@@ -109,6 +90,16 @@ function getBatchArchivedDateKey(batch: InventoryBatch): string | null {
   return d ? toDateKey(d) : null;
 }
 
+// ✅ Restore date key — independent of current isActive status (a
+// batch can be restored today, then archived again later — this
+// still reports the LAST restore date, same "last event only, not
+// full history" semantics as the field itself).
+function getBatchRestoredDateKey(batch: InventoryBatch): string | null {
+  if (!batch.restoredAt) return null;
+  const d = toJsDate(batch.restoredAt);
+  return d ? toDateKey(d) : null;
+}
+
 export function replayBatchAsOfDate(
   batch: InventoryBatch,
   movements: StockMovement[],
@@ -116,6 +107,8 @@ export function replayBatchAsOfDate(
 ): HistoricalBatchState {
   const batchArchivedDate = getBatchArchivedDateKey(batch);
   const isBatchArchived = batch.isActive === false;
+  const batchRestoredDate = getBatchRestoredDateKey(batch);
+  const isBatchRestoredToday = batchRestoredDate !== null && batchRestoredDate === selectedDate;
 
   const base: Omit<HistoricalBatchState, "quantity" | "visible" | "depletedDate" | "inconsistent"> = {
     batchId:           batch.id,
@@ -127,6 +120,8 @@ export function replayBatchAsOfDate(
     originalQuantity:  batch.originalQuantity,
     isBatchArchived,
     batchArchivedDate,
+    isBatchRestoredToday,
+    batchRestoredDate,
   };
 
   if (selectedDate < batch.receivedDate) {
@@ -147,8 +142,6 @@ export function replayBatchAsOfDate(
   let depletedDate: string | null = null;
   let inconsistent = false;
 
-  // ✅ CONFIRMED FINAL SEMANTICS — opening quantity: excludes
-  // selectedDate's own movements (`dateKey >= selectedDate` breaks).
   for (const { dateKey, movement } of relevantMovements) {
     if (dateKey >= selectedDate) break;
 
@@ -173,10 +166,6 @@ export function replayBatchAsOfDate(
     return { ...base, quantity: 0, visible: false, depletedDate, inconsistent };
   }
 
-  // ✅ Batch-level archive check — applied AFTER the depletion-based
-  // visibility above, so an already-invisible (depleted) batch stays
-  // invisible either way, and an archived-but-still-stocked batch
-  // becomes invisible only once its own archive date has passed.
   if (isBatchArchivedAsOfDate(batch, selectedDate)) {
     return { ...base, quantity, visible: false, depletedDate, inconsistent };
   }
