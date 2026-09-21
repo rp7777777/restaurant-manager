@@ -57,6 +57,7 @@ export interface InventoryItem {
   notes?:                   string;
   isActive?:                boolean;  // undefined/true = active
   archivedAt?:              unknown;  // Firestore Timestamp of when this item was archived — null/undefined when never archived. Lets Historical views show this item's real batches/movements for dates BEFORE this timestamp, while hiding it from dates on/after.
+  restoredAt?:              unknown;  // Firestore Timestamp of the LAST time this item was restored — not a full audit history, a subsequent archive/restore cycle overwrites it with the newest restore date. null/undefined when never restored.
   restaurantId:             string;
   userId?:                  string;
   createdAt?:               unknown;

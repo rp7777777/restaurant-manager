@@ -80,6 +80,7 @@ export async function restoreInventoryItem(
   await updateDoc(inventoryDoc(restaurantId, itemId), {
     isActive:   true,
     archivedAt: null,
+    restoredAt: serverTimestamp(),
     updatedAt:  serverTimestamp(),
     updatedBy:  auth.currentUser.uid,
   });

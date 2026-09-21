@@ -13,20 +13,19 @@
 // ✅ InventoryBatchTable's "no batches yet" empty state is tappable,
 //    wired to the SAME handleReceiveBatchPress used by the drawer's
 //    own "Receive Batch" action button.
-// ✅ NEW (Step 3 caller wiring, batch-level archive) —
-//    onArchiveBatch/onRestoreBatch now call
-//    archiveInventoryBatch()/restoreInventoryBatch()
-//    (inventory-batch-repository.ts) directly — a BATCH-level
-//    operation, completely separate from the item-level Archive/
-//    Restore action button (which still calls
-//    archiveInventoryItem()/restoreInventoryItem()). A local
-//    archivingBatchId state tracks which SINGLE row is mid-request,
-//    passed to InventoryBatchTable so only that row shows a spinner
-//    (the rest of the table, and the drawer's own item-level busy
-//    state, stay independent). No confirmation prompt for batch
-//    archive (unlike the item-level Archive, which confirms) — a
-//    single batch is a much lower-stakes, easily-reversible action
-//    reachable directly from its own row.
+// ✅ Batch-level archive/restore (onArchiveBatch/onRestoreBatch) —
+//    calls archiveInventoryBatch()/restoreInventoryBatch() directly,
+//    completely separate from the item-level Archive/Restore action
+//    button. A local archivingBatchId state tracks which SINGLE row
+//    is mid-request.
+// ✅ NEW — "Restored" info line in Basic Information, shown ONLY
+//    when item.restoredAt is set (i.e. the item has been restored at
+//    least once). Displays the LAST restore date (not a full audit
+//    history — restoreInventoryItem() overwrites this field with the
+//    newest restore timestamp each time; archiveInventoryItem() never
+//    touches it, so it survives across archive cycles). No other
+//    behavior changed — main inventory table, historical replay, and
+//    archive logic are all untouched.
 // FROZEN
 // ============================================
 
@@ -49,6 +48,14 @@ import { InventoryBatch } from "../types/inventory-batch";
 import { EditBatchModal } from "./EditBatchModal";
 
 const isWeb = Platform.OS === "web";
+
+function formatRestoredDate(restoredAt: unknown): string | null {
+  if (!restoredAt) return null;
+  const raw = restoredAt as any;
+  const d: Date | null = typeof raw?.toDate === "function" ? raw.toDate() : (raw instanceof Date ? raw : null);
+  if (!d) return null;
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
 
 interface ItemDetailsDrawerProps {
   visible:                           boolean;
@@ -87,6 +94,7 @@ export function ItemDetailsDrawer({
   );
   const expiryStatus = classifyExpiry(item.expiryDate, todayISO, resolvedDays);
   const isActive = item.isActive ?? true;
+  const restoredDateLabel = formatRestoredDate(item.restoredAt);
 
   const handleEditPress = () => {
     if (busy) return;
@@ -201,6 +209,12 @@ export function ItemDetailsDrawer({
                 <Text style={styles.rowLabel}>Category</Text>
                 <Text style={styles.rowValue}>{category ? `${category.icon ?? ""} ${category.name}` : "—"}</Text>
               </View>
+              {restoredDateLabel && (
+                <View style={styles.row}>
+                  <Text style={styles.rowLabel}>Restored</Text>
+                  <Text style={styles.rowValue}>{restoredDateLabel}</Text>
+                </View>
+              )}
               {item.sku && (
                 <View style={styles.row}>
                   <Text style={styles.rowLabel}>SKU</Text>
