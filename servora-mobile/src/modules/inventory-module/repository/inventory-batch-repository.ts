@@ -314,6 +314,7 @@ export async function restoreInventoryBatch(
   await updateDoc(batchDoc(restaurantId, batchId), {
     isActive:   true,
     archivedAt: null,
+    restoredAt: serverTimestamp(),
     updatedAt:  serverTimestamp(),
     updatedBy:  auth.currentUser.uid,
   });

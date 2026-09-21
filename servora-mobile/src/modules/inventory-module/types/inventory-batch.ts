@@ -102,6 +102,7 @@ export interface InventoryBatch {
   archivedAt?:      unknown;  // Firestore Timestamp of when this batch
                                // was archived — null/undefined when
                                // never archived.
+  restoredAt?:      unknown;  // Firestore Timestamp of the LAST time this batch was restored — not a full audit history, a subsequent archive/restore cycle overwrites it. null/undefined when never restored.                             
 }
 
 export interface CreateInventoryBatchInput {
