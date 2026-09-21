@@ -1,29 +1,31 @@
 // ============================================
 // SERVORA ERP — ArchivedItemsModal Component
-// ✅ REDESIGN — single merged table (no tabs), including BOTH
-//    item-level archived items (Apple, Sushi Rice, etc. — whole
-//    InventoryItem.isActive === false) AND items that only have one
-//    or more BATCH-level archived batches while the item itself
-//    stays active (Banana, Lemon) — merged into ONE row per item:
-//    Item Name merged/vertically-centered, Lot/Batch No. one row per
-//    batch.
-//    - Item-level archived item (e.g. Apple): shows ALL its batches
-//      (active + archived).
-//    - Batch-only archived item (e.g. Banana): shows ONLY its
-//      archived batch(es) matching selectedDate.
+// ✅ Single merged table (no separate item/batch tabs), including
+//    BOTH item-level archived items (whole InventoryItem.isActive
+//    === false) AND items that only have one or more BATCH-level
+//    archived batches while the item itself stays active — merged
+//    into ONE row per item: Item Name merged/vertically-centered,
+//    Lot/Batch No. one row per batch.
+//    - Item-level archived item: shows ALL its batches.
+//    - Batch-only archived item: shows ONLY its archived batch(es)
+//      matching the active date filter.
 //    - Restore is per-ROW-GROUP: item-level → restoreInventoryItem()
 //      (whole item); batch-only → per-BATCH restoreInventoryBatch()
 //      (independent button per archived batch).
-// ✅ Date navigator ("< [date] >", Today by default) — EXACT-DATE
-//    filter (archivedAtDateKey(...) === selectedDate), not
-//    cumulative. Switching dates shows what was archived on that
-//    specific day.
-// ✅ FIX — Archived Date column now correctly renders
-//    formatDateLabel(selectedDate, today) (was referencing the
-//    formatArchivedDate FUNCTION itself instead of calling it/using
-//    the already-matched selectedDate — since the row only appears
-//    when its archivedAt matches selectedDate exactly, selectedDate
-//    IS the archived date to display).
+// ✅ NEW — "Daily" / "Monthly" toggle:
+//    - Daily (default, unchanged behavior): date navigator
+//      ("< [date] >"), EXACT-DATE filter — only items/batches
+//      archived ON selectedDate.
+//    - Monthly (new): month navigator ("< [Month Year] >"),
+//      CUMULATIVE filter for the whole calendar month — every item/
+//      batch whose archivedAt falls anywhere in that month. Lets the
+//      user see "how much was archived this month" at a glance,
+//      complementing the Inventory Monthly Report's own Archived
+//      stat (which only gives a COUNT, not this per-item/batch
+//      detail).
+// ✅ Both modes share the exact same table rendering — only the
+//    filtering predicate (exact-date vs in-month) and the nav
+//    control (day-shift vs month-shift) differ.
 // FROZEN
 // ============================================
 
@@ -42,6 +44,8 @@ import { todayISO } from "../../../utils/date-utils";
 
 const isWeb = Platform.OS === "web";
 
+type ViewMode = "daily" | "monthly";
+
 interface ArchivedItemsModalProps {
   visible:      boolean;
   items:        InventoryItem[]; // full, unfiltered list — this component filters to archived itself
@@ -55,6 +59,7 @@ interface DisplayBatchRow {
   batchId:  string;
   batchNo:  string;
   quantity: number;
+  archivedDateLabel: string; // per-batch, since Monthly mode can mix dates within the same item row
 }
 
 // ✅ One row per ITEM — whether it's item-level archived (shows all
@@ -65,7 +70,8 @@ interface ArchivedDisplayRow {
   itemName:     string;
   unit:         string;
   isItemLevel:  boolean; // true = whole item archived; false = only some batches archived
-  batches:      DisplayBatchRow[]; // for isItemLevel: ALL batches; otherwise: only the archived ones matching selectedDate
+  itemArchivedDateLabel: string | null; // formatted label for the item-level archive date, when isItemLevel
+  batches:      DisplayBatchRow[];
 }
 
 interface ArchivedCategoryGroup {
@@ -102,6 +108,14 @@ function shiftDate(dateISO: string, deltaDays: number): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function shiftMonth(monthKey: string, delta: number): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  const d = new Date(Date.UTC(year, month - 1 + delta, 1));
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return `${yyyy}-${mm}`;
+}
+
 function toDateKey(d: Date): string {
   const yyyy = d.getUTCFullYear();
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
@@ -125,11 +139,33 @@ function formatDateLabel(dateISO: string, today: string): string {
   });
 }
 
+function formatMonthLabel(monthKey: string): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  const d = new Date(Date.UTC(year, month - 1, 1));
+  return d.toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+function currentMonthKey(): string {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  return `${yyyy}-${mm}`;
+}
+
+function formatShortDate(dateKey: string): string {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const d = new Date(Date.UTC(year, month - 1, day));
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
 export function ArchivedItemsModal({
   visible, items, categoryMap, restaurantId, fmt, onClose,
 }: ArchivedItemsModalProps) {
   const today = useMemo(() => todayISO(), []);
+  const currentMonth = useMemo(() => currentMonthKey(), []);
+  const [viewMode, setViewMode] = useState<ViewMode>("daily");
   const [selectedDate, setSelectedDate] = useState(today);
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [restoringId, setRestoringId] = useState<string | null>(null);
   const [tableAreaHeights, setTableAreaHeights] = useState<Record<string, number>>({});
   const { batches, loading: batchesLoading } = useAllInventoryBatches(restaurantId);
@@ -150,41 +186,63 @@ export function ArchivedItemsModal({
     return map;
   }, [batches]);
 
-  // ✅ Exact-date filter — only items/batches archived ON
-  // selectedDate (not "as of" / cumulative).
+  // ✅ Matches the current mode's filter: Daily = exact date match;
+  // Monthly = same YYYY-MM prefix (cumulative for the whole month).
+  const matchesSelectedPeriod = (dateKey: string | null): boolean => {
+    if (!dateKey) return false;
+    if (viewMode === "daily") return dateKey === selectedDate;
+    return dateKey.startsWith(selectedMonth);
+  };
+
   const categoryGroups = useMemo<ArchivedCategoryGroup[]>(() => {
     const byCategory = new Map<string, ArchivedDisplayRow[]>();
 
-    // Item-level archived items whose archivedAt matches selectedDate exactly.
+    // Item-level archived items whose archivedAt matches the selected period.
     for (const item of items) {
       if (item.isActive !== false) continue;
-      if (archivedAtDateKey(item.archivedAt) !== selectedDate) continue;
+      const itemDateKey = archivedAtDateKey(item.archivedAt);
+      if (!matchesSelectedPeriod(itemDateKey)) continue;
 
       const key = item.categoryId && categoryMap.has(item.categoryId) ? item.categoryId : UNCATEGORIZED_ID;
       const list = byCategory.get(key) ?? [];
-      const itemBatches = (batchesByInventoryId.get(item.id) ?? [])
-        .map((b) => ({ batchId: b.id, batchNo: b.batchNo, quantity: b.quantity }));
+
+      // ✅ Daily: unchanged — show ALL batches for an item-level
+      // archived item. Monthly: only batches whose OWN archivedAt
+      // falls within the selected month — an active batch, or one
+      // archived in a different month, is excluded even though the
+      // parent item itself was archived in the selected month.
+      const rawItemBatches = batchesByInventoryId.get(item.id) ?? [];
+      const relevantItemBatches = viewMode === "monthly"
+        ? rawItemBatches.filter((b) => b.isActive === false && matchesSelectedPeriod(archivedAtDateKey(b.archivedAt)))
+        : rawItemBatches;
+
+      const itemBatches = relevantItemBatches.map((b) => ({
+        batchId: b.id, batchNo: b.batchNo, quantity: b.quantity,
+        archivedDateLabel: b.isActive === false && b.archivedAt ? formatShortDate(archivedAtDateKey(b.archivedAt) ?? "") : "—",
+      }));
+
       list.push({
         inventoryId: item.id,
         itemName:    item.itemName,
         unit:        item.unit,
         isItemLevel: true,
+        itemArchivedDateLabel: itemDateKey ? formatShortDate(itemDateKey) : null,
         batches:     itemBatches,
       });
       byCategory.set(key, list);
     }
 
     // Batch-only archived: item still active, but has one or more
-    // batches archived exactly on selectedDate.
+    // batches archived within the selected period.
     for (const [inventoryId, itemBatches] of batchesByInventoryId.entries()) {
       const parentItem = itemById.get(inventoryId);
       if (!parentItem) continue;
       if (parentItem.isActive === false) continue; // item-level archived — handled above
 
-      const archivedOnDate = itemBatches.filter(
-        (b) => b.isActive === false && archivedAtDateKey(b.archivedAt) === selectedDate
+      const archivedInPeriod = itemBatches.filter(
+        (b) => b.isActive === false && matchesSelectedPeriod(archivedAtDateKey(b.archivedAt))
       );
-      if (archivedOnDate.length === 0) continue;
+      if (archivedInPeriod.length === 0) continue;
 
       const key = parentItem.categoryId && categoryMap.has(parentItem.categoryId) ? parentItem.categoryId : UNCATEGORIZED_ID;
       const list = byCategory.get(key) ?? [];
@@ -193,7 +251,11 @@ export function ArchivedItemsModal({
         itemName:    parentItem.itemName,
         unit:        parentItem.unit,
         isItemLevel: false,
-        batches:     archivedOnDate.map((b) => ({ batchId: b.id, batchNo: b.batchNo, quantity: b.quantity })),
+        itemArchivedDateLabel: null,
+        batches:     archivedInPeriod.map((b) => ({
+          batchId: b.id, batchNo: b.batchNo, quantity: b.quantity,
+          archivedDateLabel: formatShortDate(archivedAtDateKey(b.archivedAt) ?? ""),
+        })),
       });
       byCategory.set(key, list);
     }
@@ -213,7 +275,8 @@ export function ArchivedItemsModal({
 
     groups.sort((a, b) => a.categoryName.localeCompare(b.categoryName));
     return groups;
-  }, [items, batchesByInventoryId, itemById, categoryMap, selectedDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, batchesByInventoryId, itemById, categoryMap, selectedDate, selectedMonth, viewMode]);
 
   const handleRestoreItem = async (inventoryId: string) => {
     if (restoringId) return;
@@ -243,7 +306,8 @@ export function ArchivedItemsModal({
     }
   };
 
-  const isNextDisabled = selectedDate >= today;
+  const isNextDayDisabled = selectedDate >= today;
+  const isNextMonthDisabled = selectedMonth >= currentMonth;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -255,19 +319,50 @@ export function ArchivedItemsModal({
           </TouchableOpacity>
         </View>
 
-        <View style={styles.dateNav}>
-          <TouchableOpacity onPress={() => setSelectedDate((d) => shiftDate(d, -1))} style={styles.dateNavArrow}>
-            <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
-          </TouchableOpacity>
-          <Text style={styles.dateNavLabel}>{formatDateLabel(selectedDate, today)}</Text>
+        <View style={styles.toggleRow}>
           <TouchableOpacity
-            onPress={() => setSelectedDate((d) => shiftDate(d, 1))}
-            style={[styles.dateNavArrow, isNextDisabled && styles.dateNavArrowDisabled]}
-            disabled={isNextDisabled}
+            style={[styles.toggleBtn, viewMode === "daily" && styles.toggleBtnActive]}
+            onPress={() => setViewMode("daily")}
           >
-            <MaterialIcons name="chevron-right" size={22} color={isNextDisabled ? "#cbd5e1" : "#1e293b"} />
+            <Text style={[styles.toggleBtnText, viewMode === "daily" && styles.toggleBtnTextActive]}>Daily</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.toggleBtn, viewMode === "monthly" && styles.toggleBtnActive]}
+            onPress={() => setViewMode("monthly")}
+          >
+            <Text style={[styles.toggleBtnText, viewMode === "monthly" && styles.toggleBtnTextActive]}>Monthly</Text>
           </TouchableOpacity>
         </View>
+
+        {viewMode === "daily" ? (
+          <View style={styles.dateNav}>
+            <TouchableOpacity onPress={() => setSelectedDate((d) => shiftDate(d, -1))} style={styles.dateNavArrow}>
+              <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
+            </TouchableOpacity>
+            <Text style={styles.dateNavLabel}>{formatDateLabel(selectedDate, today)}</Text>
+            <TouchableOpacity
+              onPress={() => setSelectedDate((d) => shiftDate(d, 1))}
+              style={[styles.dateNavArrow, isNextDayDisabled && styles.dateNavArrowDisabled]}
+              disabled={isNextDayDisabled}
+            >
+              <MaterialIcons name="chevron-right" size={22} color={isNextDayDisabled ? "#cbd5e1" : "#1e293b"} />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.dateNav}>
+            <TouchableOpacity onPress={() => setSelectedMonth((m) => shiftMonth(m, -1))} style={styles.dateNavArrow}>
+              <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
+            </TouchableOpacity>
+            <Text style={styles.dateNavLabel}>{formatMonthLabel(selectedMonth)}</Text>
+            <TouchableOpacity
+              onPress={() => setSelectedMonth((m) => shiftMonth(m, 1))}
+              style={[styles.dateNavArrow, isNextMonthDisabled && styles.dateNavArrowDisabled]}
+              disabled={isNextMonthDisabled}
+            >
+              <MaterialIcons name="chevron-right" size={22} color={isNextMonthDisabled ? "#cbd5e1" : "#1e293b"} />
+            </TouchableOpacity>
+          </View>
+        )}
 
         <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
           {batchesLoading ? (
@@ -275,7 +370,9 @@ export function ArchivedItemsModal({
           ) : categoryGroups.length === 0 ? (
             <View style={styles.emptyState}>
               <MaterialIcons name="archive" size={40} color="#cbd5e1" />
-              <Text style={styles.emptyStateText}>Nothing archived on this date</Text>
+              <Text style={styles.emptyStateText}>
+                {viewMode === "daily" ? "Nothing archived on this date" : "Nothing archived this month"}
+              </Text>
             </View>
           ) : (
             <View style={{ width: TABLE_WIDTH }}>
@@ -331,9 +428,19 @@ export function ArchivedItemsModal({
                               ))}
                             </View>
 
-                            <View style={[styles.mergedCell, { width: COLS.archived, minHeight: rowsHeight }]}>
-                              <Text style={[styles.cell, styles.centerCell, styles.archivedDateText]}>{formatDateLabel(selectedDate, today)}</Text>
-                            </View>
+                            {row.isItemLevel ? (
+                              <View style={[styles.mergedCell, { width: COLS.archived, minHeight: rowsHeight }]}>
+                                <Text style={[styles.cell, styles.centerCell, styles.archivedDateText]}>{row.itemArchivedDateLabel}</Text>
+                              </View>
+                            ) : (
+                              <View style={{ width: COLS.archived }}>
+                                {rows.map((b, i) => (
+                                  <View key={b ? b.batchId : "no-batch"} style={[styles.batchLine, { height: ROW_HEIGHT }, i < rows.length - 1 && styles.batchLineDivider]}>
+                                    <Text style={[styles.cell, styles.centerCell, styles.archivedDateText]}>{b ? b.archivedDateLabel : "—"}</Text>
+                                  </View>
+                                ))}
+                              </View>
+                            )}
 
                             <View style={{ width: COLS.qty }}>
                               {rows.map((b, i) => (
@@ -425,13 +532,24 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
   },
   title: { fontSize: 18, fontWeight: "800", color: "#1e293b" },
+  toggleRow: {
+    flexDirection: "row", gap: 8, paddingHorizontal: 16, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
+  },
+  toggleBtn: {
+    paddingHorizontal: 16, paddingVertical: 7, borderRadius: 6,
+    backgroundColor: "#f1f5f9",
+  },
+  toggleBtnActive: { backgroundColor: "#1e3a5f" },
+  toggleBtnText: { fontSize: 13, fontWeight: "700", color: "#64748b" },
+  toggleBtnTextActive: { color: "#fff" },
   dateNav: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12,
     paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
   },
   dateNavArrow: { padding: 4 },
   dateNavArrowDisabled: { opacity: 0.4 },
-  dateNavLabel: { fontSize: 14, fontWeight: "800", color: "#1e293b", minWidth: 160, textAlign: "center" },
+  dateNavLabel: { fontSize: 14, fontWeight: "800", color: "#1e293b", minWidth: 170, textAlign: "center" },
   body: { flex: 1 },
   bodyContent: { padding: 16, alignItems: "center" },
   emptyState: { alignItems: "center", marginTop: 60, gap: 8 },
