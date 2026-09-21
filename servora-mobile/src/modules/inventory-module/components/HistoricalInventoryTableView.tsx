@@ -505,6 +505,7 @@ export function HistoricalInventoryTableView({
                           const batchRowHeight = getBatchRowHeight(batch.issues.length);
                           const wasReceivedToday = batch.receivedDate === selectedDate;
                           const isArchivedToday = batch.isBatchArchived && batch.batchArchivedDate === selectedDate;
+                          const isRestoredToday = batch.isBatchRestoredToday;
 
                           return (
                             <View
@@ -523,7 +524,11 @@ export function HistoricalInventoryTableView({
                                 {batch.receivedDate}
                               </Text>
                               <View style={{ width: RIGHT_COLS.batch, position: "relative" }}>
-                                <Text style={[styles.tableCell, isArchivedToday && styles.archivedBatchNoText]} numberOfLines={1}>
+                                <Text style={[
+                                  styles.tableCell,
+                                  isArchivedToday && styles.archivedBatchNoText,
+                                  isRestoredToday && styles.restoredBatchNoText,
+                                ]} numberOfLines={1}>
                                   {batch.batchNo}
                                 </Text>
                                 {isArchivedToday && <View style={styles.diagonalStrike} pointerEvents="none" />}
@@ -535,8 +540,11 @@ export function HistoricalInventoryTableView({
                                 {isArchivedToday && (
                                   <Text style={[styles.tableCell, styles.archivedIndicatorText]}>Archived</Text>
                                 )}
+                                {isRestoredToday && (
+                                  <Text style={[styles.tableCell, styles.restoredIndicatorText]}>Restored</Text>
+                                )}
                                 {batch.issues.length === 0 ? (
-                                  !isArchivedToday && <Text style={[styles.tableCell, styles.issueCell]}>—</Text>
+                                  !isArchivedToday && !isRestoredToday && <Text style={[styles.tableCell, styles.issueCell]}>—</Text>
                                 ) : batch.issues.length <= 2 ? (
                                   <Text style={[styles.tableCell, styles.issueCell]} numberOfLines={1}>
                                     {batch.issues.map((iss) => `${iss.quantity} ${batch.unit} ${iss.source}`).join(" • ")}
@@ -697,6 +705,8 @@ const styles = StyleSheet.create({
     flexDirection: "row", backgroundColor: "#f1f5f9",
     borderBottomWidth: 2, borderBottomColor: "#1e293b", paddingVertical: 8, paddingHorizontal: 10,
   },
+  restoredBatchNoText: { color: "#059669" },
+  restoredIndicatorText: { color: "#059669", fontWeight: "800", fontStyle: "italic" },
   oosRow: {
     flexDirection: "row", alignItems: "center",
     minHeight: ROW_HEIGHT,
