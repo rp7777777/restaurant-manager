@@ -213,7 +213,7 @@ export function ArchivedItemsModal({
       // parent item itself was archived in the selected month.
       const rawItemBatches = batchesByInventoryId.get(item.id) ?? [];
       const relevantItemBatches = viewMode === "monthly"
-        ? rawItemBatches.filter((b) => b.isActive === false && matchesSelectedPeriod(archivedAtDateKey(b.archivedAt)))
+        ? rawItemBatches.filter((b) => b.isActive !== false || matchesSelectedPeriod(archivedAtDateKey(b.archivedAt)))
         : rawItemBatches;
 
       const itemBatches = relevantItemBatches.map((b) => ({
