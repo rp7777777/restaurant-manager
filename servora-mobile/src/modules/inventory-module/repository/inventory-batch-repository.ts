@@ -66,11 +66,11 @@ import {
 
 type ArchiveCycle = { archivedAt: unknown; restoredAt: unknown | null };
 
-function batchesCollection(restaurantId: string) {
+export function batchesCollection(restaurantId: string) {
   return collection(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY_BATCHES);
 }
 
-function batchDoc(restaurantId: string, batchId: string) {
+export function batchDoc(restaurantId: string, batchId: string) {
   return doc(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY_BATCHES, batchId);
 }
 

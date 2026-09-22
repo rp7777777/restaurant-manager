@@ -8,51 +8,50 @@
 //    batch-tracked item, recordStockMovement() changes currentStock
 //    WITHOUT touching batch documents, which can desynchronize
 //    currentStock from the actual batch sum. A guard to reject
-//    Increase/Decrease/Correction on batch-tracked items is PENDING
-//    (blocked on migrating Purchase Order's PURCHASE calls off this
-//    same function first — see inventory-service.ts's file header).
-// ✅ archiveInventoryItem()/restoreInventoryItem() — toggle isActive.
-//    Deliberately do NOT touch currentStock/batches — archiving an
-//    ITEM is purely a visibility/lifecycle flag, not a stock
-//    operation. A stock>0 + isActive=false item is a VALID state
-//    (the user consciously archived it) — NOT automatically treated
-//    as corruption.
-// ✅ NEW — archiveHistory read-modify-write: archive() reads the
-//    item's CURRENT archiveHistory array, appends a NEW cycle entry
-//    { archivedAt: serverTimestamp(), restoredAt: null }, and writes
-//    the full array back. restore() reads the array, finds the LAST
-//    entry (the currently-open cycle, restoredAt === null) and sets
-//    ITS restoredAt — never mutating any earlier, already-closed
-//    cycle. This preserves a complete, accurate record of every
-//    archive/restore period the item has ever been through, so
-//    Historical views (via isArchivedDuring() in
-//    useHistoricalInventory.ts) can correctly hide the item ONLY for
-//    dates that actually fell within an archived period — restoring
-//    an item no longer makes it look "never archived" for past dates
-//    during which it genuinely was archived. archivedAt/restoredAt
-//    top-level fields are STILL written (kept for backward
-//    compatibility / quick "is this currently archived" checks by
-//    code that doesn't need the full history), but archiveHistory is
-//    the source of truth for date-range visibility.
-// ✅ Uses a Firestore transaction (not a plain read-then-write) so a
-//    concurrent archive/restore on the same item can't silently drop
-//    an entry — the read and the write happen atomically together.
+//    Increase/Decrease/Correction on batch-tracked items is PENDING.
+// ✅ archiveInventoryItem() — sets currentStock: 0 while archived
+//    (matches batch-level archive's own behavior). Batch documents
+//    themselves are left completely untouched.
+// ✅ restoreInventoryItem() — reuses the EXACT SAME transaction-safe
+//    pattern as inventory-batch-repository.ts's own archive/restore:
+//    1) pre-read the item (to know it exists) and the sibling batch
+//       ID list (via a normal, non-transactional query — Firestore
+//       transactions cannot run queries internally),
+//    2) inside the transaction, re-read the item AND every one of
+//       those specific batch documents fresh via transaction.get(),
+//    3) compute currentStock from those FRESH batch reads (via
+//       calculateTotalFromBatches()), not from the pre-read query
+//       result — this eliminates the stale-value race a plain
+//       pre-transaction getBatchesForItem() + separate transaction
+//       would have (a batch changing between the query and the
+//       transaction is picked up correctly, since the transaction
+//       re-reads it). The batch ID LIST itself is still a pre-read,
+//       same acceptable-by-design assumption as the batch repository
+//       (batches are never deleted, only archived — see that file's
+//       own FROZEN header for the fuller explanation).
+// ✅ archiveHistory read-modify-write — UNCHANGED: archive() appends
+//    a new open cycle, restore() closes the last open one (only when
+//    one exists — legacy items with no archiveHistory array simply
+//    get none added, matching the actual historical logic in
+//    useHistoricalInventory.ts's isArchivedDuring(), which itself
+//    falls back to the plain archivedAt/isActive check when
+//    archiveHistory is empty).
 // ✅ duplicateInventoryItem() — creates a new item with currentStock
-//    always 0. Does not carry over archiveHistory (a fresh item has
-//    none).
-// ✅ syncItemStockFromBatches(): recomputes InventoryItem.
-//    currentStock from its batches' actual sum. UNCHANGED.
+//    always 0. Does not carry over archiveHistory.
+// ✅ syncItemStockFromBatches(): UNCHANGED — recomputes
+//    InventoryItem.currentStock from its batches' actual sum, for
+//    other callers unrelated to archive/restore.
 // FROZEN
 // ============================================
 
-import { updateDoc, serverTimestamp, runTransaction } from "firebase/firestore";
+import { updateDoc, serverTimestamp, runTransaction, getDocs, query, where } from "firebase/firestore";
 import { db, auth } from "../../../firebase";
 import { InventoryItem, CreateInventoryItemInput } from "../types/inventory";
-import { calculateTotalFromBatches } from "../types/inventory-batch";
+import { calculateTotalFromBatches, InventoryBatch } from "../types/inventory-batch";
 import { RecordStockMovementInput } from "../../stock-movement-module/types/stock-movement";
 import { recordStockMovement } from "../../stock-movement-module/services/stock-movement-service";
 import { createInventoryItem as repoCreateInventoryItem } from "../repository/inventory-repository";
-import { getBatchesForItem } from "../repository/inventory-batch-repository";
+import { getBatchesForItem, batchesCollection, batchDoc } from "../repository/inventory-batch-repository";
 import { inventoryDoc } from "./inventory-service-helpers";
 
 type ArchiveCycle = { archivedAt: unknown; restoredAt: unknown | null };
@@ -88,6 +87,7 @@ export async function archiveInventoryItem(
     transaction.update(ref, {
       isActive:       false,
       archivedAt:     serverTimestamp(),
+      currentStock:   0,
       archiveHistory: updatedHistory,
       updatedAt:      serverTimestamp(),
       updatedBy:      uid,
@@ -107,18 +107,37 @@ export async function restoreInventoryItem(
   const ref = inventoryDoc(restaurantId, itemId);
   const uid = auth.currentUser.uid;
 
+  // ✅ Pre-read ONLY the batch ID list (non-transactional query —
+  // Firestore transactions cannot run queries internally). The
+  // ACTUAL batch values are re-read fresh inside the transaction
+  // below via transaction.get(), eliminating the stale-value race.
+  const batchesQuerySnap = await getDocs(
+    query(batchesCollection(restaurantId), where("inventoryId", "==", itemId))
+  );
+  const batchIds = batchesQuerySnap.docs.map((d) => d.id);
+
   await runTransaction(db, async (transaction) => {
     const snap = await transaction.get(ref);
     if (!snap.exists()) throw new Error("Item not found");
+
+    const batchSnaps = await Promise.all(
+      batchIds.map((id) => transaction.get(batchDoc(restaurantId, id)))
+    );
+    const freshBatches: InventoryBatch[] = batchSnaps
+      .filter((s) => s.exists())
+      .map((s) => ({ id: s.id, ...(s.data() as Omit<InventoryBatch, "id">) }));
+
+    const recomputedStock = calculateTotalFromBatches(freshBatches);
 
     const existing = (snap.data().archiveHistory as ArchiveCycle[] | undefined) ?? [];
     const now = new Date();
     const updatedHistory = [...existing];
 
     // Close the currently-open cycle (the last entry with
-    // restoredAt === null), if any. If none exists (legacy data with
-    // no archiveHistory yet), add a best-effort single closed entry
-    // so future date-range lookups have at least this one cycle.
+    // restoredAt === null), if any. Legacy items with no
+    // archiveHistory yet simply get none added — matches
+    // isArchivedDuring()'s own fallback-to-archivedAt logic when the
+    // array is empty.
     const openIndex = updatedHistory.map((c) => c.restoredAt).lastIndexOf(null);
     if (openIndex !== -1) {
       updatedHistory[openIndex] = { ...updatedHistory[openIndex], restoredAt: now };
@@ -127,6 +146,7 @@ export async function restoreInventoryItem(
     transaction.update(ref, {
       isActive:       true,
       archivedAt:     null,
+      currentStock:   recomputedStock,
       restoredAt:     serverTimestamp(),
       archiveHistory: updatedHistory,
       updatedAt:      serverTimestamp(),
