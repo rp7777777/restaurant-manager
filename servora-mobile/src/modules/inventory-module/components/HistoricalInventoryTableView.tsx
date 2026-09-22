@@ -2,13 +2,30 @@
 // SERVORA ERP — HistoricalInventoryTableView Component
 // ✅ Migration Steps 1-5 — single table for Today and Historical.
 // ✅ Out of Stock dedicated table display (Today mode only).
+// ✅ Professional redesign:
+//    - Letterhead: restaurant name (bold, large) + address (smaller,
+//      gray) at the top of the table area, ABOVE the controls row.
+//    - Single controls row: Search (green border) + Sort (Name/
+//      Stock) + Full Screen + a Category DROPDOWN (was chips) — all
+//      together on one row.
+//    - Categories render inside ONE continuous bordered table (no
+//      gap between category blocks) — category headers act as
+//      in-table section dividers. Column header row shown only ONCE,
+//      above the first category.
+//    - Date navigator REMOVED from this component — moved to the
+//      parent (InventoryScreen.tsx), rendered ABOVE this component.
+// ✅ FIX — category dropdown was appearing BEHIND the table (z-index/
+//    elevation too low) and scrolling the PARENT ScrollView instead
+//    of itself (a nested ScrollView fighting the parent's own scroll
+//    gesture). Raised zIndex/elevation on the dropdown wrapper+list,
+//    and replaced the nested ScrollView with a plain View (category
+//    counts here are small enough not to need internal scrolling).
 // ✅ Total QTY and Edit arrow are item-level columns, vertically
 //    centered across groupHeight.
 // ✅ Received Qty, Lot/Batch QTY, Total QTY are center-aligned.
 // ✅ Item Name is vertically centered within its row.
-// ✅ Column dividers are centralized absolute-positioned lines,
-//    using onLayout-measured tableArea height (+4px buffer to fully
-//    reach the bottom of the last row).
+// ✅ Column dividers are centralized absolute-positioned lines, one
+//    continuous set spanning the WHOLE table now (not per-category).
 // ✅ Rows are non-interactive as a whole — ONLY the Edit arrow icon
 //    (Today mode only) opens ItemDetailsDrawer.
 // ✅ Edit column is entirely excluded from the table layout in
@@ -16,39 +33,14 @@
 // ✅ "Received" header renamed to "Received Date". The receivedDate
 //    cell is highlighted (bold, darker) when
 //    batch.receivedDate === selectedDate.
-// ✅ Category header shows the currently-viewed date (always the
-//    actual formatted date, never "Today").
-// ✅ Received Date/Lot-Batch-No/Issue/Unit/Expiry are vertically
-//    center-aligned within each batch row.
-// ✅ Issue column: batches with MORE THAN 2 entries show them PAIRED,
-//    2 entries per line joined by " / ". 1-2 entries render on a
-//    single line joined by " • ".
-// ✅ batch-to-batch divider line darkened to match other table lines.
+// ✅ Category header shows the currently-viewed date on the right.
+// ✅ Issue column: batches with MORE THAN 2 entries show them PAIRED.
 // ✅ Edit arrow icon is red (#dc2626). Lot/Batch QTY and Total QTY
 //    numbers are fixed black (#0f172a).
-// ✅ Column widths fit within 900px without horizontal scrolling.
-// ✅ oosRow uses minHeight so wrapped text never clips.
 // ✅ Out of Stock filter (Today mode only) guards against archived
 //    items leaking in via `isHistorical || item.isActive !== false`.
-// ✅ NEW (Step 5 of batch-level archive, UI-only — no hook/service
-//    changes) —
-//    - Lot/Batch No. cell: an archived batch (batch.isBatchArchived)
-//      shows its batch number in muted gray with a diagonal red
-//      strike line overlaid (position: absolute, rotated -8deg) —
-//      only that cell is struck, not the whole row.
-//    - Issue column: on the EXACT date the batch was archived
-//      (batch.batchArchivedDate === selectedDate), an "Archived"
-//      line is shown ABOVE any real issue data for that date — real
-//      issue data (if any) is NEVER hidden or replaced, it renders
-//      normally right below. On any other date, the Issue column
-//      behaves exactly as before (no "—" placeholder is shown
-//      alongside "Archived" when there's no real issue that day —
-//      "Archived" itself fills that visual slot).
-//    - Both come entirely from HistoricalBatchState fields already
-//      forwarded by useHistoricalInventory.ts (no changes needed
-//      there) — isBatchArchived/batchArchivedDate, set by
-//      historical-batch-replay-service.ts's own batch-level archive
-//      check (Step 4).
+// ✅ Batch-level archive/restore indicators (diagonal strike,
+//    "Archived"/"Restored [date]" in Issue column) — UNCHANGED.
 // FROZEN
 // ============================================
 
@@ -66,6 +58,8 @@ type StockStatusFilter = "all" | "lowStock" | "outOfStock" | "expiringSoon";
 
 interface HistoricalInventoryTableViewProps {
   restaurantId:   string;
+  restaurantName?: string;
+  restaurantAddress?: string;
   selectedDate:   string;
   categories:     Category[];
   inventoryItems: InventoryItem[];
@@ -134,6 +128,9 @@ const OOS_COLS = { sn: 50, item: 260, date: 160, note: 180 };
 
 const UNCATEGORIZED_ID = "__uncategorized__";
 
+const CATEGORY_ACCENTS_HISTORICAL = [{ bg: "#1e3a5f" }, { bg: "#0f766e" }];
+const CATEGORY_ACCENTS_TODAY = [{ bg: "#059669" }, { bg: "#0d9488" }];
+
 function getBatchRowHeight(issueCount: number): number {
   if (issueCount <= 2) return ROW_HEIGHT;
   const lineCount = Math.ceil(issueCount / 2);
@@ -149,7 +146,7 @@ function formatCategoryHeaderDate(dateISO: string): string {
 }
 
 export function HistoricalInventoryTableView({
-  restaurantId, selectedDate, categories, inventoryItems,
+  restaurantId, restaurantName, restaurantAddress, selectedDate, categories, inventoryItems,
   searchQuery, setSearchQuery, categoryId, setCategoryId,
   onItemPress, sort, setSort, isHistorical, onOpenFullScreen,
   stockStatus, todayISO, categoryMapForExpiry, restaurantDefaultExpiryAlertDays,
@@ -157,10 +154,12 @@ export function HistoricalInventoryTableView({
   const theme = isHistorical
     ? { headerBg: "#1e3a5f", chipActive: "#1e3a5f" }
     : { headerBg: "#059669", chipActive: "#1e293b" };
+  const categoryAccents = isHistorical ? CATEGORY_ACCENTS_HISTORICAL : CATEGORY_ACCENTS_TODAY;
 
   const effectiveTableWidth = isHistorical ? TABLE_WIDTH - ARROW_COL : TABLE_WIDTH;
 
   const [tableAreaHeights, setTableAreaHeights] = useState<Record<string, number>>({});
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
 
   const { itemsWithHistoricalStock, depletedItems, loading, error } =
     useHistoricalInventory(restaurantId, selectedDate, inventoryItems);
@@ -292,25 +291,93 @@ export function HistoricalInventoryTableView({
     return groups;
   }, [depletedItems, inventoryItems, categories, categoryId, searchQuery, isHistorical]);
 
+  const selectedCategoryName = categoryId
+    ? categories.find((c) => c.id === categoryId)?.name ?? "All Categories"
+    : "All Categories";
+
   if (loading) {
     return <ActivityIndicator size="large" color={theme.headerBg} style={styles.loadingIndicator} />;
   }
 
   const isShowingOutOfStock = !isHistorical && stockStatus === "outOfStock";
 
+  const Letterhead = (restaurantName || restaurantAddress) ? (
+    <View style={styles.letterhead}>
+      {restaurantName ? <Text style={styles.letterheadName}>{restaurantName}</Text> : null}
+      {restaurantAddress ? <Text style={styles.letterheadAddress}>{restaurantAddress}</Text> : null}
+    </View>
+  ) : null;
+
+  const ControlsRow = (
+    <View style={styles.controlsRow}>
+      <View style={styles.searchBox}>
+        <MaterialIcons name="search" size={18} color="#059669" />
+        <TextInput
+          style={styles.searchInput}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          placeholder="Search items..."
+          placeholderTextColor="#94a3b8"
+        />
+      </View>
+
+      <TouchableOpacity
+        style={[styles.sortChip, sort === "name-asc" && { backgroundColor: theme.chipActive, borderColor: theme.chipActive }]}
+        onPress={() => setSort("name-asc")}
+      >
+        <MaterialIcons name="sort-by-alpha" size={13} color={sort === "name-asc" ? "#fff" : "#64748b"} />
+        <Text style={[styles.sortChipText, sort === "name-asc" && styles.sortChipTextActive]}>Name</Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.sortChip, sort === "stock-asc" && { backgroundColor: theme.chipActive, borderColor: theme.chipActive }]}
+        onPress={() => setSort("stock-asc")}
+      >
+        <MaterialIcons name="trending-up" size={13} color={sort === "stock-asc" ? "#fff" : "#64748b"} />
+        <Text style={[styles.sortChipText, sort === "stock-asc" && styles.sortChipTextActive]}>Stock</Text>
+      </TouchableOpacity>
+
+      {onOpenFullScreen && (
+        <TouchableOpacity style={styles.fullScreenBtn} onPress={onOpenFullScreen}>
+          <MaterialIcons name="fullscreen" size={14} color="#fff" />
+          <Text style={styles.fullScreenBtnText}>Full Screen</Text>
+        </TouchableOpacity>
+      )}
+
+      {categories.length > 0 && (
+        <View style={styles.dropdownWrap}>
+          <TouchableOpacity style={styles.dropdownButton} onPress={() => setShowCategoryDropdown((v) => !v)}>
+            <Text style={styles.dropdownButtonText} numberOfLines={1}>{selectedCategoryName}</Text>
+            <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={18} color="#059669" />
+          </TouchableOpacity>
+          {showCategoryDropdown && (
+            <View style={styles.dropdownList}>
+              <TouchableOpacity
+                style={styles.dropdownItem}
+                onPress={() => { setCategoryId(null); setShowCategoryDropdown(false); }}
+              >
+                <Text style={styles.dropdownItemText}>All Categories</Text>
+              </TouchableOpacity>
+              {categories.map((cat) => (
+                <TouchableOpacity
+                  key={cat.id}
+                  style={styles.dropdownItem}
+                  onPress={() => { setCategoryId(cat.id); setShowCategoryDropdown(false); }}
+                >
+                  <Text style={styles.dropdownItemText}>{cat.icon} {cat.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
+    </View>
+  );
+
   if (isShowingOutOfStock) {
     return (
       <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
-        <View style={styles.searchRow}>
-          <MaterialIcons name="search" size={18} color="#64748b" />
-          <TextInput
-            style={styles.searchInput}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Search items..."
-            placeholderTextColor="#94a3b8"
-          />
-        </View>
+        {Letterhead}
+        {ControlsRow}
 
         {outOfStockGroups.length === 0 ? (
           <View style={styles.emptyState}>
@@ -350,72 +417,13 @@ export function HistoricalInventoryTableView({
     );
   }
 
+  let hasShownColumnHeader = false;
+  let categoryAccentIndex = 0;
+
   return (
     <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
-      <View style={styles.searchRow}>
-        <MaterialIcons name="search" size={18} color="#64748b" />
-        <TextInput
-          style={styles.searchInput}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          placeholder="Search items..."
-          placeholderTextColor="#94a3b8"
-        />
-      </View>
-
-      {categories.length > 0 && (
-        <View style={styles.categoryWrap}>
-          <TouchableOpacity
-            style={[
-              styles.categoryChip,
-              categoryId === null && { backgroundColor: theme.chipActive, borderColor: theme.chipActive },
-            ]}
-            onPress={() => setCategoryId(null)}
-          >
-            <Text style={[styles.categoryChipText, categoryId === null && styles.categoryChipTextActive]}>
-              All Categories
-            </Text>
-          </TouchableOpacity>
-          {categories.map((cat) => (
-            <TouchableOpacity
-              key={cat.id}
-              style={[
-                styles.categoryChip,
-                categoryId === cat.id && { backgroundColor: theme.chipActive, borderColor: theme.chipActive },
-              ]}
-              onPress={() => setCategoryId(cat.id)}
-            >
-              <Text style={[styles.categoryChipText, categoryId === cat.id && styles.categoryChipTextActive]}>
-                {cat.icon} {cat.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
-
-      <View style={styles.sortRow}>
-        <Text style={styles.sortLabel}>Sort:</Text>
-        <TouchableOpacity
-          style={[styles.sortChip, sort === "name-asc" && { backgroundColor: theme.chipActive, borderColor: theme.chipActive }]}
-          onPress={() => setSort("name-asc")}
-        >
-          <MaterialIcons name="sort-by-alpha" size={13} color={sort === "name-asc" ? "#fff" : "#64748b"} />
-          <Text style={[styles.sortChipText, sort === "name-asc" && styles.sortChipTextActive]}>Name</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.sortChip, sort === "stock-asc" && { backgroundColor: theme.chipActive, borderColor: theme.chipActive }]}
-          onPress={() => setSort("stock-asc")}
-        >
-          <MaterialIcons name="trending-up" size={13} color={sort === "stock-asc" ? "#fff" : "#64748b"} />
-          <Text style={[styles.sortChipText, sort === "stock-asc" && styles.sortChipTextActive]}>Stock</Text>
-        </TouchableOpacity>
-        {onOpenFullScreen && (
-          <TouchableOpacity style={styles.fullScreenBtn} onPress={onOpenFullScreen}>
-            <MaterialIcons name="fullscreen" size={14} color="#fff" />
-            <Text style={styles.fullScreenBtnText}>Full Screen</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+      {Letterhead}
+      {ControlsRow}
 
       {error && (
         <View style={styles.errorBanner}>
@@ -429,180 +437,189 @@ export function HistoricalInventoryTableView({
           <Text style={styles.emptyStateText}>No stock existed on this date</Text>
         </View>
       ) : (
-        categoryGroups.map((group) => {
-          const groupHeights = group.items.map((item) =>
-            item.batches.reduce((sum, b) => sum + getBatchRowHeight(b.issues.length), 0)
-          );
-          const measuredHeight = tableAreaHeights[group.categoryId] ?? 0;
+        <View style={[styles.tableOuterBlock, { width: effectiveTableWidth }]}>
+          {categoryGroups.map((group) => {
+            const groupHeights = group.items.map((item) =>
+              item.batches.reduce((sum, b) => sum + getBatchRowHeight(b.issues.length), 0)
+            );
+            const key = group.categoryId;
+            const measuredHeight = tableAreaHeights[key] ?? 0;
+            const accent = categoryAccents[categoryAccentIndex % categoryAccents.length];
+            categoryAccentIndex += 1;
+            const showColumnHeader = !hasShownColumnHeader;
+            if (showColumnHeader) hasShownColumnHeader = true;
 
-          return (
-            <View key={group.categoryId} style={[styles.categoryBlock, { width: effectiveTableWidth }]}>
-              <View style={[styles.categoryHeader, { backgroundColor: theme.headerBg }]}>
-                <Text style={styles.categoryHeaderText}>
-                  {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
-                </Text>
-                <Text style={styles.categoryHeaderDate}>{formatCategoryHeaderDate(selectedDate)}</Text>
-              </View>
-
-              <View
-                style={styles.tableArea}
-                onLayout={(e) => {
-                  const h = e.nativeEvent.layout.height;
-                  setTableAreaHeights((prev) =>
-                    prev[group.categoryId] === h ? prev : { ...prev, [group.categoryId]: h }
-                  );
-                }}
-              >
-                <View style={styles.tableHeaderRow}>
-                  <View style={[styles.leftHeaderGroup, { width: LEFT_WIDTH }]}>
-                    <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.sn }]}>S.N.</Text>
-                    <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.item }]}>Item Name</Text>
-                  </View>
-                  <View style={styles.rightHeaderGroup}>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.date }]}>Received Date</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.receivedQty }]}>Received Qty</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.issue }]}>Issue</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.stock }]}>Lot/Batch QTY</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry</Text>
-                  </View>
-                  <Text style={[styles.tableHeaderCell, { width: TOTAL_COL }]}>Total QTY</Text>
-                  {!isHistorical && (
-                    <Text style={[styles.tableHeaderCell, { width: ARROW_COL, textAlign: "center" }]}>Edit</Text>
-                  )}
+            return (
+              <View key={key}>
+                <View style={[styles.categoryHeader, { backgroundColor: accent.bg }]}>
+                  <Text style={styles.categoryHeaderText}>
+                    {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
+                  </Text>
+                  <Text style={styles.categoryHeaderDate}>{formatCategoryHeaderDate(selectedDate)}</Text>
                 </View>
 
-                {group.items.map((item, itemIndex) => {
-                  const groupHeight = groupHeights[itemIndex];
-                  const realItem = inventoryItemById.get(item.inventoryId);
-                  const isEvenRow = itemIndex % 2 === 1;
-
-                  return (
-                    <View
-                      key={item.inventoryId}
-                      style={[
-                        styles.itemGroupRow,
-                        { minHeight: groupHeight },
-                        isEvenRow && styles.itemGroupRowAlt,
-                      ]}
-                    >
-                      <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }, isEvenRow && styles.leftStripAlt]}>
-                        <Text style={[styles.leftStripCell, { width: LEFT_COLS.sn }]}>{itemIndex + 1}</Text>
-                        <View style={{ width: LEFT_COLS.item }}>
-                          <Text style={[styles.leftStripCell, styles.itemNameCell]}>{item.itemName}</Text>
-                          {item.hasInconsistency && (
-                            <View style={styles.inconsistencyBadge}>
-                              <MaterialIcons name="warning" size={10} color="#b45309" />
-                              <Text style={styles.inconsistencyText}>data issue</Text>
-                            </View>
-                          )}
-                        </View>
+                <View
+                  style={styles.tableArea}
+                  onLayout={(e) => {
+                    const h = e.nativeEvent.layout.height;
+                    setTableAreaHeights((prev) =>
+                      prev[key] === h ? prev : { ...prev, [key]: h }
+                    );
+                  }}
+                >
+                  {showColumnHeader && (
+                    <View style={styles.tableHeaderRow}>
+                      <View style={[styles.leftHeaderGroup, { width: LEFT_WIDTH }]}>
+                        <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.sn }]}>S.N.</Text>
+                        <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.item }]}>Item Name</Text>
                       </View>
-
-                      <View style={styles.rightBatchRows}>
-                        {item.batches.map((batch, batchIndex) => {
-                          const batchRowHeight = getBatchRowHeight(batch.issues.length);
-                          const wasReceivedToday = batch.receivedDate === selectedDate;
-                          const isArchivedToday = batch.isBatchArchived && batch.batchArchivedDate === selectedDate;
-                          const isRestoredToday = batch.isBatchRestoredToday;
-
-                          return (
-                            <View
-                              key={batch.batchId}
-                              style={[
-                                styles.batchRow,
-                                { minHeight: batchRowHeight },
-                                batchIndex < item.batches.length - 1 && styles.batchRowDivider,
-                              ]}
-                            >
-                              <Text style={[
-                                styles.tableCell,
-                                { width: RIGHT_COLS.date },
-                                wasReceivedToday && styles.receivedDateHighlight,
-                              ]}>
-                                {batch.receivedDate}
-                              </Text>
-                              <View style={{ width: RIGHT_COLS.batch, position: "relative" }}>
-                                <Text style={[
-                                  styles.tableCell,
-                                  isArchivedToday && styles.archivedBatchNoText,
-                                  isRestoredToday && styles.restoredBatchNoText,
-                                ]} numberOfLines={1}>
-                                  {batch.batchNo}
-                                </Text>
-                                {isArchivedToday && <View style={styles.diagonalStrike} pointerEvents="none" />}
-                              </View>
-                              <Text style={[styles.tableCell, styles.receivedQtyCell, { width: RIGHT_COLS.receivedQty }]}>
-                                {wasReceivedToday ? String(batch.originalQuantity) : "—"}
-                              </Text>
-                              <View style={{ width: RIGHT_COLS.issue }}>
-                                {isArchivedToday && (
-                                  <Text style={[styles.tableCell, styles.archivedIndicatorText]}>Archived</Text>
-                                )}
-                                {isRestoredToday && (
-                                  <Text style={[styles.tableCell, styles.restoredIndicatorText]}>Restored {batch.batchRestoredDate}</Text>
-                                )}
-                                {batch.issues.length === 0 ? (
-                                  !isArchivedToday && !isRestoredToday && <Text style={[styles.tableCell, styles.issueCell]}>—</Text>
-                                ) : batch.issues.length <= 2 ? (
-                                  <Text style={[styles.tableCell, styles.issueCell]} numberOfLines={1}>
-                                    {batch.issues.map((iss) => `${iss.quantity} ${batch.unit} ${iss.source}`).join(" • ")}
-                                  </Text>
-                                ) : (
-                                  Array.from({ length: Math.ceil(batch.issues.length / 2) }).map((_, lineIdx) => {
-                                    const pair = batch.issues.slice(lineIdx * 2, lineIdx * 2 + 2);
-                                    return (
-                                      <Text key={lineIdx} style={[styles.tableCell, styles.issueCell, styles.issueMultiLine]} numberOfLines={1}>
-                                        {pair.map((iss) => `${iss.quantity} ${batch.unit} ${iss.source}`).join(" / ")}
-                                      </Text>
-                                    );
-                                  })
-                                )}
-                              </View>
-                              <Text style={[styles.tableCell, styles.batchQtyCell, { width: RIGHT_COLS.stock }]}>{batch.quantity}</Text>
-                              <Text style={[styles.tableCell, { width: RIGHT_COLS.unit }]}>{batch.unit}</Text>
-                              <Text style={[styles.tableCell, { width: RIGHT_COLS.expiry }]}>{batch.expiryDate ?? "—"}</Text>
-                            </View>
-                          );
-                        })}
+                      <View style={styles.rightHeaderGroup}>
+                        <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.date }]}>Received Date</Text>
+                        <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
+                        <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.receivedQty }]}>Received Qty</Text>
+                        <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.issue }]}>Issue</Text>
+                        <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.stock }]}>Lot/Batch QTY</Text>
+                        <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
+                        <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry</Text>
                       </View>
-
-                      <View style={{ width: TOTAL_COL, minHeight: groupHeight, justifyContent: "center", alignItems: "center" }}>
-                        <Text style={styles.totalCell}>{String(item.historicalStock)}</Text>
-                      </View>
-
+                      <Text style={[styles.tableHeaderCell, { width: TOTAL_COL }]}>Total QTY</Text>
                       {!isHistorical && (
-                        <View style={{ width: ARROW_COL, minHeight: groupHeight, justifyContent: "center", alignItems: "center" }}>
-                          {realItem && (
-                            <TouchableOpacity onPress={() => onItemPress(realItem)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                              <MaterialIcons name="chevron-right" size={16} color="#dc2626" />
-                            </TouchableOpacity>
-                          )}
-                        </View>
+                        <Text style={[styles.tableHeaderCell, { width: ARROW_COL, textAlign: "center" }]}>Edit</Text>
                       )}
                     </View>
-                  );
-                })}
+                  )}
 
-                {measuredHeight > 0 && DIVIDER_X_POSITIONS.map((x) => (
-                  <View
-                    key={x}
-                    pointerEvents="none"
-                    style={{
-                      position: "absolute",
-                      left: x,
-                      top: 0,
-                      height: measuredHeight + 4,
-                      width: 1,
-                      backgroundColor: "#94a3b8",
-                    }}
-                  />
-                ))}
+                  {group.items.map((item, itemIndex) => {
+                    const groupHeight = groupHeights[itemIndex];
+                    const realItem = inventoryItemById.get(item.inventoryId);
+                    const isEvenRow = itemIndex % 2 === 1;
+
+                    return (
+                      <View
+                        key={item.inventoryId}
+                        style={[
+                          styles.itemGroupRow,
+                          { minHeight: groupHeight },
+                          isEvenRow && styles.itemGroupRowAlt,
+                        ]}
+                      >
+                        <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }, isEvenRow && styles.leftStripAlt]}>
+                          <Text style={[styles.leftStripCell, { width: LEFT_COLS.sn }]}>{itemIndex + 1}</Text>
+                          <View style={{ width: LEFT_COLS.item }}>
+                            <Text style={[styles.leftStripCell, styles.itemNameCell]}>{item.itemName}</Text>
+                            {item.hasInconsistency && (
+                              <View style={styles.inconsistencyBadge}>
+                                <MaterialIcons name="warning" size={10} color="#b45309" />
+                                <Text style={styles.inconsistencyText}>data issue</Text>
+                              </View>
+                            )}
+                          </View>
+                        </View>
+
+                        <View style={styles.rightBatchRows}>
+                          {item.batches.map((batch, batchIndex) => {
+                            const batchRowHeight = getBatchRowHeight(batch.issues.length);
+                            const wasReceivedToday = batch.receivedDate === selectedDate;
+                            const isArchivedToday = batch.isBatchArchived && batch.batchArchivedDate === selectedDate;
+                            const isRestoredToday = batch.isBatchRestoredToday;
+
+                            return (
+                              <View
+                                key={batch.batchId}
+                                style={[
+                                  styles.batchRow,
+                                  { minHeight: batchRowHeight },
+                                  batchIndex < item.batches.length - 1 && styles.batchRowDivider,
+                                ]}
+                              >
+                                <Text style={[
+                                  styles.tableCell,
+                                  { width: RIGHT_COLS.date },
+                                  wasReceivedToday && styles.receivedDateHighlight,
+                                ]}>
+                                  {batch.receivedDate}
+                                </Text>
+                                <View style={{ width: RIGHT_COLS.batch, position: "relative" }}>
+                                  <Text style={[
+                                    styles.tableCell,
+                                    isArchivedToday && styles.archivedBatchNoText,
+                                    isRestoredToday && styles.restoredBatchNoText,
+                                  ]} numberOfLines={1}>
+                                    {batch.batchNo}
+                                  </Text>
+                                  {isArchivedToday && <View style={styles.diagonalStrike} pointerEvents="none" />}
+                                </View>
+                                <Text style={[styles.tableCell, styles.receivedQtyCell, { width: RIGHT_COLS.receivedQty }]}>
+                                  {wasReceivedToday ? String(batch.originalQuantity) : "—"}
+                                </Text>
+                                <View style={{ width: RIGHT_COLS.issue }}>
+                                  {isArchivedToday && (
+                                    <Text style={[styles.tableCell, styles.archivedIndicatorText]}>Archived</Text>
+                                  )}
+                                  {isRestoredToday && (
+                                    <Text style={[styles.tableCell, styles.restoredIndicatorText]}>Restored {batch.batchRestoredDate}</Text>
+                                  )}
+                                  {batch.issues.length === 0 ? (
+                                    !isArchivedToday && !isRestoredToday && <Text style={[styles.tableCell, styles.issueCell]}>—</Text>
+                                  ) : batch.issues.length <= 2 ? (
+                                    <Text style={[styles.tableCell, styles.issueCell]} numberOfLines={1}>
+                                      {batch.issues.map((iss) => `${iss.quantity} ${batch.unit} ${iss.source}`).join(" • ")}
+                                    </Text>
+                                  ) : (
+                                    Array.from({ length: Math.ceil(batch.issues.length / 2) }).map((_, lineIdx) => {
+                                      const pair = batch.issues.slice(lineIdx * 2, lineIdx * 2 + 2);
+                                      return (
+                                        <Text key={lineIdx} style={[styles.tableCell, styles.issueCell, styles.issueMultiLine]} numberOfLines={1}>
+                                          {pair.map((iss) => `${iss.quantity} ${batch.unit} ${iss.source}`).join(" / ")}
+                                        </Text>
+                                      );
+                                    })
+                                  )}
+                                </View>
+                                <Text style={[styles.tableCell, styles.batchQtyCell, { width: RIGHT_COLS.stock }]}>{batch.quantity}</Text>
+                                <Text style={[styles.tableCell, { width: RIGHT_COLS.unit }]}>{batch.unit}</Text>
+                                <Text style={[styles.tableCell, { width: RIGHT_COLS.expiry }]}>{batch.expiryDate ?? "—"}</Text>
+                              </View>
+                            );
+                          })}
+                        </View>
+
+                        <View style={{ width: TOTAL_COL, minHeight: groupHeight, justifyContent: "center", alignItems: "center" }}>
+                          <Text style={styles.totalCell}>{String(item.historicalStock)}</Text>
+                        </View>
+
+                        {!isHistorical && (
+                          <View style={{ width: ARROW_COL, minHeight: groupHeight, justifyContent: "center", alignItems: "center" }}>
+                            {realItem && (
+                              <TouchableOpacity onPress={() => onItemPress(realItem)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                <MaterialIcons name="chevron-right" size={16} color="#dc2626" />
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+
+                  {measuredHeight > 0 && DIVIDER_X_POSITIONS.map((x) => (
+                    <View
+                      key={x}
+                      pointerEvents="none"
+                      style={{
+                        position: "absolute",
+                        left: x,
+                        top: 0,
+                        height: measuredHeight + 4,
+                        width: 1,
+                        backgroundColor: "#94a3b8",
+                      }}
+                    />
+                  ))}
+                </View>
               </View>
-            </View>
-          );
-        })
+            );
+          })}
+        </View>
       )}
     </ScrollView>
   );
@@ -612,40 +629,48 @@ const styles = StyleSheet.create({
   loadingIndicator: { marginTop: 40 },
   body: { flex: 1 },
   bodyContent: { padding: 12, paddingTop: 4, alignItems: "center" },
-  searchRow: {
+  letterhead: { width: "100%", maxWidth: 900, alignItems: "center", marginBottom: 10 },
+  letterheadName: { fontSize: 18, fontWeight: "800", color: "#1e293b", textAlign: "center" },
+  letterheadAddress: { fontSize: 12, color: "#64748b", textAlign: "center", marginTop: 2 },
+  controlsRow: {
+    flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap",
+    width: "100%", maxWidth: 900, marginBottom: 10, zIndex: 1000,
+  },
+  searchBox: {
     flexDirection: "row", alignItems: "center", gap: 8,
-    backgroundColor: "#fff", width: "100%", maxWidth: 500, paddingHorizontal: 12, paddingVertical: 8,
-    borderRadius: 8, borderWidth: 1, borderColor: "#cbd5e1", marginBottom: 8,
+    backgroundColor: "#fff", flex: 1, minWidth: 160, paddingHorizontal: 12, paddingVertical: 8,
+    borderRadius: 8, borderWidth: 1.5, borderColor: "#059669",
   },
   searchInput: { flex: 1, fontSize: 14, color: "#1e293b" },
-  categoryWrap: {
-    flexDirection: "row", flexWrap: "wrap", gap: 6,
-    width: "100%", marginBottom: 8,
-  },
-  categoryChip: {
-    height: 22, justifyContent: "center", paddingHorizontal: 10, borderRadius: 4,
-    backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#cbd5e1",
-  },
-  categoryChipText: { fontSize: 10, fontWeight: "600", color: "#475569" },
-  categoryChipTextActive: { color: "#fff" },
-  sortRow: {
-    flexDirection: "row", alignItems: "center", gap: 6,
-    width: "100%", marginBottom: 10,
-  },
-  sortLabel: { fontSize: 11, fontWeight: "700", color: "#94a3b8", marginRight: 2 },
   sortChip: {
     flexDirection: "row", alignItems: "center", gap: 4,
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 4,
+    paddingHorizontal: 10, paddingVertical: 8, borderRadius: 4,
     backgroundColor: "#f1f5f9", borderWidth: 1, borderColor: "#cbd5e1",
   },
   sortChipText: { fontSize: 11, fontWeight: "700", color: "#64748b" },
   sortChipTextActive: { color: "#fff" },
   fullScreenBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 4,
-    backgroundColor: "#0369a1", marginLeft: "auto",
+    paddingHorizontal: 10, paddingVertical: 8, borderRadius: 4,
+    backgroundColor: "#0369a1",
   },
   fullScreenBtnText: { fontSize: 11, fontWeight: "700", color: "#fff" },
+  dropdownWrap: { width: 180, position: "relative", zIndex: 1000, elevation: 20 },
+  dropdownButton: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    borderWidth: 1.5, borderColor: "#059669", borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 8, backgroundColor: "#fff",
+  },
+  dropdownButtonText: { fontSize: 12, color: "#1e293b", fontWeight: "600", flex: 1 },
+  dropdownList: {
+    position: "absolute", top: "100%", right: 0,
+    borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 8,
+    marginTop: 4, maxHeight: 220, backgroundColor: "#ffffff",
+    width: 180, zIndex: 1000, elevation: 20,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 6,
+  },
+  dropdownItem: { paddingHorizontal: 14, paddingVertical: 10 },
+  dropdownItemText: { fontSize: 13, color: "#1e293b" },
   errorBanner: {
     backgroundColor: "#fef2f2", padding: 10, borderRadius: 6, marginBottom: 10, width: "100%", maxWidth: 500,
     borderWidth: 1, borderColor: "#fecaca",
@@ -653,11 +678,14 @@ const styles = StyleSheet.create({
   errorBannerText: { color: "#b91c1c", fontSize: 12, fontWeight: "600" },
   emptyState: { alignItems: "center", marginTop: 60, gap: 8 },
   emptyStateText: { color: "#94a3b8", fontSize: 14, fontWeight: "600" },
+  tableOuterBlock: {
+    borderWidth: 1.5, borderColor: "#475569", borderRadius: 4, overflow: "hidden",
+  },
   categoryBlock: {
     marginBottom: 16, borderWidth: 1.5, borderColor: "#475569", borderRadius: 4, overflow: "hidden",
   },
   categoryHeader: {
-    paddingVertical: 7, paddingHorizontal: 10,
+    paddingVertical: 4, paddingHorizontal: 10, minHeight: 26,
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
   },
   categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.6 },
