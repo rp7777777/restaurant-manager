@@ -20,13 +20,20 @@
 //    updateBatchQuantity() (the FEFO engine's deduction path) and
 //    updateBatchStatus() (lifecycle changes) — this is the manual-
 //    correction entry point.
-// ✅ NEW — archiveInventoryBatch()/restoreInventoryBatch() (Step 2
-//    of batch-level archive rollout): sets/clears isActive+
-//    archivedAt on the BATCH document only — never touches the
-//    parent InventoryItem or any other batch. Both check the batch
-//    actually exists first (getDoc) and throw a clear error if not,
-//    same pattern as getBatchById(). No transaction needed — this
-//    is a single-document field update, same as updateBatchStatus().
+// ✅ NEW — archiveInventoryBatch()/restoreInventoryBatch() now use a
+//    Firestore transaction (was a plain getDoc + updateDoc) to
+//    read-modify-write the archiveHistory array — same pattern as
+//    inventory-item-service.ts's item-level archive/restore (Step
+//    2/3 of the archive-history-tracking rollout): archive() appends
+//    a new open cycle { archivedAt, restoredAt: null }; restore()
+//    finds the LAST entry with restoredAt === null and closes it.
+//    This lets Historical views correctly determine batch visibility
+//    for any past date range, instead of only knowing the LAST
+//    archive/restore event. The transaction also protects against a
+//    concurrent archive/restore silently dropping a cycle entry.
+//    Still sets/clears isActive+archivedAt/restoredAt on the BATCH
+//    document only — never touches the parent InventoryItem or any
+//    other batch.
 // ✅ No delete function — batches are never deleted, only depleted
 //    or status-changed/archived. This preserves the audit trail
 //    permanently.
@@ -35,7 +42,7 @@
 
 import {
   collection, addDoc, updateDoc, doc, getDoc, getDocs,
-  onSnapshot, query, where, orderBy, limit, serverTimestamp,
+  onSnapshot, query, where, orderBy, limit, serverTimestamp, runTransaction,
 } from "firebase/firestore";
 import { db, auth } from "../../../firebase";
 import { COL, RCOL } from "../../../constants/firestore-collections";
@@ -44,6 +51,8 @@ import {
   CreateInventoryBatchInput,
   InventoryBatchStatus,
 } from "../types/inventory-batch";
+
+type ArchiveCycle = { archivedAt: unknown; restoredAt: unknown | null };
 
 function batchesCollection(restaurantId: string) {
   return collection(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY_BATCHES);
@@ -274,7 +283,8 @@ export function subscribeAllBatches(
 
 // ── Batch-level archive — INDEPENDENT of InventoryItem.isActive.
 //    Archiving/restoring a single batch never touches the parent
-//    item or its other batches. See FROZEN header. ──
+//    item or its other batches. Transaction-based to safely
+//    read-modify-write archiveHistory. See FROZEN header. ──
 export async function archiveInventoryBatch(
   restaurantId: string,
   batchId: string
@@ -282,18 +292,28 @@ export async function archiveInventoryBatch(
   if (!restaurantId) throw new Error("Restaurant not configured");
   if (!auth.currentUser) throw new Error("User not authenticated");
 
-  const snap = await getDoc(batchDoc(restaurantId, batchId));
-  if (!snap.exists()) throw new Error("Batch not found");
-  const existing = snap.data() as Omit<InventoryBatch, "id">;
-  if (existing.isActive === false) {
-    throw new Error("This batch is already archived");
-  }
+  const ref = batchDoc(restaurantId, batchId);
+  const uid = auth.currentUser.uid;
 
-  await updateDoc(batchDoc(restaurantId, batchId), {
-    isActive:   false,
-    archivedAt: serverTimestamp(),
-    updatedAt:  serverTimestamp(),
-    updatedBy:  auth.currentUser.uid,
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists()) throw new Error("Batch not found");
+    const existing = snap.data() as Omit<InventoryBatch, "id">;
+    if (existing.isActive === false) {
+      throw new Error("This batch is already archived");
+    }
+
+    const history = (existing.archiveHistory as ArchiveCycle[] | undefined) ?? [];
+    const now = new Date();
+    const updatedHistory: ArchiveCycle[] = [...history, { archivedAt: now, restoredAt: null }];
+
+    transaction.update(ref, {
+      isActive:       false,
+      archivedAt:     serverTimestamp(),
+      archiveHistory: updatedHistory,
+      updatedAt:      serverTimestamp(),
+      updatedBy:      uid,
+    });
   });
 }
 
@@ -304,18 +324,32 @@ export async function restoreInventoryBatch(
   if (!restaurantId) throw new Error("Restaurant not configured");
   if (!auth.currentUser) throw new Error("User not authenticated");
 
-  const snap = await getDoc(batchDoc(restaurantId, batchId));
-  if (!snap.exists()) throw new Error("Batch not found");
-  const existing = snap.data() as Omit<InventoryBatch, "id">;
-  if (existing.isActive !== false) {
-    throw new Error("This batch is not archived");
-  }
+  const ref = batchDoc(restaurantId, batchId);
+  const uid = auth.currentUser.uid;
 
-  await updateDoc(batchDoc(restaurantId, batchId), {
-    isActive:   true,
-    archivedAt: null,
-    restoredAt: serverTimestamp(),
-    updatedAt:  serverTimestamp(),
-    updatedBy:  auth.currentUser.uid,
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists()) throw new Error("Batch not found");
+    const existing = snap.data() as Omit<InventoryBatch, "id">;
+    if (existing.isActive !== false) {
+      throw new Error("This batch is not archived");
+    }
+
+    const history = (existing.archiveHistory as ArchiveCycle[] | undefined) ?? [];
+    const now = new Date();
+    const updatedHistory = [...history];
+    const openIndex = updatedHistory.map((c) => c.restoredAt).lastIndexOf(null);
+    if (openIndex !== -1) {
+      updatedHistory[openIndex] = { ...updatedHistory[openIndex], restoredAt: now };
+    }
+
+    transaction.update(ref, {
+      isActive:       true,
+      archivedAt:     null,
+      restoredAt:     serverTimestamp(),
+      archiveHistory: updatedHistory,
+      updatedAt:      serverTimestamp(),
+      updatedBy:      uid,
+    });
   });
 }
