@@ -124,21 +124,24 @@ function isArchivedDuring(snapshot: MetaSnapshot, selectedDate: string): boolean
       const archivedDate = toJsDate(cycle.archivedAt);
       if (!archivedDate) continue;
       const archivedKey = toDateKey(archivedDate);
-      if (selectedDate < archivedKey) continue; // this cycle hadn't started yet on selectedDate
+      if (selectedDate < archivedKey) continue; // this cycle hadn't started yet
 
-      if (cycle.restoredAt === null) return true; // still open (currently archived) and selectedDate is on/after archivedKey
+      if (cycle.restoredAt === null) {
+        // Still open — archive date itself still shows the item,
+        // hidden only strictly AFTER it.
+        if (selectedDate > archivedKey) return true;
+        continue;
+      }
 
       const restoredDate = toJsDate(cycle.restoredAt);
       if (!restoredDate) return true; // malformed — conservatively treat as archived
       const restoredKey = toDateKey(restoredDate);
-      // Archived strictly BEFORE the restore date; the restore date
-      // itself (and everything after) is active again.
-      if (selectedDate < restoredKey) return true;
+      if (selectedDate < restoredKey) return true; // archived strictly before the restore date
     }
     return false;
   }
 
-  // Legacy fallback — no archiveHistory recorded yet for this item.
+  // Legacy fallback — no archiveHistory recorded yet.
   if (snapshot.isActive) return false;
   if (!snapshot.archivedAt) return true;
   const archivedDate = toJsDate(snapshot.archivedAt);

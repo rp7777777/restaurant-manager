@@ -20,15 +20,13 @@
 //    display and the Total QTY exclusion (unrelated to visibility).
 // ✅ isBatchRestoredToday/batchRestoredDate: cosmetic single-day
 //    "Restored" indicator — unchanged.
-// ✅ NEW — isBatchArchivedDuring() REPLACES the old
-//    isBatchArchivedAsOfDate() for the VISIBILITY decision: now
-//    checks the batch's FULL archiveHistory array (every past
-//    archive/restore CYCLE for this specific batch), not just its
-//    current archivedAt/isActive snapshot. Same fix as the item-level
-//    isArchivedDuring() in useHistoricalInventory.ts — restoring a
-//    batch no longer makes it look like it was never archived for
-//    past dates within its actual archived period; the real gap
-//    between archive and restore stays correctly hidden. Falls back
+// ✅ isBatchArchivedDuring() — the VISIBILITY decision: checks the
+//    batch's full archiveHistory array (every past archive/restore
+//    CYCLE), not just current archivedAt/isActive. For an OPEN cycle
+//    (not yet restored), the batch is hidden only STRICTLY AFTER its
+//    archive date — the archive date itself still shows it. For a
+//    CLOSED cycle, it's hidden for every date strictly before the
+//    restore date (restore date onward shows it again). Falls back
 //    to the old archivedAt-only logic when archiveHistory is empty
 //    (legacy batches archived before this field existed).
 // FROZEN
@@ -87,9 +85,6 @@ export function isRealStockDeduction(movement: StockMovement): boolean {
 
 // ✅ Visibility decision — checks the FULL archiveHistory (every past
 // cycle for THIS batch), not just the current isActive/archivedAt.
-// Same date-range logic as useHistoricalInventory.ts's own
-// isArchivedDuring(): archive date shows, the gap between archive and
-// restore stays hidden, restore date onward shows again.
 function isBatchArchivedDuring(batch: InventoryBatch, selectedDate: string): boolean {
   const history = (batch.archiveHistory as ArchiveCycle[] | undefined) ?? [];
 
@@ -100,7 +95,12 @@ function isBatchArchivedDuring(batch: InventoryBatch, selectedDate: string): boo
       const archivedKey = toDateKey(archivedDate);
       if (selectedDate < archivedKey) continue; // this cycle hadn't started yet
 
-      if (cycle.restoredAt === null) return true; // still open
+      if (cycle.restoredAt === null) {
+        // Still open — the archive date itself still shows the
+        // batch, hidden only strictly AFTER it.
+        if (selectedDate > archivedKey) return true;
+        continue;
+      }
 
       const restoredDate = toJsDate(cycle.restoredAt);
       if (!restoredDate) return true; // malformed — conservatively archived

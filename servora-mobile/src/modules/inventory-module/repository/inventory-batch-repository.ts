@@ -1,9 +1,11 @@
 // ============================================
 // SERVORA ERP — Inventory Batch Repository
 // ✅ Single gateway for all InventoryBatch Firestore operations.
-// ✅ ARCHITECTURE BOUNDARY — this repository ONLY manages batch
-//    documents. It NEVER touches InventoryItem.currentStock itself
-//    — keeping that in sync is inventory-service.ts's job.
+// ✅ ARCHITECTURE BOUNDARY (relaxed for archive/restore only — see
+//    below) — this repository otherwise ONLY manages batch
+//    documents. Keeping InventoryItem.currentStock in sync for
+//    quantity/status changes outside archive/restore remains
+//    inventory-item-service.ts's job.
 // ✅ Validation — quantity/unitCost cannot be negative, batchNo/
 //    itemName required, purchaseDate/receivedDate must be valid
 //    YYYY-MM-DD strings.
@@ -20,20 +22,28 @@
 //    updateBatchQuantity() (the FEFO engine's deduction path) and
 //    updateBatchStatus() (lifecycle changes) — this is the manual-
 //    correction entry point.
-// ✅ NEW — archiveInventoryBatch()/restoreInventoryBatch() now use a
-//    Firestore transaction (was a plain getDoc + updateDoc) to
-//    read-modify-write the archiveHistory array — same pattern as
-//    inventory-item-service.ts's item-level archive/restore (Step
-//    2/3 of the archive-history-tracking rollout): archive() appends
-//    a new open cycle { archivedAt, restoredAt: null }; restore()
-//    finds the LAST entry with restoredAt === null and closes it.
-//    This lets Historical views correctly determine batch visibility
-//    for any past date range, instead of only knowing the LAST
-//    archive/restore event. The transaction also protects against a
-//    concurrent archive/restore silently dropping a cycle entry.
-//    Still sets/clears isActive+archivedAt/restoredAt on the BATCH
-//    document only — never touches the parent InventoryItem or any
-//    other batch.
+// ✅ NEW — archiveInventoryBatch()/restoreInventoryBatch() now
+//    recompute and write the parent InventoryItem's currentStock
+//    IN THE SAME TRANSACTION as the batch's own isActive/
+//    archivedAt/archiveHistory update. This is a deliberate,
+//    justified exception to the "batch repository never touches
+//    InventoryItem" boundary above — the two-call approach
+//    (archiveInventoryBatch() + a separate syncItemStockFromBatches()
+//    call from the UI layer) had a real bug: the second call's
+//    getDocs() read could occasionally miss the just-written batch
+//    change under Firestore's read-your-writes/caching behavior when
+//    called as two independent operations back-to-back, leaving
+//    currentStock stale after an archive/restore until the item was
+//    reloaded from scratch. Doing both writes inside ONE transaction
+//    (which reads ALL of the item's batches fresh, applies the one
+//    being archived/restored, and computes the total from that exact
+//    same read) makes the two facts atomic and consistent by
+//    construction — no timing gap possible. The item's OTHER fields
+//    (isActive, archivedAt, everything else) are untouched — only
+//    currentStock/updatedAt/updatedBy are written on the item doc.
+//    inventory-item-service.ts's syncItemStockFromBatches() still
+//    exists for other callers/manual re-sync, but is no longer
+//    needed after archive/restore specifically.
 // ✅ No delete function — batches are never deleted, only depleted
 //    or status-changed/archived. This preserves the audit trail
 //    permanently.
@@ -50,6 +60,7 @@ import {
   InventoryBatch,
   CreateInventoryBatchInput,
   InventoryBatchStatus,
+  isActiveBatch,
 } from "../types/inventory-batch";
 
 type ArchiveCycle = { archivedAt: unknown; restoredAt: unknown | null };
@@ -60,6 +71,10 @@ function batchesCollection(restaurantId: string) {
 
 function batchDoc(restaurantId: string, batchId: string) {
   return doc(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY_BATCHES, batchId);
+}
+
+function itemDoc(restaurantId: string, itemId: string) {
+  return doc(db, COL.RESTAURANTS, restaurantId, RCOL.INVENTORY, itemId);
 }
 
 function isValidDateString(value: string): boolean {
@@ -281,10 +296,9 @@ export function subscribeAllBatches(
   );
 }
 
-// ── Batch-level archive — INDEPENDENT of InventoryItem.isActive.
-//    Archiving/restoring a single batch never touches the parent
-//    item or its other batches. Transaction-based to safely
-//    read-modify-write archiveHistory. See FROZEN header. ──
+// ── Batch-level archive — sets isActive/archivedAt/archiveHistory on
+//    the batch AND recomputes+writes the parent item's currentStock,
+//    atomically in one transaction. See FROZEN header. ──
 export async function archiveInventoryBatch(
   restaurantId: string,
   batchId: string
@@ -292,27 +306,50 @@ export async function archiveInventoryBatch(
   if (!restaurantId) throw new Error("Restaurant not configured");
   if (!auth.currentUser) throw new Error("User not authenticated");
 
-  const ref = batchDoc(restaurantId, batchId);
+  const bRef = batchDoc(restaurantId, batchId);
   const uid = auth.currentUser.uid;
 
   await runTransaction(db, async (transaction) => {
-    const snap = await transaction.get(ref);
+    const snap = await transaction.get(bRef);
     if (!snap.exists()) throw new Error("Batch not found");
     const existing = snap.data() as Omit<InventoryBatch, "id">;
     if (existing.isActive === false) {
       throw new Error("This batch is already archived");
     }
 
-    const history = (existing.archiveHistory as ArchiveCycle[] | undefined) ?? [];
+    // Read ALL of this item's batches fresh, inside the transaction,
+    // so the recomputed total is guaranteed consistent with the
+    // batch change being made right now — no separate/later read
+    // that could miss this write.
+    const siblingsSnap = await getDocs(
+      query(batchesCollection(restaurantId), where("inventoryId", "==", existing.inventoryId))
+    );
+    const siblings: InventoryBatch[] = siblingsSnap.docs.map((d) => ({
+      id: d.id, ...(d.data() as Omit<InventoryBatch, "id">),
+    }));
+
     const now = new Date();
+    const history = (existing.archiveHistory as ArchiveCycle[] | undefined) ?? [];
     const updatedHistory: ArchiveCycle[] = [...history, { archivedAt: now, restoredAt: null }];
 
-    transaction.update(ref, {
+    transaction.update(bRef, {
       isActive:       false,
       archivedAt:     serverTimestamp(),
       archiveHistory: updatedHistory,
       updatedAt:      serverTimestamp(),
       updatedBy:      uid,
+    });
+
+    // Recompute currentStock as if this batch is already archived
+    // (it's excluded from isActiveBatch() once isActive is false).
+    const recomputedStock = siblings
+      .filter((b) => (b.id === batchId ? false : isActiveBatch(b)))
+      .reduce((sum, b) => sum + b.quantity, 0);
+
+    transaction.update(itemDoc(restaurantId, existing.inventoryId), {
+      currentStock: recomputedStock,
+      updatedAt:    serverTimestamp(),
+      updatedBy:    uid,
     });
   });
 }
@@ -324,32 +361,51 @@ export async function restoreInventoryBatch(
   if (!restaurantId) throw new Error("Restaurant not configured");
   if (!auth.currentUser) throw new Error("User not authenticated");
 
-  const ref = batchDoc(restaurantId, batchId);
+  const bRef = batchDoc(restaurantId, batchId);
   const uid = auth.currentUser.uid;
 
   await runTransaction(db, async (transaction) => {
-    const snap = await transaction.get(ref);
+    const snap = await transaction.get(bRef);
     if (!snap.exists()) throw new Error("Batch not found");
     const existing = snap.data() as Omit<InventoryBatch, "id">;
     if (existing.isActive !== false) {
       throw new Error("This batch is not archived");
     }
 
-    const history = (existing.archiveHistory as ArchiveCycle[] | undefined) ?? [];
+    const siblingsSnap = await getDocs(
+      query(batchesCollection(restaurantId), where("inventoryId", "==", existing.inventoryId))
+    );
+    const siblings: InventoryBatch[] = siblingsSnap.docs.map((d) => ({
+      id: d.id, ...(d.data() as Omit<InventoryBatch, "id">),
+    }));
+
     const now = new Date();
+    const history = (existing.archiveHistory as ArchiveCycle[] | undefined) ?? [];
     const updatedHistory = [...history];
     const openIndex = updatedHistory.map((c) => c.restoredAt).lastIndexOf(null);
     if (openIndex !== -1) {
       updatedHistory[openIndex] = { ...updatedHistory[openIndex], restoredAt: now };
     }
 
-    transaction.update(ref, {
+    transaction.update(bRef, {
       isActive:       true,
       archivedAt:     null,
       restoredAt:     serverTimestamp(),
       archiveHistory: updatedHistory,
       updatedAt:      serverTimestamp(),
       updatedBy:      uid,
+    });
+
+    // Recompute currentStock as if this batch is already restored
+    // (isActiveBatch() now includes it, since isActive → true).
+    const recomputedStock = siblings
+      .filter((b) => (b.id === batchId ? true : isActiveBatch(b)))
+      .reduce((sum, b) => sum + (b.id === batchId ? existing.quantity : b.quantity), 0);
+
+    transaction.update(itemDoc(restaurantId, existing.inventoryId), {
+      currentStock: recomputedStock,
+      updatedAt:    serverTimestamp(),
+      updatedBy:    uid,
     });
   });
 }
