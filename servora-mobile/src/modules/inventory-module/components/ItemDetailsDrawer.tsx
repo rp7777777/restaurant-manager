@@ -18,14 +18,19 @@
 //    completely separate from the item-level Archive/Restore action
 //    button. A local archivingBatchId state tracks which SINGLE row
 //    is mid-request.
-// ✅ NEW — "Restored" info line in Basic Information, shown ONLY
-//    when item.restoredAt is set (i.e. the item has been restored at
-//    least once). Displays the LAST restore date (not a full audit
-//    history — restoreInventoryItem() overwrites this field with the
-//    newest restore timestamp each time; archiveInventoryItem() never
-//    touches it, so it survives across archive cycles). No other
-//    behavior changed — main inventory table, historical replay, and
-//    archive logic are all untouched.
+// ✅ FIX — removed the extra syncItemStockFromBatches() calls that
+//    previously followed archiveInventoryBatch()/restoreInventoryBatch()
+//    here. Both of those repository functions ALREADY recompute and
+//    write the parent item's currentStock atomically inside their
+//    own Firestore transaction (see inventory-batch-repository.ts's
+//    FROZEN header) — the extra call here was a second, independent,
+//    non-transactional write that could race with or stomp on the
+//    correct transactional value, which was the actual cause of
+//    Current Stock/Inventory Value showing a stale number after a
+//    batch archive/restore. syncItemStockFromBatches() itself is
+//    untouched and still exists for other, unrelated callers.
+// ✅ "Restored" info line in Basic Information, shown ONLY when
+//    item.restoredAt is set — displays the LAST restore date.
 // FROZEN
 // ============================================
 
@@ -37,7 +42,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { InventoryItem, classifyExpiry, resolveExpiryAlertDays } from "../types/inventory";
 import { Category } from "../types/category";
 import {
-  archiveInventoryItem, restoreInventoryItem, syncItemStockFromBatches,
+  archiveInventoryItem, restoreInventoryItem,
 } from "../services/inventory-item-service";
 import {
   archiveInventoryBatch, restoreInventoryBatch,
@@ -46,7 +51,6 @@ import { useBatchesForItem } from "../hooks/useBatchesForItem";
 import { InventoryBatchTable } from "./InventoryBatchTable";
 import { InventoryBatch } from "../types/inventory-batch";
 import { EditBatchModal } from "./EditBatchModal";
-
 
 const isWeb = Platform.OS === "web";
 
@@ -156,13 +160,14 @@ export function ItemDetailsDrawer({
   // ✅ Batch-level archive/restore — completely independent of the
   // item-level Archive/Restore above. Only the tapped row's batchId
   // is tracked as busy, so InventoryBatchTable shows a spinner on
-  // just that one row.
+  // just that one row. currentStock sync happens INSIDE
+  // archiveInventoryBatch()/restoreInventoryBatch()'s own transaction
+  // — no extra call needed here (see FROZEN header).
   const handleArchiveBatch = async (batch: InventoryBatch) => {
     if (archivingBatchId || !restaurantId) return;
     setArchivingBatchId(batch.id);
     try {
       await archiveInventoryBatch(restaurantId, batch.id);
-      await syncItemStockFromBatches(restaurantId, batch.inventoryId);
     } catch (err: any) {
       const msg = err?.message ?? "Failed to archive batch";
       if (isWeb) window.alert(`Error: ${msg}`);
@@ -177,7 +182,6 @@ export function ItemDetailsDrawer({
     setArchivingBatchId(batch.id);
     try {
       await restoreInventoryBatch(restaurantId, batch.id);
-      await syncItemStockFromBatches(restaurantId, batch.inventoryId);
     } catch (err: any) {
       const msg = err?.message ?? "Failed to restore batch";
       if (isWeb) window.alert(`Error: ${msg}`);
