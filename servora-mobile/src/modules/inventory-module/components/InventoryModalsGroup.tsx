@@ -95,7 +95,7 @@ export function InventoryModalsGroup({
     <>
       <ItemDetailsDrawer
         visible={!!drawerItem}
-        item={drawerItem}
+        item={drawerItem ? (allItems.find((it) => it.id === drawerItem.id) ?? drawerItem) : undefined}
         category={drawerItem ? categoryMap.get(drawerItem.categoryId) : undefined}
         restaurantId={restaurantId}
         todayISO={todayISO}
