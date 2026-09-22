@@ -102,7 +102,8 @@ export interface InventoryBatch {
   archivedAt?:      unknown;  // Firestore Timestamp of when this batch
                                // was archived — null/undefined when
                                // never archived.
-  restoredAt?:      unknown;  // Firestore Timestamp of the LAST time this batch was restored — not a full audit history, a subsequent archive/restore cycle overwrites it. null/undefined when never restored.                             
+  restoredAt?:      unknown;  // Firestore Timestamp of the LAST time this batch was restored — not a full audit history, a subsequent archive/restore cycle overwrites it. null/undefined when never restored. 
+  archiveHistory?:          Array<{ archivedAt: unknown; restoredAt: unknown | null }>;  // Append-only log of every archive/restore CYCLE for this item. Each entry is one cycle: archivedAt is when that cycle started, restoredAt is when it ended (null while still archived). Used by Historical views to correctly hide the item ONLY during date ranges it was actually archived — instead of the simpler archivedAt/restoredAt fields (which only remember the LAST cycle and, once restored, make the item look "never archived" for ANY past date). archivedAt/restoredAt above are kept for backward compatibility and quick "is this item currently archived" checks, but archiveHistory is now the SOURCE OF TRUTH for historical date-range visibility.                            
 }
 
 export interface CreateInventoryBatchInput {

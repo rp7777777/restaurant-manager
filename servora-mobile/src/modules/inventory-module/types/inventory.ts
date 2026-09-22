@@ -58,6 +58,7 @@ export interface InventoryItem {
   isActive?:                boolean;  // undefined/true = active
   archivedAt?:              unknown;  // Firestore Timestamp of when this item was archived — null/undefined when never archived. Lets Historical views show this item's real batches/movements for dates BEFORE this timestamp, while hiding it from dates on/after.
   restoredAt?:              unknown;  // Firestore Timestamp of the LAST time this item was restored — not a full audit history, a subsequent archive/restore cycle overwrites it with the newest restore date. null/undefined when never restored.
+  archiveHistory?:          Array<{ archivedAt: unknown; restoredAt: unknown | null }>;  // Append-only log of every archive/restore CYCLE for this item. Each entry is one cycle: archivedAt is when that cycle started, restoredAt is when it ended (null while still archived). Used by Historical views to correctly hide the item ONLY during date ranges it was actually archived — instead of the simpler archivedAt/restoredAt fields (which only remember the LAST cycle and, once restored, make the item look "never archived" for ANY past date). archivedAt/restoredAt above are kept for backward compatibility and quick "is this item currently archived" checks, but archiveHistory is now the SOURCE OF TRUTH for historical date-range visibility.
   restaurantId:             string;
   userId?:                  string;
   createdAt?:               unknown;

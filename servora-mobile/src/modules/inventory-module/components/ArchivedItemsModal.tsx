@@ -552,7 +552,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5, borderColor: "#475569", borderRadius: 4, overflow: "hidden",
   },
   categoryHeader: {
-    paddingVertical: 7, paddingHorizontal: 10,
+    paddingVertical: 4, paddingHorizontal: 10,
   },
   categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.6 },
 
@@ -570,13 +570,13 @@ const styles = StyleSheet.create({
   itemNameCell: { fontWeight: "700", color: "#0f172a", alignSelf: "center" },
   archivedDateText: { color: "#dc2626", fontWeight: "700" },
 
-  batchLine: { justifyContent: "center", paddingHorizontal: 4, paddingVertical: 2 },
+  batchLine: { justifyContent: "center", paddingHorizontal: 4, paddingVertical: 2, width: "102%" },
   actionBatchLine: { alignItems: "center" },
   batchLineDivider: { borderBottomWidth: 1, borderBottomColor: "#94a3b8" },
   mergedCell: { justifyContent: "center", alignItems: "center" },
 
   restoreBtn: {
-    width: 30, height: 30, borderRadius: 6, backgroundColor: "#e0f2fe",
+    width: 5, height: 5, borderRadius: 5, backgroundColor: "#e0f2fe",
     alignItems: "center", justifyContent: "center",
   },
 });
