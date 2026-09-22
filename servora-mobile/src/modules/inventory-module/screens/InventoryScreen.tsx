@@ -5,7 +5,12 @@
 // ✅ Migration Step 5 (FINAL) — Today and Historical now share ONE
 //    table component: HistoricalInventoryTableView.
 // ✅ UI/modal state → useInventoryScreenState.
-// ✅ Date navigation → useInventoryDateNavigation.
+// ✅ Date navigation → useInventoryDateNavigation — the nav
+//    CONTROLS (goToPreviousDay/goToNextDay/dateLabel/isNextDisabled)
+//    are still computed here, but the actual date-nav UI element has
+//    MOVED into HistoricalInventoryTableView itself (rendered there,
+//    below the letterhead/controls row, above the table) — passed
+//    down as props instead of rendered as a separate row here.
 // ✅ "New Supplier" detour timing/return → useSupplierDetourNavigation.
 // ✅ showFullScreenTable state + InventoryFullScreenTableModal.
 // ✅ All other modal/drawer rendering → InventoryModalsGroup.
@@ -14,20 +19,16 @@
 // ✅ HistoricalInventoryTableView receives the FULL `items` (archived
 //    included) so its internal useHistoricalInventory call can make
 //    its own correct, date-aware archive decision per item.
-// ✅ NEW (Step 3, final step of the Inventory Monthly Report feature)
-//    — showMonthlyReport state + InventoryMonthlyReportScreen,
+// ✅ NEW — restaurantName/restaurantAddress passed through from
+//    useApp()'s restaurant object, for the letterhead.
+// ✅ showMonthlyReport state + InventoryMonthlyReportScreen,
 //    rendered as an absolute-fill overlay SIBLING of the screen's
-//    main content (not nested inside any ScrollView), matching the
-//    exact same overlay pattern already used by Store/Kitchen's own
-//    MonthlyReportScreen — necessary so the overlay actually covers
-//    the full viewport rather than being constrained by a scrollable
-//    parent's own layout.
+//    main content.
 // FROZEN
 // ============================================
 
 import React, { useMemo, useCallback, useEffect } from "react";
-import { View, Text, StyleSheet, Platform, Alert, TouchableOpacity } from "react-native";
-import { MaterialIcons } from "@expo/vector-icons";
+import { View, Text, StyleSheet, Platform, Alert } from "react-native";
 import { useLocalSearchParams, useFocusEffect } from "expo-router";
 import { useApp } from "../../../context/AppContext";
 import { auth } from "../../../firebase";
@@ -245,16 +246,6 @@ export default function InventoryScreen() {
           onSeedStoreDefaults={handleSeedDefaults}
         />
 
-        <View style={styles.dateNav}>
-          <TouchableOpacity onPress={goToPreviousDay} style={styles.dateNavArrow}>
-            <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
-          </TouchableOpacity>
-          <Text style={styles.dateNavLabel}>{dateLabel}</Text>
-          <TouchableOpacity onPress={goToNextDay} style={styles.dateNavArrow} disabled={isNextDisabled}>
-            <MaterialIcons name="chevron-right" size={22} color={isNextDisabled ? "#cbd5e1" : "#1e293b"} />
-          </TouchableOpacity>
-        </View>
-
         {!loading && (
           <View style={styles.statsSearchRow}>
             <InventoryStats
@@ -278,7 +269,13 @@ export default function InventoryScreen() {
 
         <HistoricalInventoryTableView
           restaurantId={safeRestaurantId}
+          restaurantName={restaurant?.name}
+          restaurantAddress={restaurant?.address}
           selectedDate={selectedDate}
+          dateLabel={dateLabel}
+          onPreviousDay={goToPreviousDay}
+          onNextDay={goToNextDay}
+          isNextDayDisabled={isNextDisabled}
           categories={categories}
           inventoryItems={items}
           searchQuery={tableSearchQuery}
@@ -361,12 +358,6 @@ export default function InventoryScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f8fafc" },
-  dateNav: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12,
-    paddingVertical: 8, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
-  },
-  dateNavArrow: { padding: 4 },
-  dateNavLabel: { fontSize: 14, fontWeight: "800", color: "#1e293b", minWidth: 160, textAlign: "center" },
   statsSearchRow: { paddingHorizontal: 16, marginTop: 8, gap: 6 },
   errorBanner: {
     backgroundColor: "#fef2f2", margin: 16, padding: 10, borderRadius: 8,

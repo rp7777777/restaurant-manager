@@ -4,22 +4,25 @@
 // ✅ Out of Stock dedicated table display (Today mode only).
 // ✅ Professional redesign:
 //    - Letterhead: restaurant name (bold, large) + address (smaller,
-//      gray) at the top of the table area, ABOVE the controls row.
+//      gray) at the top.
 //    - Single controls row: Search (green border) + Sort (Name/
-//      Stock) + Full Screen + a Category DROPDOWN (was chips) — all
-//      together on one row.
+//      Stock) + Full Screen + Category Dropdown.
+//    - NEW — Date navigator ("< [date] >") now rendered HERE, below
+//      the controls row and above the table (was previously a
+//      separate row in InventoryScreen.tsx) — matches Kitchen's
+//      Request History layout: [Letterhead] [Controls] [Date Nav]
+//      [Table]. Parent (InventoryScreen.tsx) still owns the actual
+//      navigation state/logic (useInventoryDateNavigation) — only
+//      passes down dateLabel/onPreviousDay/onNextDay/
+//      isNextDayDisabled as props.
 //    - Categories render inside ONE continuous bordered table (no
 //      gap between category blocks) — category headers act as
 //      in-table section dividers. Column header row shown only ONCE,
 //      above the first category.
-//    - Date navigator REMOVED from this component — moved to the
-//      parent (InventoryScreen.tsx), rendered ABOVE this component.
-// ✅ FIX — category dropdown was appearing BEHIND the table (z-index/
-//    elevation too low) and scrolling the PARENT ScrollView instead
-//    of itself (a nested ScrollView fighting the parent's own scroll
-//    gesture). Raised zIndex/elevation on the dropdown wrapper+list,
-//    and replaced the nested ScrollView with a plain View (category
-//    counts here are small enough not to need internal scrolling).
+// ✅ FIX — category dropdown: raised zIndex/elevation so it renders
+//    ABOVE the table instead of behind it, and kept as a ScrollView
+//    (nestedScrollEnabled) so a long category list scrolls WITHIN
+//    the dropdown itself rather than scrolling the parent page.
 // ✅ Total QTY and Edit arrow are item-level columns, vertically
 //    centered across groupHeight.
 // ✅ Received Qty, Lot/Batch QTY, Total QTY are center-aligned.
@@ -61,6 +64,10 @@ interface HistoricalInventoryTableViewProps {
   restaurantName?: string;
   restaurantAddress?: string;
   selectedDate:   string;
+  dateLabel:      string;
+  onPreviousDay:  () => void;
+  onNextDay:      () => void;
+  isNextDayDisabled: boolean;
   categories:     Category[];
   inventoryItems: InventoryItem[];
   searchQuery:    string;
@@ -146,7 +153,9 @@ function formatCategoryHeaderDate(dateISO: string): string {
 }
 
 export function HistoricalInventoryTableView({
-  restaurantId, restaurantName, restaurantAddress, selectedDate, categories, inventoryItems,
+  restaurantId, restaurantName, restaurantAddress, selectedDate,
+  dateLabel, onPreviousDay, onNextDay, isNextDayDisabled,
+  categories, inventoryItems,
   searchQuery, setSearchQuery, categoryId, setCategoryId,
   onItemPress, sort, setSort, isHistorical, onOpenFullScreen,
   stockStatus, todayISO, categoryMapForExpiry, restaurantDefaultExpiryAlertDays,
@@ -350,7 +359,7 @@ export function HistoricalInventoryTableView({
             <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={18} color="#059669" />
           </TouchableOpacity>
           {showCategoryDropdown && (
-            <View style={styles.dropdownList}>
+            <ScrollView style={styles.dropdownList} nestedScrollEnabled showsVerticalScrollIndicator>
               <TouchableOpacity
                 style={styles.dropdownItem}
                 onPress={() => { setCategoryId(null); setShowCategoryDropdown(false); }}
@@ -366,10 +375,22 @@ export function HistoricalInventoryTableView({
                   <Text style={styles.dropdownItemText}>{cat.icon} {cat.name}</Text>
                 </TouchableOpacity>
               ))}
-            </View>
+            </ScrollView>
           )}
         </View>
       )}
+    </View>
+  );
+
+  const DateNav = (
+    <View style={styles.dateNav}>
+      <TouchableOpacity onPress={onPreviousDay} style={styles.dateNavArrow}>
+        <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
+      </TouchableOpacity>
+      <Text style={styles.dateNavLabel}>{dateLabel}</Text>
+      <TouchableOpacity onPress={onNextDay} style={styles.dateNavArrow} disabled={isNextDayDisabled}>
+        <MaterialIcons name="chevron-right" size={22} color={isNextDayDisabled ? "#cbd5e1" : "#1e293b"} />
+      </TouchableOpacity>
     </View>
   );
 
@@ -378,6 +399,7 @@ export function HistoricalInventoryTableView({
       <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
         {Letterhead}
         {ControlsRow}
+        {DateNav}
 
         {outOfStockGroups.length === 0 ? (
           <View style={styles.emptyState}>
@@ -424,6 +446,7 @@ export function HistoricalInventoryTableView({
     <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
       {Letterhead}
       {ControlsRow}
+      {DateNav}
 
       {error && (
         <View style={styles.errorBanner}>
@@ -671,6 +694,13 @@ const styles = StyleSheet.create({
   },
   dropdownItem: { paddingHorizontal: 14, paddingVertical: 10 },
   dropdownItemText: { fontSize: 13, color: "#1e293b" },
+  dateNav: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12,
+    width: "100%", maxWidth: 900, paddingVertical: 8, marginBottom: 10,
+    backgroundColor: "#fff", borderRadius: 8, borderWidth: 1, borderColor: "#e2e8f0",
+  },
+  dateNavArrow: { padding: 4 },
+  dateNavLabel: { fontSize: 14, fontWeight: "800", color: "#1e293b", minWidth: 160, textAlign: "center" },
   errorBanner: {
     backgroundColor: "#fef2f2", padding: 10, borderRadius: 6, marginBottom: 10, width: "100%", maxWidth: 500,
     borderWidth: 1, borderColor: "#fecaca",
