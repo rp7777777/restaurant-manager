@@ -15,18 +15,22 @@
 //    useHistoricalInventory.ts to reuse.
 // ✅ originalQuantity is EXPOSED on the returned state.
 // ✅ SAFETY — quantity is NEVER allowed to go negative.
-// ✅ isBatchArchived/batchArchivedDate — batch-level archive
-//    visibility: archived batch stays visible through its own
-//    archive date, hidden from the day after.
-// ✅ NEW — isBatchRestoredToday/batchRestoredDate: mirrors the
-//    archive indicator, but for RESTORE. isBatchRestoredToday is
-//    true ONLY when selectedDate exactly equals the batch's
-//    restoredAt date (batchRestoredDate) — a purely cosmetic,
-//    single-day indicator for the UI (Step 4) to show "Restored" on
-//    that exact date's row, with no effect on any other date
-//    (unlike the archive flag, restoredAt does NOT affect visibility
-//    or quantity at all — a restored batch is simply active again,
-//    fully governed by the normal quantity/visible logic below).
+// ✅ isBatchArchived/batchArchivedDate — batch's CURRENT archive
+//    state (unchanged) — still used for the "Archived" indicator
+//    display and the Total QTY exclusion (unrelated to visibility).
+// ✅ isBatchRestoredToday/batchRestoredDate: cosmetic single-day
+//    "Restored" indicator — unchanged.
+// ✅ NEW — isBatchArchivedDuring() REPLACES the old
+//    isBatchArchivedAsOfDate() for the VISIBILITY decision: now
+//    checks the batch's FULL archiveHistory array (every past
+//    archive/restore CYCLE for this specific batch), not just its
+//    current archivedAt/isActive snapshot. Same fix as the item-level
+//    isArchivedDuring() in useHistoricalInventory.ts — restoring a
+//    batch no longer makes it look like it was never archived for
+//    past dates within its actual archived period; the real gap
+//    between archive and restore stays correctly hidden. Falls back
+//    to the old archivedAt-only logic when archiveHistory is empty
+//    (legacy batches archived before this field existed).
 // FROZEN
 // ============================================
 
@@ -49,6 +53,11 @@ export interface HistoricalBatchState {
   batchArchivedDate:  string | null; // YYYY-MM-DD the batch was archived on, or null if never
   isBatchRestoredToday: boolean; // true ONLY when selectedDate exactly matches batchRestoredDate — cosmetic, single-day UI indicator only
   batchRestoredDate:  string | null; // YYYY-MM-DD the batch was last restored on, or null if never
+}
+
+interface ArchiveCycle {
+  archivedAt: unknown;
+  restoredAt: unknown | null;
 }
 
 export function toJsDate(value: unknown): Date | null {
@@ -76,7 +85,32 @@ export function isRealStockDeduction(movement: StockMovement): boolean {
   return true;
 }
 
-function isBatchArchivedAsOfDate(batch: InventoryBatch, selectedDate: string): boolean {
+// ✅ Visibility decision — checks the FULL archiveHistory (every past
+// cycle for THIS batch), not just the current isActive/archivedAt.
+// Same date-range logic as useHistoricalInventory.ts's own
+// isArchivedDuring(): archive date shows, the gap between archive and
+// restore stays hidden, restore date onward shows again.
+function isBatchArchivedDuring(batch: InventoryBatch, selectedDate: string): boolean {
+  const history = (batch.archiveHistory as ArchiveCycle[] | undefined) ?? [];
+
+  if (history.length > 0) {
+    for (const cycle of history) {
+      const archivedDate = toJsDate(cycle.archivedAt);
+      if (!archivedDate) continue;
+      const archivedKey = toDateKey(archivedDate);
+      if (selectedDate < archivedKey) continue; // this cycle hadn't started yet
+
+      if (cycle.restoredAt === null) return true; // still open
+
+      const restoredDate = toJsDate(cycle.restoredAt);
+      if (!restoredDate) return true; // malformed — conservatively archived
+      const restoredKey = toDateKey(restoredDate);
+      if (selectedDate < restoredKey) return true; // archived strictly before the restore date
+    }
+    return false;
+  }
+
+  // Legacy fallback — no archiveHistory recorded yet for this batch.
   if (batch.isActive !== false) return false;
   if (!batch.archivedAt) return false;
   const archivedDate = toJsDate(batch.archivedAt);
@@ -166,7 +200,7 @@ export function replayBatchAsOfDate(
     return { ...base, quantity: 0, visible: false, depletedDate, inconsistent };
   }
 
-  if (isBatchArchivedAsOfDate(batch, selectedDate)) {
+  if (isBatchArchivedDuring(batch, selectedDate)) {
     return { ...base, quantity, visible: false, depletedDate, inconsistent };
   }
 
