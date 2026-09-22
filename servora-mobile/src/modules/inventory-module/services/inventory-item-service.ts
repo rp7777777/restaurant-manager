@@ -17,30 +17,36 @@
 //    operation. A stock>0 + isActive=false item is a VALID state
 //    (the user consciously archived it) — NOT automatically treated
 //    as corruption.
-// ✅ archivedAt (serverTimestamp()) is recorded on archive, and
-//    explicitly cleared (null) on restore. restoredAt records the
-//    LAST restore timestamp — see FROZEN header of the type file.
+// ✅ NEW — archiveHistory read-modify-write: archive() reads the
+//    item's CURRENT archiveHistory array, appends a NEW cycle entry
+//    { archivedAt: serverTimestamp(), restoredAt: null }, and writes
+//    the full array back. restore() reads the array, finds the LAST
+//    entry (the currently-open cycle, restoredAt === null) and sets
+//    ITS restoredAt — never mutating any earlier, already-closed
+//    cycle. This preserves a complete, accurate record of every
+//    archive/restore period the item has ever been through, so
+//    Historical views (via isArchivedDuring() in
+//    useHistoricalInventory.ts) can correctly hide the item ONLY for
+//    dates that actually fell within an archived period — restoring
+//    an item no longer makes it look "never archived" for past dates
+//    during which it genuinely was archived. archivedAt/restoredAt
+//    top-level fields are STILL written (kept for backward
+//    compatibility / quick "is this currently archived" checks by
+//    code that doesn't need the full history), but archiveHistory is
+//    the source of truth for date-range visibility.
+// ✅ Uses a Firestore transaction (not a plain read-then-write) so a
+//    concurrent archive/restore on the same item can't silently drop
+//    an entry — the read and the write happen atomically together.
 // ✅ duplicateInventoryItem() — creates a new item with currentStock
-//    always 0.
-// ✅ NEW — syncItemStockFromBatches(): recomputes InventoryItem.
-//    currentStock from its batches' actual sum (via
-//    calculateTotalFromBatches(), which now EXCLUDES batch-level-
-//    archived batches — see inventory-batch.ts's own FROZEN header)
-//    and writes it back. This is the "keeping currentStock in sync"
-//    responsibility that inventory-batch-repository.ts's own header
-//    explicitly delegates to THIS file (repository boundary: batch
-//    repository never touches InventoryItem itself). Called by the
-//    UI layer immediately after a BATCH-level archive/restore
-//    (ArchivedItemsModal.tsx, InventoryBatchTable.tsx's caller) —
-//    NOT wired into archiveInventoryBatch()/restoreInventoryBatch()
-//    themselves, preserving the repository's single-responsibility
-//    boundary. Safe to call even if nothing changed (idempotent —
-//    just overwrites currentStock with the same recomputed value).
+//    always 0. Does not carry over archiveHistory (a fresh item has
+//    none).
+// ✅ syncItemStockFromBatches(): recomputes InventoryItem.
+//    currentStock from its batches' actual sum. UNCHANGED.
 // FROZEN
 // ============================================
 
-import { updateDoc, serverTimestamp } from "firebase/firestore";
-import { auth } from "../../../firebase";
+import { updateDoc, serverTimestamp, runTransaction } from "firebase/firestore";
+import { db, auth } from "../../../firebase";
 import { InventoryItem, CreateInventoryItemInput } from "../types/inventory";
 import { calculateTotalFromBatches } from "../types/inventory-batch";
 import { RecordStockMovementInput } from "../../stock-movement-module/types/stock-movement";
@@ -48,6 +54,8 @@ import { recordStockMovement } from "../../stock-movement-module/services/stock-
 import { createInventoryItem as repoCreateInventoryItem } from "../repository/inventory-repository";
 import { getBatchesForItem } from "../repository/inventory-batch-repository";
 import { inventoryDoc } from "./inventory-service-helpers";
+
+type ArchiveCycle = { archivedAt: unknown; restoredAt: unknown | null };
 
 // ── Stock Adjustment (non-batch path) ────────────
 export async function adjustStock(
@@ -66,11 +74,24 @@ export async function archiveInventoryItem(
   if (!auth.currentUser) throw new Error("User not authenticated");
   if (!itemId) throw new Error("Inventory item is required");
 
-  await updateDoc(inventoryDoc(restaurantId, itemId), {
-    isActive:   false,
-    archivedAt: serverTimestamp(),
-    updatedAt:  serverTimestamp(),
-    updatedBy:  auth.currentUser.uid,
+  const ref = inventoryDoc(restaurantId, itemId);
+  const uid = auth.currentUser.uid;
+
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists()) throw new Error("Item not found");
+
+    const existing = (snap.data().archiveHistory as ArchiveCycle[] | undefined) ?? [];
+    const now = new Date();
+    const updatedHistory: ArchiveCycle[] = [...existing, { archivedAt: now, restoredAt: null }];
+
+    transaction.update(ref, {
+      isActive:       false,
+      archivedAt:     serverTimestamp(),
+      archiveHistory: updatedHistory,
+      updatedAt:      serverTimestamp(),
+      updatedBy:      uid,
+    });
   });
 }
 
@@ -83,12 +104,34 @@ export async function restoreInventoryItem(
   if (!auth.currentUser) throw new Error("User not authenticated");
   if (!itemId) throw new Error("Inventory item is required");
 
-  await updateDoc(inventoryDoc(restaurantId, itemId), {
-    isActive:   true,
-    archivedAt: null,
-    restoredAt: serverTimestamp(),
-    updatedAt:  serverTimestamp(),
-    updatedBy:  auth.currentUser.uid,
+  const ref = inventoryDoc(restaurantId, itemId);
+  const uid = auth.currentUser.uid;
+
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (!snap.exists()) throw new Error("Item not found");
+
+    const existing = (snap.data().archiveHistory as ArchiveCycle[] | undefined) ?? [];
+    const now = new Date();
+    const updatedHistory = [...existing];
+
+    // Close the currently-open cycle (the last entry with
+    // restoredAt === null), if any. If none exists (legacy data with
+    // no archiveHistory yet), add a best-effort single closed entry
+    // so future date-range lookups have at least this one cycle.
+    const openIndex = updatedHistory.map((c) => c.restoredAt).lastIndexOf(null);
+    if (openIndex !== -1) {
+      updatedHistory[openIndex] = { ...updatedHistory[openIndex], restoredAt: now };
+    }
+
+    transaction.update(ref, {
+      isActive:       true,
+      archivedAt:     null,
+      restoredAt:     serverTimestamp(),
+      archiveHistory: updatedHistory,
+      updatedAt:      serverTimestamp(),
+      updatedBy:      uid,
+    });
   });
 }
 
