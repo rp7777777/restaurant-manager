@@ -25,23 +25,23 @@
 //      quantity — computed HERE via same-date deduction subtraction.
 //    - itemsWithHistoricalStock excludes items whose batches are ALL
 //      invisible (depleted before selectedDate).
-// ✅ NEW — Total QTY now EXCLUDES a batch's own quantity starting on
-//    (and including) the exact date it was batch-level archived, per
-//    the confirmed rule: "archive date itself still shows the batch
-//    ROW (with its 'Archived' indicator), but Total QTY stops
-//    counting it from that same day onward" — NOT the day after
-//    (that's the item-level archive's own separate rule, unchanged).
-//    Example: batch archived 19 Sep — 18 Sep's Total QTY still
-//    includes it, 19 Sep's Total QTY excludes it (row still shows,
-//    marked Archived), 20 Sep the row itself is hidden entirely (via
-//    historical-batch-replay-service.ts's own visible:false, Step 4
-//    — unrelated to this Total QTY change). This does NOT modify
-//    batch.quantity itself (still preserved as historical/audit
-//    record) — only what gets summed into the item's displayed
-//    Total QTY for dates on/after the batch's own archive date.
+// ✅ Total QTY EXCLUDES a batch's own quantity starting on (and
+//    including) the exact date it was batch-level archived.
 // ✅ depletedItems: items where EVERY one of their batches is
 //    depleted (invisible) as of selectedDate. depletedSince is the
 //    LATEST (max) depletedDate among the item's batches.
+// ✅ NEW — MetaSnapshot now also carries restoredAt. When the PARENT
+//    ITEM (not an individual batch) was restored exactly on
+//    selectedDate — e.g. restoring a whole item from Archived
+//    Inventory's Items tab, which never touches any batch's own
+//    isActive/restoredAt — every one of that item's visible batch
+//    rows gets isBatchRestoredToday overridden to true for that one
+//    date, so the "Restored" indicator (Step 4 of batch-level
+//    restore tracking, in HistoricalInventoryTableView.tsx) shows
+//    correctly even though no batch was individually restored. A
+//    batch's own isBatchRestoredToday (if independently true) is
+//    never overridden away — this only ever turns the flag ON, never
+//    off.
 // FROZEN
 // ============================================
 
@@ -98,6 +98,7 @@ interface MetaSnapshot {
   categoryId: string | null;
   isActive:   boolean;
   archivedAt: unknown;
+  restoredAt: unknown;
 }
 
 function toMetaSnapshot(meta: InventoryItem): MetaSnapshot {
@@ -105,6 +106,7 @@ function toMetaSnapshot(meta: InventoryItem): MetaSnapshot {
     categoryId: meta.categoryId ?? null,
     isActive:   meta.isActive !== false,
     archivedAt: meta.archivedAt ?? null,
+    restoredAt: meta.restoredAt ?? null,
   };
 }
 
@@ -121,6 +123,17 @@ function isArchivedAsOfDate(snapshot: MetaSnapshot, selectedDate: string): boole
   // Archive date itself still shows the item; hidden only from the
   // following day onward.
   return selectedDate > toDateKey(archivedDate);
+}
+
+// ✅ Returns true if the ITEM (not any individual batch) was restored
+// exactly on selectedDate — used to also mark that item's batch rows
+// as "Restored" that day, even when no batch was individually
+// archived/restored.
+function isItemRestoredToday(snapshot: MetaSnapshot, selectedDate: string): boolean {
+  if (!snapshot.restoredAt) return false;
+  const restoredDate = toJsDate(snapshot.restoredAt);
+  if (!restoredDate) return false;
+  return toDateKey(restoredDate) === selectedDate;
 }
 
 export function useHistoricalInventory(
@@ -262,11 +275,11 @@ export function useHistoricalInventory(
       if (state.inconsistent) entry.hasInconsistency = true;
 
       if (state.visible) {
-        // ✅ NEW — Total QTY excludes this batch's own quantity
-        // starting on (and including) its own archive date. The
-        // batch ROW itself still gets pushed below (still visible,
-        // still shows its "Archived" indicator via
-        // isBatchArchived/batchArchivedDate) — only the SUM changes.
+        // ✅ Total QTY excludes this batch's own quantity starting on
+        // (and including) its own archive date. The batch ROW itself
+        // still gets pushed below (still visible, still shows its
+        // "Archived" indicator via isBatchArchived/batchArchivedDate)
+        // — only the SUM changes.
         const isArchivedOnOrBeforeSelectedDate =
           state.isBatchArchived && state.batchArchivedDate !== null && selectedDate >= state.batchArchivedDate;
 
@@ -275,7 +288,15 @@ export function useHistoricalInventory(
           entry.historicalStock += closingQuantity;
         }
 
-        entry.batches.push(state);
+        // ✅ NEW — if the PARENT ITEM (not this specific batch) was
+        // restored exactly on selectedDate, show the "Restored"
+        // indicator on this batch's row too — even though the batch
+        // itself was never individually archived/restored.
+        const finalState = (!state.isBatchRestoredToday && snapshot && isItemRestoredToday(snapshot, selectedDate))
+          ? { ...state, isBatchRestoredToday: true }
+          : state;
+
+        entry.batches.push(finalState);
       }
 
       byItem.set(batch.inventoryId, entry);

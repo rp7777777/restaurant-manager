@@ -541,7 +541,7 @@ export function HistoricalInventoryTableView({
                                   <Text style={[styles.tableCell, styles.archivedIndicatorText]}>Archived</Text>
                                 )}
                                 {isRestoredToday && (
-                                  <Text style={[styles.tableCell, styles.restoredIndicatorText]}>Restored</Text>
+                                  <Text style={[styles.tableCell, styles.restoredIndicatorText]}>Restored {batch.batchRestoredDate}</Text>
                                 )}
                                 {batch.issues.length === 0 ? (
                                   !isArchivedToday && !isRestoredToday && <Text style={[styles.tableCell, styles.issueCell]}>—</Text>
