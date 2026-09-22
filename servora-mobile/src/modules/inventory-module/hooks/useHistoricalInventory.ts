@@ -5,17 +5,6 @@
 //    logic lives entirely in historical-batch-replay-service.ts —
 //    this hook only fetches data and hands it to that service.
 // ✅ Batches — reuses useAllInventoryBatches() UNCHANGED.
-// ✅ Archived items still show real historical batches/movements for
-//    any selectedDate up to AND INCLUDING archivedAt's own date, and
-//    are hidden from the day AFTER archivedAt onward.
-// ✅ isArchivedAsOfDate() uses `selectedDate > toDateKey(archivedDate)`
-//    — the archive date itself still shows the item, hidden only
-//    from the following day onward.
-// ✅ Metadata cache (metaSnapshotByInventoryIdRef) stores the FULL
-//    snapshot needed for the archive-date decision (isActive AND
-//    archivedAt), not just categoryId — protects against a momentary
-//    meta-lookup miss incorrectly resurrecting an item that should
-//    be hidden, or showing it under Uncategorized.
 // ✅ CONFIRMED ARCHITECTURE — Option A: full movement history loaded
 //    ONCE via a single live subscription, kept in memory.
 // ✅ CONFIRMED FINAL SEMANTICS —
@@ -30,18 +19,23 @@
 // ✅ depletedItems: items where EVERY one of their batches is
 //    depleted (invisible) as of selectedDate. depletedSince is the
 //    LATEST (max) depletedDate among the item's batches.
-// ✅ NEW — MetaSnapshot now also carries restoredAt. When the PARENT
-//    ITEM (not an individual batch) was restored exactly on
-//    selectedDate — e.g. restoring a whole item from Archived
-//    Inventory's Items tab, which never touches any batch's own
-//    isActive/restoredAt — every one of that item's visible batch
-//    rows gets isBatchRestoredToday overridden to true for that one
-//    date, so the "Restored" indicator (Step 4 of batch-level
-//    restore tracking, in HistoricalInventoryTableView.tsx) shows
-//    correctly even though no batch was individually restored. A
-//    batch's own isBatchRestoredToday (if independently true) is
-//    never overridden away — this only ever turns the flag ON, never
-//    off.
+// ✅ MetaSnapshot restoredAt override: when the PARENT ITEM (not an
+//    individual batch) was restored exactly on selectedDate, every
+//    one of that item's visible batch rows gets isBatchRestoredToday
+//    overridden to true for that one date.
+// ✅ NEW — isArchivedDuring() REPLACES the old isArchivedAsOfDate():
+//    now checks the FULL archiveHistory array (every past
+//    archive/restore CYCLE), not just the current archivedAt/
+//    isActive snapshot. This fixes a real bug: previously, restoring
+//    an item made it look like it was "never archived" for ANY past
+//    date — including dates that fell WITHIN its actual archived
+//    period. E.g. archived 17 Sep, restored 22 Sep: 17 Sep shows
+//    (archive date itself), 18-21 Sep correctly stay HIDDEN (the
+//    real gap where it was genuinely archived), 22 Sep onward shows
+//    again (restore date itself, and every date after — since the
+//    item is simply active again going forward). Falls back to the
+//    old archivedAt-only logic when archiveHistory is empty (legacy
+//    items archived before this field existed).
 // FROZEN
 // ============================================
 
@@ -91,37 +85,64 @@ export interface UseHistoricalInventoryResult {
   error:                    string | null;
 }
 
+interface ArchiveCycle {
+  archivedAt: unknown;
+  restoredAt: unknown | null;
+}
+
 // ✅ The minimal snapshot of item metadata needed for the archive-
 // date decision + display. Cached per-inventoryId so a momentary
 // live-lookup miss can still make the correct archive/show decision.
 interface MetaSnapshot {
-  categoryId: string | null;
-  isActive:   boolean;
-  archivedAt: unknown;
-  restoredAt: unknown;
+  categoryId:     string | null;
+  isActive:       boolean;
+  archivedAt:     unknown;
+  restoredAt:     unknown;
+  archiveHistory: ArchiveCycle[];
 }
 
 function toMetaSnapshot(meta: InventoryItem): MetaSnapshot {
   return {
-    categoryId: meta.categoryId ?? null,
-    isActive:   meta.isActive !== false,
-    archivedAt: meta.archivedAt ?? null,
-    restoredAt: meta.restoredAt ?? null,
+    categoryId:     meta.categoryId ?? null,
+    isActive:       meta.isActive !== false,
+    archivedAt:     meta.archivedAt ?? null,
+    restoredAt:     meta.restoredAt ?? null,
+    archiveHistory: meta.archiveHistory ?? [],
   };
 }
 
 // ✅ Returns true if this item should be EXCLUDED from the historical
-// view for selectedDate — i.e. it was archived BEFORE selectedDate
-// (the archive date itself still shows the item). Legacy archived
-// items with no archivedAt recorded are always excluded (no date to
-// compare against).
-function isArchivedAsOfDate(snapshot: MetaSnapshot, selectedDate: string): boolean {
-  if (snapshot.isActive) return false; // never archived
-  if (!snapshot.archivedAt) return true; // archived, but no date recorded — always hidden
+// view for selectedDate — i.e. selectedDate falls within any PAST
+// archive cycle recorded in archiveHistory. The archive date of a
+// cycle shows the item; the restore date of a cycle (and everything
+// after it, until the NEXT archive if any) shows the item again.
+// Falls back to the simple archivedAt-only check when archiveHistory
+// is empty (legacy data).
+function isArchivedDuring(snapshot: MetaSnapshot, selectedDate: string): boolean {
+  if (snapshot.archiveHistory.length > 0) {
+    for (const cycle of snapshot.archiveHistory) {
+      const archivedDate = toJsDate(cycle.archivedAt);
+      if (!archivedDate) continue;
+      const archivedKey = toDateKey(archivedDate);
+      if (selectedDate < archivedKey) continue; // this cycle hadn't started yet on selectedDate
+
+      if (cycle.restoredAt === null) return true; // still open (currently archived) and selectedDate is on/after archivedKey
+
+      const restoredDate = toJsDate(cycle.restoredAt);
+      if (!restoredDate) return true; // malformed — conservatively treat as archived
+      const restoredKey = toDateKey(restoredDate);
+      // Archived strictly BEFORE the restore date; the restore date
+      // itself (and everything after) is active again.
+      if (selectedDate < restoredKey) return true;
+    }
+    return false;
+  }
+
+  // Legacy fallback — no archiveHistory recorded yet for this item.
+  if (snapshot.isActive) return false;
+  if (!snapshot.archivedAt) return true;
   const archivedDate = toJsDate(snapshot.archivedAt);
   if (!archivedDate) return true;
-  // Archive date itself still shows the item; hidden only from the
-  // following day onward.
   return selectedDate > toDateKey(archivedDate);
 }
 
@@ -258,7 +279,7 @@ export function useHistoricalInventory(
       // render where the live lookup momentarily misses. Only items
       // with NO snapshot at all (never once seen) fall through
       // unfiltered, as a last-resort "never drop real data" guard.
-      if (snapshot && isArchivedAsOfDate(snapshot, selectedDate)) continue;
+      if (snapshot && isArchivedDuring(snapshot, selectedDate)) continue;
 
       const resolvedCategoryId = snapshot?.categoryId ?? null;
 
@@ -288,7 +309,7 @@ export function useHistoricalInventory(
           entry.historicalStock += closingQuantity;
         }
 
-        // ✅ NEW — if the PARENT ITEM (not this specific batch) was
+        // ✅ If the PARENT ITEM (not this specific batch) was
         // restored exactly on selectedDate, show the "Restored"
         // indicator on this batch's row too — even though the batch
         // itself was never individually archived/restored.
