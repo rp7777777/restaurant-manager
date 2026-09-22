@@ -271,6 +271,9 @@ export default function InventoryScreen() {
           restaurantId={safeRestaurantId}
           restaurantName={restaurant?.name}
           restaurantAddress={restaurant?.address}
+          restaurantPhone={restaurant?.phone}
+          restaurantEmail={restaurant?.email}
+          restaurantVatNumber={restaurant?.vatNumber}
           selectedDate={selectedDate}
           dateLabel={dateLabel}
           onPreviousDay={goToPreviousDay}

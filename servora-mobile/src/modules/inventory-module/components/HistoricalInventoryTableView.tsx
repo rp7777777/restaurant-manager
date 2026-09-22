@@ -3,24 +3,23 @@
 // ✅ Migration Steps 1-5 — single table for Today and Historical.
 // ✅ Out of Stock dedicated table display (Today mode only).
 // ✅ Professional redesign:
-//    - Letterhead: restaurant name (bold, large) + address (smaller,
-//      gray) at the top.
+//    - Letterhead: restaurant name/address/phone/email/VAT, styled
+//      as a card (light-blue bg, icon circle — matches Store's own
+//      "Requested by" card design language), rendered as the FIRST
+//      row INSIDE the table's own bordered block (tableOuterBlock) —
+//      not a separate card above the table.
 //    - Single controls row: Search (green border) + Sort (Name/
 //      Stock) + Full Screen + Category Dropdown.
-//    - NEW — Date navigator ("< [date] >") now rendered HERE, below
-//      the controls row and above the table (was previously a
-//      separate row in InventoryScreen.tsx) — matches Kitchen's
-//      Request History layout: [Letterhead] [Controls] [Date Nav]
-//      [Table]. Parent (InventoryScreen.tsx) still owns the actual
-//      navigation state/logic (useInventoryDateNavigation) — only
-//      passes down dateLabel/onPreviousDay/onNextDay/
-//      isNextDayDisabled as props.
+//    - Date navigator ("< [date] >") rendered below the controls row
+//      and above the table. Parent (InventoryScreen.tsx) still owns
+//      the actual navigation state/logic — only passes down
+//      dateLabel/onPreviousDay/onNextDay/isNextDayDisabled as props.
 //    - Categories render inside ONE continuous bordered table (no
 //      gap between category blocks) — category headers act as
 //      in-table section dividers. Column header row shown only ONCE,
 //      above the first category.
-// ✅ FIX — category dropdown: raised zIndex/elevation so it renders
-//    ABOVE the table instead of behind it, and kept as a ScrollView
+// ✅ Category dropdown: raised zIndex/elevation so it renders ABOVE
+//    the table instead of behind it, kept as a ScrollView
 //    (nestedScrollEnabled) so a long category list scrolls WITHIN
 //    the dropdown itself rather than scrolling the parent page.
 // ✅ Total QTY and Edit arrow are item-level columns, vertically
@@ -63,6 +62,9 @@ interface HistoricalInventoryTableViewProps {
   restaurantId:   string;
   restaurantName?: string;
   restaurantAddress?: string;
+  restaurantPhone?: string;
+  restaurantEmail?: string;
+  restaurantVatNumber?: string;
   selectedDate:   string;
   dateLabel:      string;
   onPreviousDay:  () => void;
@@ -153,8 +155,8 @@ function formatCategoryHeaderDate(dateISO: string): string {
 }
 
 export function HistoricalInventoryTableView({
-  restaurantId, restaurantName, restaurantAddress, selectedDate,
-  dateLabel, onPreviousDay, onNextDay, isNextDayDisabled,
+  restaurantId, restaurantName, restaurantAddress, restaurantPhone, restaurantEmail, restaurantVatNumber,
+  selectedDate, dateLabel, onPreviousDay, onNextDay, isNextDayDisabled,
   categories, inventoryItems,
   searchQuery, setSearchQuery, categoryId, setCategoryId,
   onItemPress, sort, setSort, isHistorical, onOpenFullScreen,
@@ -310,10 +312,23 @@ export function HistoricalInventoryTableView({
 
   const isShowingOutOfStock = !isHistorical && stockStatus === "outOfStock";
 
+  const letterheadMetaParts: string[] = [];
+  if (restaurantPhone) letterheadMetaParts.push(`Phone: ${restaurantPhone}`);
+  if (restaurantEmail) letterheadMetaParts.push(`Email: ${restaurantEmail}`);
+  if (restaurantVatNumber) letterheadMetaParts.push(`VAT: ${restaurantVatNumber}`);
+
   const Letterhead = (restaurantName || restaurantAddress) ? (
-    <View style={styles.letterhead}>
-      {restaurantName ? <Text style={styles.letterheadName}>{restaurantName}</Text> : null}
-      {restaurantAddress ? <Text style={styles.letterheadAddress}>{restaurantAddress}</Text> : null}
+    <View style={styles.letterheadCard}>
+      <View style={styles.letterheadIconCircle}>
+        <MaterialIcons name="storefront" size={16} color="#fff" />
+      </View>
+      <View style={styles.letterheadTextGroup}>
+        {restaurantName ? <Text style={styles.letterheadName}>{restaurantName}</Text> : null}
+        {restaurantAddress ? <Text style={styles.letterheadAddress}>{restaurantAddress}</Text> : null}
+        {letterheadMetaParts.length > 0 ? (
+          <Text style={styles.letterheadMeta}>{letterheadMetaParts.join("   •   ")}</Text>
+        ) : null}
+      </View>
     </View>
   ) : null;
 
@@ -397,7 +412,6 @@ export function HistoricalInventoryTableView({
   if (isShowingOutOfStock) {
     return (
       <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
-        {Letterhead}
         {ControlsRow}
         {DateNav}
 
@@ -444,7 +458,6 @@ export function HistoricalInventoryTableView({
 
   return (
     <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
-      {Letterhead}
       {ControlsRow}
       {DateNav}
 
@@ -461,6 +474,7 @@ export function HistoricalInventoryTableView({
         </View>
       ) : (
         <View style={[styles.tableOuterBlock, { width: effectiveTableWidth }]}>
+          {Letterhead}
           {categoryGroups.map((group) => {
             const groupHeights = group.items.map((item) =>
               item.batches.reduce((sum, b) => sum + getBatchRowHeight(b.issues.length), 0)
@@ -652,9 +666,20 @@ const styles = StyleSheet.create({
   loadingIndicator: { marginTop: 40 },
   body: { flex: 1 },
   bodyContent: { padding: 12, paddingTop: 4, alignItems: "center" },
-  letterhead: { width: "100%", maxWidth: 900, alignItems: "center", marginBottom: 10 },
-  letterheadName: { fontSize: 18, fontWeight: "800", color: "#1e293b", textAlign: "center" },
-  letterheadAddress: { fontSize: 12, color: "#64748b", textAlign: "center", marginTop: 2 },
+  letterheadCard: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    backgroundColor: "#eff6ff",
+    paddingHorizontal: 12, paddingVertical: 10,
+    borderBottomWidth: 1.5, borderBottomColor: "#475569",
+  },
+  letterheadIconCircle: {
+    width: 32, height: 32, borderRadius: 16, backgroundColor: "#2563eb",
+    alignItems: "center", justifyContent: "center",
+  },
+  letterheadTextGroup: { flex: 1 },
+  letterheadName: { fontSize: 15, fontWeight: "800", color: "#0f172a" },
+  letterheadAddress: { fontSize: 12, color: "#475569", marginTop: 1 },
+  letterheadMeta: { fontSize: 11, color: "#64748b", marginTop: 2 },
   controlsRow: {
     flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap",
     width: "100%", maxWidth: 900, marginBottom: 10, zIndex: 1000,
