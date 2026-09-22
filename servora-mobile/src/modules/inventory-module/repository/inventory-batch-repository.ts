@@ -22,28 +22,29 @@
 //    updateBatchQuantity() (the FEFO engine's deduction path) and
 //    updateBatchStatus() (lifecycle changes) — this is the manual-
 //    correction entry point.
-// ✅ NEW — archiveInventoryBatch()/restoreInventoryBatch() now
-//    recompute and write the parent InventoryItem's currentStock
-//    IN THE SAME TRANSACTION as the batch's own isActive/
-//    archivedAt/archiveHistory update. This is a deliberate,
-//    justified exception to the "batch repository never touches
-//    InventoryItem" boundary above — the two-call approach
-//    (archiveInventoryBatch() + a separate syncItemStockFromBatches()
-//    call from the UI layer) had a real bug: the second call's
-//    getDocs() read could occasionally miss the just-written batch
-//    change under Firestore's read-your-writes/caching behavior when
-//    called as two independent operations back-to-back, leaving
-//    currentStock stale after an archive/restore until the item was
-//    reloaded from scratch. Doing both writes inside ONE transaction
-//    (which reads ALL of the item's batches fresh, applies the one
-//    being archived/restored, and computes the total from that exact
-//    same read) makes the two facts atomic and consistent by
-//    construction — no timing gap possible. The item's OTHER fields
-//    (isActive, archivedAt, everything else) are untouched — only
-//    currentStock/updatedAt/updatedBy are written on the item doc.
-//    inventory-item-service.ts's syncItemStockFromBatches() still
-//    exists for other callers/manual re-sync, but is no longer
-//    needed after archive/restore specifically.
+// ✅ archiveInventoryBatch()/restoreInventoryBatch() recompute and
+//    write the parent InventoryItem's currentStock IN THE SAME
+//    TRANSACTION as the batch's own isActive/archivedAt/
+//    archiveHistory update. Deliberate, justified exception to the
+//    "batch repository never touches InventoryItem" boundary above.
+// ✅ CRITICAL FIX — Firestore transactions CANNOT run a query
+//    (getDocs) inside them; only transaction.get() on individual
+//    document REFERENCES is allowed. The previous revision's
+//    getDocs(query(...)) call INSIDE runTransaction() silently
+//    produced a stale/incorrect batch list, which made the
+//    recomputed currentStock wrong (observed bug: archiving a batch
+//    left currentStock completely unchanged). Fixed by reading the
+//    sibling batch ID list via a normal (non-transactional) query
+//    BEFORE starting the transaction, then re-reading each of those
+//    SPECIFIC documents via transaction.get() inside the transaction
+//    — this keeps the actual recompute fully transactional/
+//    consistent; only the "which document IDs exist for this item"
+//    list is a pre-read. This is safe because batches are NEVER
+//    deleted in this app (only archived — see header below), so the
+//    ID list itself cannot go stale between the pre-read and the
+//    transaction — at worst a batch CREATED in that tiny window is
+//    simply not included yet, which self-corrects on its own next
+//    archive/restore or sync.
 // ✅ No delete function — batches are never deleted, only depleted
 //    or status-changed/archived. This preserves the audit trail
 //    permanently.
@@ -298,7 +299,8 @@ export function subscribeAllBatches(
 
 // ── Batch-level archive — sets isActive/archivedAt/archiveHistory on
 //    the batch AND recomputes+writes the parent item's currentStock,
-//    atomically in one transaction. See FROZEN header. ──
+//    atomically in one transaction. See FROZEN header for the
+//    getDocs-outside-transaction fix. ──
 export async function archiveInventoryBatch(
   restaurantId: string,
   batchId: string
@@ -309,6 +311,19 @@ export async function archiveInventoryBatch(
   const bRef = batchDoc(restaurantId, batchId);
   const uid = auth.currentUser.uid;
 
+  // ✅ Pre-read OUTSIDE the transaction to find this batch's
+  // inventoryId and its sibling batch IDs — Firestore transactions
+  // cannot run a query, only transaction.get() on specific doc refs.
+  const preSnap = await getDoc(bRef);
+  if (!preSnap.exists()) throw new Error("Batch not found");
+  const preData = preSnap.data() as Omit<InventoryBatch, "id">;
+  const inventoryId = preData.inventoryId;
+
+  const siblingsQuerySnap = await getDocs(
+    query(batchesCollection(restaurantId), where("inventoryId", "==", inventoryId))
+  );
+  const siblingIds = siblingsQuerySnap.docs.map((d) => d.id);
+
   await runTransaction(db, async (transaction) => {
     const snap = await transaction.get(bRef);
     if (!snap.exists()) throw new Error("Batch not found");
@@ -317,16 +332,15 @@ export async function archiveInventoryBatch(
       throw new Error("This batch is already archived");
     }
 
-    // Read ALL of this item's batches fresh, inside the transaction,
-    // so the recomputed total is guaranteed consistent with the
-    // batch change being made right now — no separate/later read
-    // that could miss this write.
-    const siblingsSnap = await getDocs(
-      query(batchesCollection(restaurantId), where("inventoryId", "==", existing.inventoryId))
+    // Re-read every sibling batch document INSIDE the transaction,
+    // by specific reference — this is what makes the recompute
+    // transactional/consistent.
+    const siblingSnaps = await Promise.all(
+      siblingIds.map((id) => transaction.get(batchDoc(restaurantId, id)))
     );
-    const siblings: InventoryBatch[] = siblingsSnap.docs.map((d) => ({
-      id: d.id, ...(d.data() as Omit<InventoryBatch, "id">),
-    }));
+    const siblings: InventoryBatch[] = siblingSnaps
+      .filter((s) => s.exists())
+      .map((s) => ({ id: s.id, ...(s.data() as Omit<InventoryBatch, "id">) }));
 
     const now = new Date();
     const history = (existing.archiveHistory as ArchiveCycle[] | undefined) ?? [];
@@ -346,7 +360,7 @@ export async function archiveInventoryBatch(
       .filter((b) => (b.id === batchId ? false : isActiveBatch(b)))
       .reduce((sum, b) => sum + b.quantity, 0);
 
-    transaction.update(itemDoc(restaurantId, existing.inventoryId), {
+    transaction.update(itemDoc(restaurantId, inventoryId), {
       currentStock: recomputedStock,
       updatedAt:    serverTimestamp(),
       updatedBy:    uid,
@@ -364,6 +378,16 @@ export async function restoreInventoryBatch(
   const bRef = batchDoc(restaurantId, batchId);
   const uid = auth.currentUser.uid;
 
+  const preSnap = await getDoc(bRef);
+  if (!preSnap.exists()) throw new Error("Batch not found");
+  const preData = preSnap.data() as Omit<InventoryBatch, "id">;
+  const inventoryId = preData.inventoryId;
+
+  const siblingsQuerySnap = await getDocs(
+    query(batchesCollection(restaurantId), where("inventoryId", "==", inventoryId))
+  );
+  const siblingIds = siblingsQuerySnap.docs.map((d) => d.id);
+
   await runTransaction(db, async (transaction) => {
     const snap = await transaction.get(bRef);
     if (!snap.exists()) throw new Error("Batch not found");
@@ -372,12 +396,12 @@ export async function restoreInventoryBatch(
       throw new Error("This batch is not archived");
     }
 
-    const siblingsSnap = await getDocs(
-      query(batchesCollection(restaurantId), where("inventoryId", "==", existing.inventoryId))
+    const siblingSnaps = await Promise.all(
+      siblingIds.map((id) => transaction.get(batchDoc(restaurantId, id)))
     );
-    const siblings: InventoryBatch[] = siblingsSnap.docs.map((d) => ({
-      id: d.id, ...(d.data() as Omit<InventoryBatch, "id">),
-    }));
+    const siblings: InventoryBatch[] = siblingSnaps
+      .filter((s) => s.exists())
+      .map((s) => ({ id: s.id, ...(s.data() as Omit<InventoryBatch, "id">) }));
 
     const now = new Date();
     const history = (existing.archiveHistory as ArchiveCycle[] | undefined) ?? [];
@@ -402,7 +426,7 @@ export async function restoreInventoryBatch(
       .filter((b) => (b.id === batchId ? true : isActiveBatch(b)))
       .reduce((sum, b) => sum + (b.id === batchId ? existing.quantity : b.quantity), 0);
 
-    transaction.update(itemDoc(restaurantId, existing.inventoryId), {
+    transaction.update(itemDoc(restaurantId, inventoryId), {
       currentStock: recomputedStock,
       updatedAt:    serverTimestamp(),
       updatedBy:    uid,
