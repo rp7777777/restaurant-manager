@@ -43,6 +43,32 @@
 //    items leaking in via `isHistorical || item.isActive !== false`.
 // ✅ Batch-level archive/restore indicators (diagonal strike,
 //    "Archived"/"Restored [date]" in Issue column) — UNCHANGED.
+// ✅ PREMIUM UI PASS (UI-only, no business-logic change):
+//    - Batch columns now follow a stock-ledger flow:
+//      Received Date | Lot/Batch No. | Received Qty | Opening | Issue |
+//      Closing | Unit | Expiry. "Opening" is the SAME value the old
+//      "Lot/Batch QTY" column showed (HistoricalBatchState.quantity).
+//      "Closing" is batch.closingQuantity, exposed additively by
+//      useHistoricalInventory from its existing closing calculation.
+//    - NEW item-level Status column (after Total QTY): Out of Stock /
+//      Low Stock / Expiring / Expired as text, "—" when none. Uses ONLY
+//      the existing rules — Today mode mirrors useInventoryFilters/
+//      InventoryStats (live currentStock, isLowStock, item expiryDate);
+//      Historical mode mirrors useHistoricalInventoryStats (closing
+//      Total QTY vs current minStock, visible batches' expiry vs
+//      selectedDate). An item can show more than one status.
+//    - Toolbar order: Category dropdown | Search | Name | Stock |
+//      Full Screen. Date navigator shows a calendar icon, and on Today
+//      also the full date.
+//    - Letterhead stays INSIDE the table block (first row); now also
+//      shows "INVENTORY REPORT" + date on the right, and renders when
+//      ANY restaurant field exists (not only name/address).
+//    - Category header shows item count.
+//    - Lighter professional borders/header colors; table wrapped in a
+//      horizontal ScrollView so a narrow window scrolls the TABLE, not
+//      the whole page.
+//    - Column divider positions are now derived from the column list
+//      (no hand-maintained offsets).
 // FROZEN
 // ============================================
 
@@ -110,27 +136,51 @@ interface OutOfStockGroup {
 
 const ROW_HEIGHT = 26;
 const LEFT_COLS = { sn: 35, item: 130 };
-const RIGHT_COLS = { date: 75, batch: 85, receivedQty: 70, issue: 175, stock: 70, unit: 50, expiry: 75 };
-const TOTAL_COL = 75;
+const RIGHT_COLS = {
+  date: 75, batch: 85, receivedQty: 65, opening: 60, issue: 175, closing: 60, unit: 50, expiry: 75,
+};
+const TOTAL_COL = 70;
+const STATUS_COL = 95;
 const ARROW_COL = 35;
 const LEFT_WIDTH = LEFT_COLS.sn + LEFT_COLS.item;
 const BATCH_COLS_WIDTH =
-  RIGHT_COLS.date + RIGHT_COLS.batch + RIGHT_COLS.receivedQty + RIGHT_COLS.issue + RIGHT_COLS.stock +
-  RIGHT_COLS.unit + RIGHT_COLS.expiry;
-const TABLE_WIDTH = LEFT_WIDTH + BATCH_COLS_WIDTH + TOTAL_COL + ARROW_COL;
+  RIGHT_COLS.date + RIGHT_COLS.batch + RIGHT_COLS.receivedQty + RIGHT_COLS.opening + RIGHT_COLS.issue +
+  RIGHT_COLS.closing + RIGHT_COLS.unit + RIGHT_COLS.expiry;
+const TABLE_WIDTH = LEFT_WIDTH + BATCH_COLS_WIDTH + TOTAL_COL + STATUS_COL + ARROW_COL;
 
-const DIVIDER_X_POSITIONS = [
-  LEFT_COLS.sn,
-  LEFT_COLS.sn + LEFT_COLS.item,
-  LEFT_WIDTH + RIGHT_COLS.date,
-  LEFT_WIDTH + RIGHT_COLS.date + RIGHT_COLS.batch,
-  LEFT_WIDTH + RIGHT_COLS.date + RIGHT_COLS.batch + RIGHT_COLS.receivedQty,
-  LEFT_WIDTH + RIGHT_COLS.date + RIGHT_COLS.batch + RIGHT_COLS.receivedQty + RIGHT_COLS.issue,
-  LEFT_WIDTH + BATCH_COLS_WIDTH - RIGHT_COLS.unit - RIGHT_COLS.expiry,
-  LEFT_WIDTH + BATCH_COLS_WIDTH - RIGHT_COLS.expiry,
-  LEFT_WIDTH + BATCH_COLS_WIDTH,
-  LEFT_WIDTH + BATCH_COLS_WIDTH + TOTAL_COL,
+// Column widths in visual order (Edit column excluded — it is the last
+// column, so no divider is needed after it). Divider x-positions are the
+// running sums, so adding/removing a column can never misalign a line.
+const COLUMN_WIDTHS_IN_ORDER = [
+  LEFT_COLS.sn, LEFT_COLS.item,
+  RIGHT_COLS.date, RIGHT_COLS.batch, RIGHT_COLS.receivedQty, RIGHT_COLS.opening,
+  RIGHT_COLS.issue, RIGHT_COLS.closing, RIGHT_COLS.unit, RIGHT_COLS.expiry,
+  TOTAL_COL, STATUS_COL,
 ];
+
+function buildDividerPositions(includeArrowCol: boolean): number[] {
+  const positions: number[] = [];
+  let x = 0;
+  // A divider after every column except the table's LAST column.
+  const lastIndex = includeArrowCol ? COLUMN_WIDTHS_IN_ORDER.length : COLUMN_WIDTHS_IN_ORDER.length - 1;
+  for (let i = 0; i < lastIndex; i++) {
+    x += COLUMN_WIDTHS_IN_ORDER[i];
+    positions.push(x);
+  }
+  return positions;
+}
+
+const DIVIDER_X_POSITIONS_TODAY = buildDividerPositions(true);
+const DIVIDER_X_POSITIONS_HISTORICAL = buildDividerPositions(false);
+
+type ItemStatusKind = "outOfStock" | "lowStock" | "expiring" | "expired";
+
+const STATUS_STYLE: Record<ItemStatusKind, { label: string; color: string; bg: string }> = {
+  outOfStock: { label: "Out of Stock", color: "#b91c1c", bg: "#fef2f2" },
+  lowStock:   { label: "Low Stock",    color: "#b45309", bg: "#fffbeb" },
+  expiring:   { label: "Expiring",     color: "#c2410c", bg: "#fff7ed" },
+  expired:    { label: "Expired",      color: "#7f1d1d", bg: "#fee2e2" },
+};
 
 const OOS_TABLE_WIDTH = 900;
 const OOS_COLS = { sn: 50, item: 260, date: 160, note: 180 };
@@ -306,6 +356,47 @@ export function HistoricalInventoryTableView({
     ? categories.find((c) => c.id === categoryId)?.name ?? "All Categories"
     : "All Categories";
 
+  // ✅ Item-level status — reuses the EXISTING classification rules only
+  // (see header comment). No new thresholds or business rules.
+  const getItemStatuses = (histItem: HistoricalItemStock): ItemStatusKind[] => {
+    const statuses: ItemStatusKind[] = [];
+    const liveItem = inventoryItemById.get(histItem.inventoryId);
+    const category = histItem.categoryId ? categoryMapForExpiry.get(histItem.categoryId) : undefined;
+    const resolvedDays = resolveExpiryAlertDays(
+      liveItem?.expiryAlertDaysOverride,
+      category?.expiryAlertDays,
+      restaurantDefaultExpiryAlertDays
+    );
+
+    if (!isHistorical) {
+      // Today — same rules as useInventoryFilters / InventoryStats.
+      if (!liveItem) return statuses;
+      if (liveItem.currentStock <= 0) statuses.push("outOfStock");
+      else if (liveItem.isLowStock) statuses.push("lowStock");
+      const expiry = classifyExpiry(liveItem.expiryDate, todayISO, resolvedDays);
+      if (expiry === "expired") statuses.push("expired");
+      else if (expiry === "expiringSoon") statuses.push("expiring");
+      return statuses;
+    }
+
+    // Historical — same rules as useHistoricalInventoryStats.
+    const minStock = liveItem?.minStock ?? 0;
+    if (histItem.historicalStock <= 0) statuses.push("outOfStock");
+    else if (histItem.historicalStock <= minStock) statuses.push("lowStock");
+
+    let hasExpired = false;
+    let hasExpiring = false;
+    for (const batch of histItem.batches) {
+      if (!batch.expiryDate) continue;
+      const result = classifyExpiry(batch.expiryDate, selectedDate, resolvedDays);
+      if (result === "expired") hasExpired = true;
+      else if (result === "expiringSoon") hasExpiring = true;
+    }
+    if (hasExpired) statuses.push("expired");
+    if (hasExpiring) statuses.push("expiring");
+    return statuses;
+  };
+
   if (loading) {
     return <ActivityIndicator size="large" color={theme.headerBg} style={styles.loadingIndicator} />;
   }
@@ -317,7 +408,9 @@ export function HistoricalInventoryTableView({
   if (restaurantEmail) letterheadMetaParts.push(`Email: ${restaurantEmail}`);
   if (restaurantVatNumber) letterheadMetaParts.push(`VAT: ${restaurantVatNumber}`);
 
-  const Letterhead = (restaurantName || restaurantAddress) ? (
+  const hasLetterheadData = Boolean(restaurantName || restaurantAddress || letterheadMetaParts.length > 0);
+
+  const Letterhead = hasLetterheadData ? (
     <View style={styles.letterheadCard}>
       <View style={styles.letterheadIconCircle}>
         <MaterialIcons name="storefront" size={16} color="#fff" />
@@ -329,11 +422,43 @@ export function HistoricalInventoryTableView({
           <Text style={styles.letterheadMeta}>{letterheadMetaParts.join("   •   ")}</Text>
         ) : null}
       </View>
+      <View style={styles.letterheadReportGroup}>
+        <Text style={styles.letterheadReportTitle}>INVENTORY REPORT</Text>
+        <Text style={styles.letterheadReportDate}>{formatCategoryHeaderDate(selectedDate)}</Text>
+      </View>
     </View>
   ) : null;
 
   const ControlsRow = (
-    <View style={styles.controlsRow}>
+    <View style={[styles.controlsRow, { maxWidth: effectiveTableWidth }]}>
+      {categories.length > 0 && (
+        <View style={styles.dropdownWrap}>
+          <TouchableOpacity style={styles.dropdownButton} onPress={() => setShowCategoryDropdown((v) => !v)}>
+            <Text style={styles.dropdownButtonText} numberOfLines={1}>{selectedCategoryName}</Text>
+            <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={18} color="#059669" />
+          </TouchableOpacity>
+          {showCategoryDropdown && (
+            <ScrollView style={styles.dropdownList} nestedScrollEnabled showsVerticalScrollIndicator>
+              <TouchableOpacity
+                style={styles.dropdownItem}
+                onPress={() => { setCategoryId(null); setShowCategoryDropdown(false); }}
+              >
+                <Text style={styles.dropdownItemText}>All Categories</Text>
+              </TouchableOpacity>
+              {categories.map((cat) => (
+                <TouchableOpacity
+                  key={cat.id}
+                  style={styles.dropdownItem}
+                  onPress={() => { setCategoryId(cat.id); setShowCategoryDropdown(false); }}
+                >
+                  <Text style={styles.dropdownItemText}>{cat.icon} {cat.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      )}
+
       <View style={styles.searchBox}>
         <MaterialIcons name="search" size={18} color="#059669" />
         <TextInput
@@ -366,43 +491,21 @@ export function HistoricalInventoryTableView({
           <Text style={styles.fullScreenBtnText}>Full Screen</Text>
         </TouchableOpacity>
       )}
-
-      {categories.length > 0 && (
-        <View style={styles.dropdownWrap}>
-          <TouchableOpacity style={styles.dropdownButton} onPress={() => setShowCategoryDropdown((v) => !v)}>
-            <Text style={styles.dropdownButtonText} numberOfLines={1}>{selectedCategoryName}</Text>
-            <MaterialIcons name={showCategoryDropdown ? "expand-less" : "expand-more"} size={18} color="#059669" />
-          </TouchableOpacity>
-          {showCategoryDropdown && (
-            <ScrollView style={styles.dropdownList} nestedScrollEnabled showsVerticalScrollIndicator>
-              <TouchableOpacity
-                style={styles.dropdownItem}
-                onPress={() => { setCategoryId(null); setShowCategoryDropdown(false); }}
-              >
-                <Text style={styles.dropdownItemText}>All Categories</Text>
-              </TouchableOpacity>
-              {categories.map((cat) => (
-                <TouchableOpacity
-                  key={cat.id}
-                  style={styles.dropdownItem}
-                  onPress={() => { setCategoryId(cat.id); setShowCategoryDropdown(false); }}
-                >
-                  <Text style={styles.dropdownItemText}>{cat.icon} {cat.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          )}
-        </View>
-      )}
     </View>
   );
 
   const DateNav = (
-    <View style={styles.dateNav}>
+    <View style={[styles.dateNav, { maxWidth: effectiveTableWidth }]}>
       <TouchableOpacity onPress={onPreviousDay} style={styles.dateNavArrow}>
         <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
       </TouchableOpacity>
-      <Text style={styles.dateNavLabel}>{dateLabel}</Text>
+      <View style={styles.dateNavCenter}>
+        <MaterialIcons name="calendar-today" size={16} color={theme.headerBg} />
+        <Text style={styles.dateNavLabel}>{dateLabel}</Text>
+        {!isHistorical && (
+          <Text style={styles.dateNavSubLabel}>{formatCategoryHeaderDate(selectedDate)}</Text>
+        )}
+      </View>
       <TouchableOpacity onPress={onNextDay} style={styles.dateNavArrow} disabled={isNextDayDisabled}>
         <MaterialIcons name="chevron-right" size={22} color={isNextDayDisabled ? "#cbd5e1" : "#1e293b"} />
       </TouchableOpacity>
@@ -453,6 +556,7 @@ export function HistoricalInventoryTableView({
     );
   }
 
+  const dividerXPositions = isHistorical ? DIVIDER_X_POSITIONS_HISTORICAL : DIVIDER_X_POSITIONS_TODAY;
   let hasShownColumnHeader = false;
   let categoryAccentIndex = 0;
 
@@ -473,6 +577,11 @@ export function HistoricalInventoryTableView({
           <Text style={styles.emptyStateText}>No stock existed on this date</Text>
         </View>
       ) : (
+        <ScrollView
+          horizontal
+          style={[styles.tableHScroll, { maxWidth: effectiveTableWidth + 2 }]}
+          showsHorizontalScrollIndicator
+        >
         <View style={[styles.tableOuterBlock, { width: effectiveTableWidth }]}>
           {Letterhead}
           {categoryGroups.map((group) => {
@@ -489,9 +598,14 @@ export function HistoricalInventoryTableView({
             return (
               <View key={key}>
                 <View style={[styles.categoryHeader, { backgroundColor: accent.bg }]}>
-                  <Text style={styles.categoryHeaderText}>
-                    {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
-                  </Text>
+                  <View style={styles.categoryHeaderLeft}>
+                    <Text style={styles.categoryHeaderText}>
+                      {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
+                    </Text>
+                    <Text style={styles.categoryHeaderCount}>
+                      {group.items.length} {group.items.length === 1 ? "item" : "items"}
+                    </Text>
+                  </View>
                   <Text style={styles.categoryHeaderDate}>{formatCategoryHeaderDate(selectedDate)}</Text>
                 </View>
 
@@ -513,13 +627,15 @@ export function HistoricalInventoryTableView({
                       <View style={styles.rightHeaderGroup}>
                         <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.date }]}>Received Date</Text>
                         <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
-                        <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.receivedQty }]}>Received Qty</Text>
+                        <Text style={[styles.tableHeaderCell, styles.tableHeaderCellCenter, { width: RIGHT_COLS.receivedQty }]}>Received Qty</Text>
+                        <Text style={[styles.tableHeaderCell, styles.tableHeaderCellCenter, { width: RIGHT_COLS.opening }]}>Opening</Text>
                         <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.issue }]}>Issue</Text>
-                        <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.stock }]}>Lot/Batch QTY</Text>
+                        <Text style={[styles.tableHeaderCell, styles.tableHeaderCellCenter, { width: RIGHT_COLS.closing }]}>Closing</Text>
                         <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
                         <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry</Text>
                       </View>
-                      <Text style={[styles.tableHeaderCell, { width: TOTAL_COL }]}>Total QTY</Text>
+                      <Text style={[styles.tableHeaderCell, styles.tableHeaderCellCenter, { width: TOTAL_COL }]}>Total QTY</Text>
+                      <Text style={[styles.tableHeaderCell, { width: STATUS_COL }]}>Status</Text>
                       {!isHistorical && (
                         <Text style={[styles.tableHeaderCell, { width: ARROW_COL, textAlign: "center" }]}>Edit</Text>
                       )}
@@ -530,6 +646,7 @@ export function HistoricalInventoryTableView({
                     const groupHeight = groupHeights[itemIndex];
                     const realItem = inventoryItemById.get(item.inventoryId);
                     const isEvenRow = itemIndex % 2 === 1;
+                    const itemStatuses = getItemStatuses(item);
 
                     return (
                       <View
@@ -589,6 +706,9 @@ export function HistoricalInventoryTableView({
                                 <Text style={[styles.tableCell, styles.receivedQtyCell, { width: RIGHT_COLS.receivedQty }]}>
                                   {wasReceivedToday ? String(batch.originalQuantity) : "—"}
                                 </Text>
+                                <Text style={[styles.tableCell, styles.openingQtyCell, { width: RIGHT_COLS.opening }]}>
+                                  {batch.quantity}
+                                </Text>
                                 <View style={{ width: RIGHT_COLS.issue }}>
                                   {isArchivedToday && (
                                     <Text style={[styles.tableCell, styles.archivedIndicatorText]}>Archived</Text>
@@ -613,7 +733,9 @@ export function HistoricalInventoryTableView({
                                     })
                                   )}
                                 </View>
-                                <Text style={[styles.tableCell, styles.batchQtyCell, { width: RIGHT_COLS.stock }]}>{batch.quantity}</Text>
+                                <Text style={[styles.tableCell, styles.closingQtyCell, { width: RIGHT_COLS.closing }]}>
+                                  {batch.closingQuantity}
+                                </Text>
                                 <Text style={[styles.tableCell, { width: RIGHT_COLS.unit }]}>{batch.unit}</Text>
                                 <Text style={[styles.tableCell, { width: RIGHT_COLS.expiry }]}>{batch.expiryDate ?? "—"}</Text>
                               </View>
@@ -623,6 +745,23 @@ export function HistoricalInventoryTableView({
 
                         <View style={{ width: TOTAL_COL, minHeight: groupHeight, justifyContent: "center", alignItems: "center" }}>
                           <Text style={styles.totalCell}>{String(item.historicalStock)}</Text>
+                        </View>
+
+                        <View style={[styles.statusCol, { width: STATUS_COL, minHeight: groupHeight }]}>
+                          {itemStatuses.length === 0 ? (
+                            <Text style={styles.statusNone}>—</Text>
+                          ) : (
+                            itemStatuses.map((kind) => (
+                              <View
+                                key={kind}
+                                style={[styles.statusBadge, { backgroundColor: STATUS_STYLE[kind].bg }]}
+                              >
+                                <Text style={[styles.statusBadgeText, { color: STATUS_STYLE[kind].color }]}>
+                                  {STATUS_STYLE[kind].label}
+                                </Text>
+                              </View>
+                            ))
+                          )}
                         </View>
 
                         {!isHistorical && (
@@ -638,7 +777,7 @@ export function HistoricalInventoryTableView({
                     );
                   })}
 
-                  {measuredHeight > 0 && DIVIDER_X_POSITIONS.map((x) => (
+                  {measuredHeight > 0 && dividerXPositions.map((x) => (
                     <View
                       key={x}
                       pointerEvents="none"
@@ -648,7 +787,7 @@ export function HistoricalInventoryTableView({
                         top: 0,
                         height: measuredHeight + 4,
                         width: 1,
-                        backgroundColor: "#94a3b8",
+                        backgroundColor: "#dbe3ec",
                       }}
                     />
                   ))}
@@ -657,6 +796,7 @@ export function HistoricalInventoryTableView({
             );
           })}
         </View>
+        </ScrollView>
       )}
     </ScrollView>
   );
@@ -670,7 +810,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 10,
     backgroundColor: "#eff6ff",
     paddingHorizontal: 12, paddingVertical: 10,
-    borderBottomWidth: 1.5, borderBottomColor: "#475569",
+    borderBottomWidth: 1, borderBottomColor: "#cbd5e1",
   },
   letterheadIconCircle: {
     width: 32, height: 32, borderRadius: 16, backgroundColor: "#2563eb",
@@ -680,6 +820,9 @@ const styles = StyleSheet.create({
   letterheadName: { fontSize: 15, fontWeight: "800", color: "#0f172a" },
   letterheadAddress: { fontSize: 12, color: "#475569", marginTop: 1 },
   letterheadMeta: { fontSize: 11, color: "#64748b", marginTop: 2 },
+  letterheadReportGroup: { alignItems: "flex-end", justifyContent: "center", paddingLeft: 12 },
+  letterheadReportTitle: { fontSize: 13, fontWeight: "800", color: "#0f172a", letterSpacing: 1.2 },
+  letterheadReportDate: { fontSize: 11, fontWeight: "600", color: "#475569", marginTop: 2 },
   controlsRow: {
     flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap",
     width: "100%", maxWidth: 900, marginBottom: 10, zIndex: 1000,
@@ -711,7 +854,7 @@ const styles = StyleSheet.create({
   },
   dropdownButtonText: { fontSize: 12, color: "#1e293b", fontWeight: "600", flex: 1 },
   dropdownList: {
-    position: "absolute", top: "100%", right: 0,
+    position: "absolute", top: "100%", left: 0,
     borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 8,
     marginTop: 4, maxHeight: 220, backgroundColor: "#ffffff",
     width: 180, zIndex: 1000, elevation: 20,
@@ -725,7 +868,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff", borderRadius: 8, borderWidth: 1, borderColor: "#e2e8f0",
   },
   dateNavArrow: { padding: 4 },
-  dateNavLabel: { fontSize: 14, fontWeight: "800", color: "#1e293b", minWidth: 160, textAlign: "center" },
+  dateNavCenter: {
+    flexDirection: "row", alignItems: "center", gap: 8, minWidth: 200, justifyContent: "center",
+  },
+  dateNavLabel: { fontSize: 14, fontWeight: "800", color: "#1e293b" },
+  dateNavSubLabel: { fontSize: 12, fontWeight: "600", color: "#64748b" },
   errorBanner: {
     backgroundColor: "#fef2f2", padding: 10, borderRadius: 6, marginBottom: 10, width: "100%", maxWidth: 500,
     borderWidth: 1, borderColor: "#fecaca",
@@ -733,8 +880,9 @@ const styles = StyleSheet.create({
   errorBannerText: { color: "#b91c1c", fontSize: 12, fontWeight: "600" },
   emptyState: { alignItems: "center", marginTop: 60, gap: 8 },
   emptyStateText: { color: "#94a3b8", fontSize: 14, fontWeight: "600" },
+  tableHScroll: { width: "100%", flexGrow: 0 },
   tableOuterBlock: {
-    borderWidth: 1.5, borderColor: "#475569", borderRadius: 4, overflow: "hidden",
+    borderWidth: 1, borderColor: "#cbd5e1", borderRadius: 6, overflow: "hidden", backgroundColor: "#fff",
   },
   categoryBlock: {
     marginBottom: 16, borderWidth: 1.5, borderColor: "#475569", borderRadius: 4, overflow: "hidden",
@@ -743,17 +891,20 @@ const styles = StyleSheet.create({
     paddingVertical: 4, paddingHorizontal: 10, minHeight: 26,
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
   },
+  categoryHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
   categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.6 },
+  categoryHeaderCount: { color: "#e2e8f0", fontWeight: "600", fontSize: 11 },
   categoryHeaderDate: { color: "#fff", fontWeight: "700", fontSize: 12 },
   tableArea: { position: "relative" },
   tableHeaderRow: {
-    flexDirection: "row", backgroundColor: "#f1f5f9",
-    borderBottomWidth: 2, borderBottomColor: "#1e293b", paddingVertical: 8, marginTop: 2,
+    flexDirection: "row", backgroundColor: "#eef2f7",
+    borderBottomWidth: 1, borderBottomColor: "#cbd5e1", paddingVertical: 8,
   },
   leftHeaderGroup: { flexDirection: "row" },
   rightHeaderGroup: { flexDirection: "row" },
-  tableHeaderCell: { fontSize: 12, fontWeight: "800", color: "#334155", paddingHorizontal: 4, letterSpacing: 0.3 },
-  itemGroupRow: { flexDirection: "row", borderBottomWidth: 1.5, borderBottomColor: "#475569" },
+  tableHeaderCell: { fontSize: 12, fontWeight: "700", color: "#1e293b", paddingHorizontal: 4, letterSpacing: 0.3 },
+  tableHeaderCellCenter: { textAlign: "center" },
+  itemGroupRow: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: "#cbd5e1" },
   itemGroupRowAlt: { backgroundColor: "#f8fafc" },
   leftStrip: {
     flexDirection: "row", alignItems: "center",
@@ -769,13 +920,18 @@ const styles = StyleSheet.create({
   inconsistencyText: { fontSize: 7, color: "#92400e", fontWeight: "700" },
   rightBatchRows: { flex: 1 },
   batchRow: { flexDirection: "row", alignItems: "center", paddingVertical: 2 },
-  batchRowDivider: { borderBottomWidth: 1, borderBottomColor: "#94a3b8" },
+  batchRowDivider: { borderBottomWidth: 1, borderBottomColor: "#e2e8f0" },
   tableCell: { fontSize: 11, color: "#334155", paddingHorizontal: 4 },
   receivedDateHighlight: { color: "#0f172a", fontWeight: "800" },
   receivedQtyCell: { color: "#475569", fontWeight: "700", textAlign: "center" },
   issueCell: { color: "#b91c1c", fontWeight: "600" },
   issueMultiLine: { marginBottom: 1 },
-  batchQtyCell: { fontWeight: "800", fontSize: 11, color: "#0f172a", textAlign: "center" },
+  openingQtyCell: { fontWeight: "600", fontSize: 11, color: "#475569", textAlign: "center" },
+  closingQtyCell: { fontWeight: "800", fontSize: 11, color: "#0f172a", textAlign: "center" },
+  statusCol: { justifyContent: "center", alignItems: "flex-start", gap: 2, paddingHorizontal: 4, paddingVertical: 2 },
+  statusBadge: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 },
+  statusBadgeText: { fontSize: 10, fontWeight: "700" },
+  statusNone: { fontSize: 11, color: "#94a3b8", paddingHorizontal: 2 },
   totalCell: { fontWeight: "800", fontSize: 11, color: "#0f172a", textAlign: "center" },
   archivedBatchNoText: { color: "#94a3b8" },
   diagonalStrike: {

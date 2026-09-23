@@ -36,6 +36,13 @@
 //    item is simply active again going forward). Falls back to the
 //    old archivedAt-only logic when archiveHistory is empty (legacy
 //    items archived before this field existed).
+// ✅ ADDITIVE (UI support only) — each HistoricalBatchWithIssues now
+//    also carries closingQuantity: the SAME per-batch closing value
+//    already computed in closingQuantityByBatchId (opening minus that
+//    date's real deductions, floored at 0). Nothing about how opening,
+//    closing, Total QTY, visibility or archive rules are calculated
+//    changed — the existing value is just exposed per row so the table
+//    can show Opening | Issue | Closing.
 // FROZEN
 // ============================================
 
@@ -59,6 +66,7 @@ function movementsCollection(restaurantId: string) {
 
 export interface HistoricalBatchWithIssues extends HistoricalBatchState {
   issues: HistoricalIssueEntry[];
+  closingQuantity: number; // CLOSING qty for selectedDate (opening − same-day real deductions, min 0)
 }
 
 export interface HistoricalItemStock {
@@ -216,7 +224,7 @@ export function useHistoricalInventory(
 
     const replayed = replayBatchesAsOfDate(batches, movements, selectedDate);
 
-    const states: HistoricalBatchWithIssues[] = replayed.map((state) => ({
+    const states: Omit<HistoricalBatchWithIssues, "closingQuantity">[] = replayed.map((state) => ({
       ...state,
       issues: getIssuesForDate(
         state.batchId,
@@ -246,7 +254,12 @@ export function useHistoricalInventory(
       closingMap.set(state.batchId, Math.max(0, state.quantity - sameDayDeductedQty));
     }
 
-    return { batchStates: states, closingQuantityByBatchId: closingMap };
+    const statesWithClosing: HistoricalBatchWithIssues[] = states.map((state) => ({
+      ...state,
+      closingQuantity: closingMap.get(state.batchId) ?? state.quantity,
+    }));
+
+    return { batchStates: statesWithClosing, closingQuantityByBatchId: closingMap };
   }, [batches, movements, selectedDate]);
 
   const itemsWithHistoricalStock = useMemo(() => {
