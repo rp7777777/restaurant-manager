@@ -38,6 +38,15 @@
 //    stronger (1.5px #64748b) so each item stands out. S.N. column
 //    widened 30 → 36 (Issue 128 → 122) so the "S.N." header no longer
 //    wraps its dot onto a second line. Total width still 900px.
+// ✅ CALM CATEGORY ROWS — category headers no longer use solid
+//    blue/green bars (they pulled attention away from the row data).
+//    Each is now a very light tint (lighter than the letterhead, so
+//    hierarchy is letterhead > category > rows) with a 4px coloured
+//    left bar and coloured bold text to keep sections easy to find.
+//    Today alternates soft blue / soft green; Historical (past dates)
+//    alternates soft navy / soft teal so a past date is still
+//    recognisable. All item/batch rows are plain white (zebra
+//    striping removed) — the 1.5px item-row line separates items.
 // ============================================
 
 import React, { useState } from "react";
@@ -108,8 +117,17 @@ function buildDividerPositions(includeArrowCol: boolean): number[] {
 const DIVIDER_X_POSITIONS_TODAY = buildDividerPositions(true);
 const DIVIDER_X_POSITIONS_HISTORICAL = buildDividerPositions(false);
 
-const CATEGORY_ACCENTS_HISTORICAL = [{ bg: "#1e3a5f" }, { bg: "#0f766e" }];
-const CATEGORY_ACCENTS_TODAY = [{ bg: "#2563eb" }, { bg: "#059669" }]; // Kitchen Request History accents
+interface CategoryAccent { bar: string; bg: string; text: string }
+
+// Soft tints — all lighter than the letterhead's #eff6ff.
+const CATEGORY_ACCENTS_TODAY: CategoryAccent[] = [
+  { bar: "#2563eb", bg: "#f7faff", text: "#1e40af" }, // soft blue
+  { bar: "#059669", bg: "#f3fbf7", text: "#065f46" }, // soft green
+];
+const CATEGORY_ACCENTS_HISTORICAL: CategoryAccent[] = [
+  { bar: "#1e3a5f", bg: "#f5f7fa", text: "#1e3a5f" }, // soft navy
+  { bar: "#0f766e", bg: "#f2faf9", text: "#115e59" }, // soft teal
+];
 
 function getBatchRowHeight(issueCount: number): number {
   if (issueCount <= 2) return ROW_HEIGHT;
@@ -192,9 +210,9 @@ export function HistoricalInventoryTable({
 
           return (
             <View key={key} style={styles.groupBlock}>
-              <View style={[styles.categoryHeader, { backgroundColor: accent.bg }]}>
+              <View style={[styles.categoryHeader, { backgroundColor: accent.bg, borderLeftColor: accent.bar }]}>
                 <View style={styles.categoryHeaderLeft}>
-                  <Text style={styles.categoryHeaderText}>
+                  <Text style={[styles.categoryHeaderText, { color: accent.text }]}>
                     {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
                   </Text>
                   <Text style={styles.categoryHeaderCount}>
@@ -236,19 +254,14 @@ export function HistoricalInventoryTable({
                 {group.items.map((item, itemIndex) => {
                   const groupHeight = groupHeights[itemIndex];
                   const realItem = inventoryItemById.get(item.inventoryId);
-                  const isEvenRow = itemIndex % 2 === 1;
                   const itemStatuses = statusesByInventoryId.get(item.inventoryId) ?? [];
 
                   return (
                     <View
                       key={item.inventoryId}
-                      style={[
-                        styles.itemGroupRow,
-                        { minHeight: groupHeight },
-                        isEvenRow && styles.itemGroupRowAlt,
-                      ]}
+                      style={[styles.itemGroupRow, { minHeight: groupHeight }]}
                     >
-                      <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }, isEvenRow && styles.leftStripAlt]}>
+                      <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }]}>
                         <Text style={[styles.leftStripCell, { width: LEFT_COLS.sn }]}>{itemIndex + 1}</Text>
                         <View style={{ width: LEFT_COLS.item }}>
                           <Text style={[styles.leftStripCell, styles.itemNameCell]}>{item.itemName}</Text>
@@ -409,13 +422,14 @@ const styles = StyleSheet.create({
   letterheadReportDate: { fontSize: 11, fontWeight: "600", color: "#475569", marginTop: 2 },
   groupBlock: { borderTopWidth: 1, borderTopColor: "#94a3b8" },
   categoryHeader: {
-    paddingVertical: 4, paddingHorizontal: 14, minHeight: 20,
+    paddingVertical: 5, paddingLeft: 10, paddingRight: 14, minHeight: 22,
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    borderLeftWidth: 4, borderBottomWidth: 1, borderBottomColor: "#cbd5e1",
   },
   categoryHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
-  categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.3 },
-  categoryHeaderCount: { color: "rgba(255,255,255,0.85)", fontWeight: "700", fontSize: 11 },
-  categoryHeaderDate: { color: "#fff", fontWeight: "700", fontSize: 12 },
+  categoryHeaderText: { fontWeight: "800", fontSize: 13, letterSpacing: 0.3 },
+  categoryHeaderCount: { color: "#64748b", fontWeight: "700", fontSize: 11 },
+  categoryHeaderDate: { color: "#475569", fontWeight: "700", fontSize: 12 },
   tableArea: { position: "relative" },
   tableHeaderRow: {
     flexDirection: "row", alignItems: "center", backgroundColor: "#f1f5f9",
@@ -423,13 +437,11 @@ const styles = StyleSheet.create({
   },
   tableHeaderCell: { fontSize: 11, fontWeight: "800", color: "#334155", paddingHorizontal: 4 },
   headerCenter: { textAlign: "center" },
-  itemGroupRow: { flexDirection: "row", borderBottomWidth: 1.5, borderBottomColor: "#64748b" },
-  itemGroupRowAlt: { backgroundColor: "#f8fafc" },
+  itemGroupRow: { flexDirection: "row", borderBottomWidth: 1.5, borderBottomColor: "#64748b", backgroundColor: "#fff" },
   leftStrip: {
     flexDirection: "row", alignItems: "center",
     backgroundColor: "#fff", paddingVertical: 4,
   },
-  leftStripAlt: { backgroundColor: "#f8fafc" },
   leftStripCell: { fontSize: 11, color: "#475569", paddingHorizontal: 4 },
   itemNameCell: { fontWeight: "700", color: "#0f172a", fontSize: 11 },
   inconsistencyBadge: {
