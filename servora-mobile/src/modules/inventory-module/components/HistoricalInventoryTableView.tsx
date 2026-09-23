@@ -28,6 +28,13 @@
 //    still owns selectedDate + date navigation — this component only
 //    receives dateLabel/onPreviousDay/onNextDay/isNextDayDisabled.
 //    Props interface is UNCHANGED, so neither parent needs changes.
+// ✅ LAYOUT — the toolbar (controls row + compact date pill) is
+//    rendered in a FIXED header ABOVE the vertical ScrollView, so it
+//    stays in place while the table scrolls. Everything is
+//    left-aligned with 16px side padding, matching InventoryScreen's
+//    title/buttons/stat cards, so all blocks share one left edge.
+//    The fixed header has a raised zIndex/elevation so the category
+//    dropdown still opens OVER the table.
 // FROZEN
 // ============================================
 
@@ -308,57 +315,65 @@ export function HistoricalInventoryTableView({
 
   if (isShowingOutOfStock) {
     return (
-      <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
-        {toolbar}
-        <OutOfStockTable groups={outOfStockGroups} headerBg={headerBg} reportDateLabel={reportDateLabel} />
-      </ScrollView>
+      <View style={styles.container}>
+        <View style={styles.fixedHeader}>{toolbar}</View>
+        <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
+          <OutOfStockTable groups={outOfStockGroups} headerBg={headerBg} reportDateLabel={reportDateLabel} />
+        </ScrollView>
+      </View>
     );
   }
 
   return (
-    <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
-      {toolbar}
+    <View style={styles.container}>
+      <View style={styles.fixedHeader}>{toolbar}</View>
+      <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
+        {error && (
+          <View style={[styles.errorBanner, { maxWidth: tableWidth }]}>
+            <Text style={styles.errorBannerText}>{error}</Text>
+          </View>
+        )}
 
-      {error && (
-        <View style={styles.errorBanner}>
-          <Text style={styles.errorBannerText}>{error}</Text>
-        </View>
-      )}
-
-      {categoryGroups.length === 0 ? (
-        <View style={styles.emptyState}>
-          <MaterialIcons name="history" size={40} color="#cbd5e1" />
-          <Text style={styles.emptyStateText}>No stock existed on this date</Text>
-        </View>
-      ) : (
-        <HistoricalInventoryTable
-          groups={categoryGroups}
-          isHistorical={isHistorical}
-          selectedDate={selectedDate}
-          reportDateLabel={reportDateLabel}
-          inventoryItemById={inventoryItemById}
-          statusesByInventoryId={statusesByInventoryId}
-          onItemPress={onItemPress}
-          restaurantName={restaurantName}
-          restaurantAddress={restaurantAddress}
-          restaurantPhone={restaurantPhone}
-          restaurantEmail={restaurantEmail}
-          restaurantVatNumber={restaurantVatNumber}
-        />
-      )}
-    </ScrollView>
+        {categoryGroups.length === 0 ? (
+          <View style={[styles.emptyState, { maxWidth: tableWidth }]}>
+            <MaterialIcons name="history" size={40} color="#cbd5e1" />
+            <Text style={styles.emptyStateText}>No stock existed on this date</Text>
+          </View>
+        ) : (
+          <HistoricalInventoryTable
+            groups={categoryGroups}
+            isHistorical={isHistorical}
+            selectedDate={selectedDate}
+            reportDateLabel={reportDateLabel}
+            inventoryItemById={inventoryItemById}
+            statusesByInventoryId={statusesByInventoryId}
+            onItemPress={onItemPress}
+            restaurantName={restaurantName}
+            restaurantAddress={restaurantAddress}
+            restaurantPhone={restaurantPhone}
+            restaurantEmail={restaurantEmail}
+            restaurantVatNumber={restaurantVatNumber}
+          />
+        )}
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   loadingIndicator: { marginTop: 40 },
-  body: { flex: 1 },
-  bodyContent: { padding: 12, paddingTop: 4, alignItems: "center" },
+  container: { flex: 1 },
+  fixedHeader: {
+    paddingHorizontal: 16, paddingTop: 8,
+    zIndex: 1000, elevation: 20, position: "relative",
+  },
+  body: { flex: 1, zIndex: 0 },
+  bodyContent: { paddingHorizontal: 16, paddingBottom: 16, alignItems: "flex-start" },
   errorBanner: {
-    backgroundColor: "#fef2f2", padding: 10, borderRadius: 6, marginBottom: 10, width: "100%", maxWidth: 500,
+    backgroundColor: "#fef2f2", padding: 10, borderRadius: 6, marginBottom: 10, width: "100%",
     borderWidth: 1, borderColor: "#fecaca",
   },
   errorBannerText: { color: "#b91c1c", fontSize: 12, fontWeight: "600" },
-  emptyState: { alignItems: "center", marginTop: 60, gap: 8 },
+  emptyState: { width: "100%", alignItems: "center", marginTop: 60, gap: 8 },
   emptyStateText: { color: "#94a3b8", fontSize: 14, fontWeight: "600" },
 });

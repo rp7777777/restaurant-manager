@@ -25,6 +25,11 @@
 // ✅ showMonthlyReport state + InventoryMonthlyReportScreen,
 //    rendered as an absolute-fill overlay SIBLING of the screen's
 //    main content.
+// ✅ LAYOUT ALIGNMENT — the header block (title, action buttons incl.
+//    Add Item, stat cards) is wrapped in ONE column capped to the
+//    table's width (+ its 16px side padding), left-aligned, so title,
+//    buttons, cards, table controls and the table all share the same
+//    left AND right edge instead of looking scattered.
 // FROZEN
 // ============================================
 
@@ -58,8 +63,13 @@ import { HistoricalInventoryTableView } from "../components/HistoricalInventoryT
 import { InventoryModalsGroup } from "../components/InventoryModalsGroup";
 import { InventoryFullScreenTableModal } from "../components/InventoryFullScreenTableModal";
 import { InventoryMonthlyReportScreen } from "../components/InventoryMonthlyReportScreen";
+import { getHistoricalTableWidth } from "../components/HistoricalInventoryTable";
 
 const isWeb = Platform.OS === "web";
+
+// Table width (Today mode, widest) + 16px padding on each side — the
+// shared content column every block on this screen aligns to.
+const CONTENT_COLUMN_MAX_WIDTH = getHistoricalTableWidth(false) + 32;
 
 export default function InventoryScreen() {
   const { restaurant, restaurantId, fmt, userProfile } = useApp();
@@ -235,32 +245,34 @@ export default function InventoryScreen() {
   return (
     <>
       <View style={styles.container}>
-        <InventoryToolbar
-          canEditInventory={canEditInventory}
-          onAddItem={openCreate}
-          onOpenBatchReport={openBatchReport}
-          onOpenArchivedItems={openArchivedItems}
-          onOpenMovementHistory={openMovementHistory}
-          onOpenMonthlyReport={() => setShowMonthlyReport(true)}
-          shouldShowSeedBanner={shouldShowSeedBanner}
-          seeding={seeding}
-          onSeedStoreDefaults={handleSeedDefaults}
-        />
+        <View style={styles.headerColumn}>
+          <InventoryToolbar
+            canEditInventory={canEditInventory}
+            onAddItem={openCreate}
+            onOpenBatchReport={openBatchReport}
+            onOpenArchivedItems={openArchivedItems}
+            onOpenMovementHistory={openMovementHistory}
+            onOpenMonthlyReport={() => setShowMonthlyReport(true)}
+            shouldShowSeedBanner={shouldShowSeedBanner}
+            seeding={seeding}
+            onSeedStoreDefaults={handleSeedDefaults}
+          />
 
-        {!loading && (
-          <View style={styles.statsSearchRow}>
-            <InventoryStats
-              items={items}
-              categoryMap={categoryMap}
-              todayISO={today}
-              restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
-              fmt={fmt}
-              activeStockStatus={filters.stockStatus}
-              onStatusPress={handleStatusPress}
-              statsOverride={isHistorical ? historicalStats : undefined}
-            />
-          </View>
-        )}
+          {!loading && (
+            <View style={styles.statsSearchRow}>
+              <InventoryStats
+                items={items}
+                categoryMap={categoryMap}
+                todayISO={today}
+                restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
+                fmt={fmt}
+                activeStockStatus={filters.stockStatus}
+                onStatusPress={handleStatusPress}
+                statsOverride={isHistorical ? historicalStats : undefined}
+              />
+            </View>
+          )}
+        </View>
 
         {itemsError && (
           <View style={styles.errorBanner}>
@@ -367,6 +379,7 @@ export default function InventoryScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f8fafc" },
+  headerColumn: { width: "100%", maxWidth: CONTENT_COLUMN_MAX_WIDTH },
   statsSearchRow: { paddingHorizontal: 16, marginTop: 8, gap: 6 },
   errorBanner: {
     backgroundColor: "#fef2f2", margin: 16, padding: 10, borderRadius: 8,

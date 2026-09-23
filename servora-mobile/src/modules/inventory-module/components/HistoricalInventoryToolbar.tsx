@@ -10,9 +10,13 @@
 // ✅ Category dropdown: high zIndex/elevation so it renders ABOVE the
 //    table, kept as a ScrollView (nestedScrollEnabled) so a long
 //    category list scrolls WITHIN the dropdown, opens from the left.
-// ✅ Date navigator: "<  [calendar] Today  Wed, 23 Sep 2026  >" —
-//    the full date sub-label shows on Today only (past dates already
-//    show the full date as their main label).
+// ✅ Date navigator: compact pill "<  [calendar] Today  Wed, 23 Sep 2026  >"
+//    centered over the table (same maxWidth as the table). The full
+//    date sub-label shows on Today only (past dates already show the
+//    full date as their main label).
+// ✅ Rendered by the parent OUTSIDE the table's vertical ScrollView,
+//    so the controls row and the date pill stay fixed while the table
+//    scrolls.
 // ============================================
 
 import React, { useState } from "react";
@@ -118,18 +122,27 @@ export function HistoricalInventoryToolbar({
         )}
       </View>
 
-      <View style={[styles.dateNav, { maxWidth }]}>
-        <TouchableOpacity onPress={onPreviousDay} style={styles.dateNavArrow}>
-          <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
-        </TouchableOpacity>
-        <View style={styles.dateNavCenter}>
-          <MaterialIcons name="calendar-today" size={16} color={theme.accent} />
+      <View style={[styles.dateNavWrap, { maxWidth }]}>
+        <View style={styles.dateNavPill}>
+          <TouchableOpacity
+            onPress={onPreviousDay}
+            style={styles.dateNavArrow}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <MaterialIcons name="chevron-left" size={18} color="#1e293b" />
+          </TouchableOpacity>
+          <MaterialIcons name="calendar-today" size={13} color={theme.accent} />
           <Text style={styles.dateNavLabel}>{dateLabel}</Text>
           {!isHistorical && <Text style={styles.dateNavSubLabel}>{reportDateLabel}</Text>}
+          <TouchableOpacity
+            onPress={onNextDay}
+            style={styles.dateNavArrow}
+            disabled={isNextDayDisabled}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <MaterialIcons name="chevron-right" size={18} color={isNextDayDisabled ? "#cbd5e1" : "#1e293b"} />
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity onPress={onNextDay} style={styles.dateNavArrow} disabled={isNextDayDisabled}>
-          <MaterialIcons name="chevron-right" size={22} color={isNextDayDisabled ? "#cbd5e1" : "#1e293b"} />
-        </TouchableOpacity>
       </View>
     </>
   );
@@ -138,7 +151,7 @@ export function HistoricalInventoryToolbar({
 const styles = StyleSheet.create({
   controlsRow: {
     flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap",
-    width: "100%", marginBottom: 10, zIndex: 1000,
+    width: "100%", marginBottom: 8, zIndex: 1000,
   },
   dropdownWrap: { width: 180, position: "relative", zIndex: 1000, elevation: 20 },
   dropdownButton: {
@@ -175,15 +188,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#0369a1",
   },
   fullScreenBtnText: { fontSize: 11, fontWeight: "700", color: "#fff" },
-  dateNav: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12,
-    width: "100%", paddingVertical: 8, marginBottom: 10,
-    backgroundColor: "#fff", borderRadius: 8, borderWidth: 1, borderColor: "#e2e8f0",
+  dateNavWrap: { width: "100%", alignItems: "center", marginBottom: 8 },
+  dateNavPill: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingVertical: 3, paddingHorizontal: 6,
+    backgroundColor: "#fff", borderRadius: 16, borderWidth: 1, borderColor: "#cbd5e1",
   },
-  dateNavArrow: { padding: 4 },
-  dateNavCenter: {
-    flexDirection: "row", alignItems: "center", gap: 8, minWidth: 200, justifyContent: "center",
-  },
-  dateNavLabel: { fontSize: 14, fontWeight: "800", color: "#1e293b" },
-  dateNavSubLabel: { fontSize: 12, fontWeight: "600", color: "#64748b" },
+  dateNavArrow: { padding: 2 },
+  dateNavLabel: { fontSize: 13, fontWeight: "800", color: "#1e293b" },
+  dateNavSubLabel: { fontSize: 11, fontWeight: "600", color: "#64748b" },
 });
