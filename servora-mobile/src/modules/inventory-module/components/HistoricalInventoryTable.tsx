@@ -33,6 +33,11 @@
 // ✅ Column widths rebalanced (still 900px total) so "Received Qty",
 //    "Opening" and "Closing" headers no longer break mid-word:
 //    Received Qty 60, Opening 58, Closing 54, Issue 128.
+// ✅ Readability tweak — letterhead address and phone/email/VAT line
+//    use darker, semi-bold text; item-row separator lines slightly
+//    stronger (1.5px #64748b) so each item stands out. S.N. column
+//    widened 30 → 36 (Issue 128 → 122) so the "S.N." header no longer
+//    wraps its dot onto a second line. Total width still 900px.
 // ============================================
 
 import React, { useState } from "react";
@@ -60,9 +65,9 @@ const STATUS_STYLE: Record<ItemStatusKind, { label: string; color: string; bg: s
 const ROW_HEIGHT = 26;
 
 // ── Column widths (Today mode total = 900px) ──
-const LEFT_COLS = { sn: 30, item: 120 };
+const LEFT_COLS = { sn: 36, item: 120 };
 const RIGHT_COLS = {
-  date: 72, batch: 95, receivedQty: 60, opening: 58, issue: 128, closing: 54, unit: 40, expiry: 72,
+  date: 72, batch: 95, receivedQty: 60, opening: 58, issue: 122, closing: 54, unit: 40, expiry: 72,
 };
 const TOTAL_COL = 55;
 const STATUS_COL = 86;
@@ -397,8 +402,8 @@ const styles = StyleSheet.create({
   },
   letterheadTextGroup: { flex: 1 },
   letterheadName: { fontSize: 15, fontWeight: "800", color: "#0f172a" },
-  letterheadAddress: { fontSize: 12, color: "#475569", marginTop: 1 },
-  letterheadMeta: { fontSize: 11, color: "#64748b", marginTop: 2 },
+  letterheadAddress: { fontSize: 12, color: "#1e293b", fontWeight: "600", marginTop: 1 },
+  letterheadMeta: { fontSize: 11, color: "#334155", fontWeight: "600", marginTop: 2 },
   letterheadReportGroup: { alignItems: "flex-end", justifyContent: "center", paddingLeft: 12 },
   letterheadReportTitle: { fontSize: 13, fontWeight: "800", color: "#0f172a", letterSpacing: 1.2 },
   letterheadReportDate: { fontSize: 11, fontWeight: "600", color: "#475569", marginTop: 2 },
@@ -418,7 +423,7 @@ const styles = StyleSheet.create({
   },
   tableHeaderCell: { fontSize: 11, fontWeight: "800", color: "#334155", paddingHorizontal: 4 },
   headerCenter: { textAlign: "center" },
-  itemGroupRow: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: "#94a3b8" },
+  itemGroupRow: { flexDirection: "row", borderBottomWidth: 1.5, borderBottomColor: "#64748b" },
   itemGroupRowAlt: { backgroundColor: "#f8fafc" },
   leftStrip: {
     flexDirection: "row", alignItems: "center",
