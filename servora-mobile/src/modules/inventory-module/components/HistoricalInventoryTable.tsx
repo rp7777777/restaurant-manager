@@ -21,6 +21,18 @@
 // ✅ Batch archive/restore indicators (diagonal strike, "Archived" /
 //    "Restored [date]"), received-today highlight, data-issue badge,
 //    paired Issue lines — all UNCHANGED from the previous single file.
+// ✅ STYLE MATCH — borders/lines now follow Kitchen's
+//    KitchenHistoryTable.tsx (Request History) for a consistent look:
+//    outer border 1.5px #334155 (radius 5, soft shadow), column
+//    dividers + item-row borders #94a3b8, a #94a3b8 top line between
+//    category blocks, column header #f1f5f9 with a 1.35px #334155
+//    bottom line and #334155 extra-bold text. Today-mode category
+//    headers alternate Kitchen's blue (#2563eb) / green (#059669);
+//    Historical (past dates) keeps its own navy/teal so a past date
+//    is still instantly recognisable. Batch-row lines unchanged.
+// ✅ Column widths rebalanced (still 900px total) so "Received Qty",
+//    "Opening" and "Closing" headers no longer break mid-word:
+//    Received Qty 60, Opening 58, Closing 54, Issue 128.
 // ============================================
 
 import React, { useState } from "react";
@@ -50,7 +62,7 @@ const ROW_HEIGHT = 26;
 // ── Column widths (Today mode total = 900px) ──
 const LEFT_COLS = { sn: 30, item: 120 };
 const RIGHT_COLS = {
-  date: 72, batch: 95, receivedQty: 50, opening: 50, issue: 150, closing: 50, unit: 40, expiry: 72,
+  date: 72, batch: 95, receivedQty: 60, opening: 58, issue: 128, closing: 54, unit: 40, expiry: 72,
 };
 const TOTAL_COL = 55;
 const STATUS_COL = 86;
@@ -92,7 +104,7 @@ const DIVIDER_X_POSITIONS_TODAY = buildDividerPositions(true);
 const DIVIDER_X_POSITIONS_HISTORICAL = buildDividerPositions(false);
 
 const CATEGORY_ACCENTS_HISTORICAL = [{ bg: "#1e3a5f" }, { bg: "#0f766e" }];
-const CATEGORY_ACCENTS_TODAY = [{ bg: "#059669" }, { bg: "#0d9488" }];
+const CATEGORY_ACCENTS_TODAY = [{ bg: "#2563eb" }, { bg: "#059669" }]; // Kitchen Request History accents
 
 function getBatchRowHeight(issueCount: number): number {
   if (issueCount <= 2) return ROW_HEIGHT;
@@ -174,7 +186,7 @@ export function HistoricalInventoryTable({
           if (showColumnHeader) hasShownColumnHeader = true;
 
           return (
-            <View key={key}>
+            <View key={key} style={styles.groupBlock}>
               <View style={[styles.categoryHeader, { backgroundColor: accent.bg }]}>
                 <View style={styles.categoryHeaderLeft}>
                   <Text style={styles.categoryHeaderText}>
@@ -371,13 +383,13 @@ export function HistoricalInventoryTable({
 const styles = StyleSheet.create({
   tableHScroll: { width: "100%", flexGrow: 0 },
   tableOuterBlock: {
-    borderWidth: 1, borderColor: "#cbd5e1", borderRadius: 6, overflow: "hidden", backgroundColor: "#fff",
+    borderWidth: 1.5, borderColor: "#334155", borderRadius: 5, overflow: "hidden", backgroundColor: "#fff",
+    shadowColor: "#0f172a", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4,
   },
   letterheadCard: {
     flexDirection: "row", alignItems: "center", gap: 10,
     backgroundColor: "#eff6ff",
     paddingHorizontal: 12, paddingVertical: 10,
-    borderBottomWidth: 1, borderBottomColor: "#cbd5e1",
   },
   letterheadIconCircle: {
     width: 32, height: 32, borderRadius: 16, backgroundColor: "#2563eb",
@@ -390,22 +402,23 @@ const styles = StyleSheet.create({
   letterheadReportGroup: { alignItems: "flex-end", justifyContent: "center", paddingLeft: 12 },
   letterheadReportTitle: { fontSize: 13, fontWeight: "800", color: "#0f172a", letterSpacing: 1.2 },
   letterheadReportDate: { fontSize: 11, fontWeight: "600", color: "#475569", marginTop: 2 },
+  groupBlock: { borderTopWidth: 1, borderTopColor: "#94a3b8" },
   categoryHeader: {
-    paddingVertical: 4, paddingHorizontal: 10, minHeight: 26,
+    paddingVertical: 4, paddingHorizontal: 14, minHeight: 20,
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
   },
   categoryHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
-  categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.6 },
-  categoryHeaderCount: { color: "#e2e8f0", fontWeight: "600", fontSize: 11 },
+  categoryHeaderText: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 0.3 },
+  categoryHeaderCount: { color: "rgba(255,255,255,0.85)", fontWeight: "700", fontSize: 11 },
   categoryHeaderDate: { color: "#fff", fontWeight: "700", fontSize: 12 },
   tableArea: { position: "relative" },
   tableHeaderRow: {
-    flexDirection: "row", alignItems: "center", backgroundColor: "#eef2f7",
-    borderBottomWidth: 1, borderBottomColor: "#cbd5e1", paddingVertical: 6,
+    flexDirection: "row", alignItems: "center", backgroundColor: "#f1f5f9",
+    borderBottomWidth: 1.35, borderBottomColor: "#334155", paddingVertical: 6,
   },
-  tableHeaderCell: { fontSize: 11, fontWeight: "700", color: "#1e293b", paddingHorizontal: 4 },
+  tableHeaderCell: { fontSize: 11, fontWeight: "800", color: "#334155", paddingHorizontal: 4 },
   headerCenter: { textAlign: "center" },
-  itemGroupRow: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: "#cbd5e1" },
+  itemGroupRow: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: "#94a3b8" },
   itemGroupRowAlt: { backgroundColor: "#f8fafc" },
   leftStrip: {
     flexDirection: "row", alignItems: "center",
@@ -446,6 +459,6 @@ const styles = StyleSheet.create({
   archivedIndicatorText: { color: "#dc2626", fontWeight: "800", fontStyle: "italic" },
   restoredIndicatorText: { color: "#059669", fontWeight: "800", fontStyle: "italic" },
   columnDivider: {
-    position: "absolute", top: 0, width: 1, backgroundColor: "#dbe3ec",
+    position: "absolute", top: 0, width: 1, backgroundColor: "#94a3b8",
   },
 });

@@ -19,9 +19,8 @@
 // ✅ HistoricalInventoryTableView receives the FULL `items` (archived
 //    included) so its internal useHistoricalInventory call can make
 //    its own correct, date-aware archive decision per item.
-// ✅ restaurantName/Address/Phone/Email/VatNumber passed through from
-//    useApp()'s restaurant object, for the letterhead — to BOTH the
-//    main table and InventoryFullScreenTableModal.
+// ✅ NEW — restaurantName/restaurantAddress passed through from
+//    useApp()'s restaurant object, for the letterhead.
 // ✅ showMonthlyReport state + InventoryMonthlyReportScreen,
 //    rendered as an absolute-fill overlay SIBLING of the screen's
 //    main content.
@@ -342,11 +341,6 @@ export default function InventoryScreen() {
           today={today}
           onItemPress={openDrawer}
           restaurantDefaultExpiryAlertDays={restaurant?.defaultExpiryAlertDays}
-          restaurantName={restaurant?.name}
-          restaurantAddress={restaurant?.address}
-          restaurantPhone={restaurant?.phone}
-          restaurantEmail={restaurant?.email}
-          restaurantVatNumber={restaurant?.vatNumber}
         />
       </View>
 
