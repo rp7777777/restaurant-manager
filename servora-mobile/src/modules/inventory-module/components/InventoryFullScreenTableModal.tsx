@@ -16,6 +16,16 @@
 //    as an additional prop without further architecture change).
 // ✅ Independent selectedDate state, re-synced to initialDate + reset
 //    search/category/sort EVERY time the modal opens.
+// ✅ FIX — HistoricalInventoryTableView now renders its OWN date
+//    navigator (commit 00194af) and REQUIRES dateLabel/onPreviousDay/
+//    onNextDay/isNextDayDisabled. This modal was never updated, so it
+//    failed to compile and would have shown two date navigators.
+//    The modal's own dateNav row is removed; this modal still OWNS
+//    selectedDate and just passes the label/handlers down (same
+//    contract InventoryScreen.tsx already uses).
+// ✅ Letterhead props (restaurantName/Address/Phone/Email/VatNumber)
+//    forwarded so Full Screen shows the same letterhead as the main
+//    table. All optional — letterhead simply hides if absent.
 // FROZEN
 // ============================================
 
@@ -57,11 +67,18 @@ interface InventoryFullScreenTableModalProps {
   // ✅ NEW — forwarded to HistoricalInventoryTableView's required
   // expiry-classification props.
   restaurantDefaultExpiryAlertDays?: number;
+  // ✅ NEW — forwarded to HistoricalInventoryTableView's letterhead.
+  restaurantName?:      string;
+  restaurantAddress?:   string;
+  restaurantPhone?:     string;
+  restaurantEmail?:     string;
+  restaurantVatNumber?: string;
 }
 
 export function InventoryFullScreenTableModal({
   visible, onClose, restaurantId, items, categories, initialDate, today, onItemPress,
   restaurantDefaultExpiryAlertDays,
+  restaurantName, restaurantAddress, restaurantPhone, restaurantEmail, restaurantVatNumber,
 }: InventoryFullScreenTableModalProps) {
   const [selectedDate, setSelectedDate] = useState(initialDate);
   const [searchQuery, setSearchQuery] = useState("");
@@ -90,6 +107,12 @@ export function InventoryFullScreenTableModal({
 
   const isNextDisabled = selectedDate >= today;
 
+  const goToPreviousDay = () => setSelectedDate((d) => shiftDate(d, -1));
+  const goToNextDay = () => {
+    // Guard mirrors the disabled arrow — never navigate past today.
+    setSelectedDate((d) => (d >= today ? d : shiftDate(d, 1)));
+  };
+
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={styles.container}>
@@ -100,23 +123,18 @@ export function InventoryFullScreenTableModal({
           </TouchableOpacity>
         </View>
 
-        <View style={styles.dateNav}>
-          <TouchableOpacity onPress={() => setSelectedDate((d) => shiftDate(d, -1))} style={styles.dateNavArrow}>
-            <MaterialIcons name="chevron-left" size={22} color="#1e293b" />
-          </TouchableOpacity>
-          <Text style={styles.dateNavLabel}>{formatDateLabel(selectedDate, today)}</Text>
-          <TouchableOpacity
-            onPress={() => setSelectedDate((d) => shiftDate(d, 1))}
-            style={[styles.dateNavArrow, isNextDisabled && styles.dateNavArrowDisabled]}
-            disabled={isNextDisabled}
-          >
-            <MaterialIcons name="chevron-right" size={22} color={isNextDisabled ? "#cbd5e1" : "#1e293b"} />
-          </TouchableOpacity>
-        </View>
-
         <HistoricalInventoryTableView
           restaurantId={restaurantId}
+          restaurantName={restaurantName}
+          restaurantAddress={restaurantAddress}
+          restaurantPhone={restaurantPhone}
+          restaurantEmail={restaurantEmail}
+          restaurantVatNumber={restaurantVatNumber}
           selectedDate={selectedDate}
+          dateLabel={formatDateLabel(selectedDate, today)}
+          onPreviousDay={goToPreviousDay}
+          onNextDay={goToNextDay}
+          isNextDayDisabled={isNextDisabled}
           categories={categories}
           inventoryItems={items}
           searchQuery={searchQuery}
@@ -145,11 +163,4 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 15, fontWeight: "800", color: "#1e293b" },
   closeBtn: { padding: 4 },
-  dateNav: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 12,
-    paddingVertical: 8, backgroundColor: "#fff", borderBottomWidth: 1, borderBottomColor: "#e2e8f0",
-  },
-  dateNavArrow: { padding: 4 },
-  dateNavArrowDisabled: { opacity: 0.5 },
-  dateNavLabel: { fontSize: 14, fontWeight: "800", color: "#1e293b", minWidth: 160, textAlign: "center" },
 });
