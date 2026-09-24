@@ -1,74 +1,46 @@
 // ============================================
 // SERVORA ERP — HistoricalInventoryTable Component
 // ✅ PURE DISPLAY — renders the ERP inventory table only. Receives
-//    already-filtered/sorted/grouped data and a precomputed status
-//    Map from HistoricalInventoryTableView (the controller). It does
-//    NOT calculate stock, status, filters or sorting — it only shows:
+//    already-filtered/sorted/grouped data and a precomputed status Map
+//    from HistoricalInventoryTableView (the controller). It does NOT
+//    calculate stock, status, filters or sorting — it only shows:
 //    batch.quantity (Opening), batch.issues, batch.closingQuantity
 //    (Closing), item.historicalStock (Total QTY) and the given statuses.
-// ✅ Letterhead is rendered INSIDE the table's bordered block as its
-//    first row (confirmed decision), with "INVENTORY REPORT" + date.
-// ✅ Layout — total width 900px in Today mode (870px in Historical,
-//    Edit column hidden). Batch/Lot No. and Item Name WRAP onto
-//    multiple lines (long batch numbers of 25–30 chars are common);
-//    rows grow to fit, item-level columns (Total/Status/Edit) stay
-//    vertically centered across the whole item row.
-// ✅ Column divider positions are derived from the column width list
-//    (no hand-maintained offsets), drawn as absolute lines using the
-//    measured table-area height per category.
-// ✅ Wrapped in a horizontal ScrollView so a narrow window scrolls the
-//    TABLE only, never the whole page.
+// ✅ FINAL LAYOUT (top → bottom, one bordered block):
+//    1. Letterhead — restaurant name/address/phone/email/VAT, plus
+//       "INVENTORY REPORT" + date (the ONLY place the date is shown).
+//    2. Column header — rendered ONCE, above all categories, with its
+//       own divider lines aligned to the body columns.
+//    3. Category rows — soft tint + 4px coloured left bar + coloured
+//       text (Today: soft blue/green, Historical: soft navy/teal).
+//       Strong top/bottom lines matching the header line.
+//    4. Item rows — batch sub-rows; last item in a category drops its
+//       bottom line so lines never double up.
+// ✅ Width 900px in Today mode (870px in Historical, Edit column hidden).
+//    Item Name and Lot/Batch No. wrap; item-level columns (Total QTY,
+//    Status, Edit) stay vertically centred across the whole item row.
+//    Divider x-positions are derived from the column width list.
+//    Wrapped in a horizontal ScrollView so a narrow window scrolls the
+//    table only, never the whole page.
 // ✅ Batch archive/restore indicators (diagonal strike, "Archived" /
 //    "Restored [date]"), received-today highlight, data-issue badge,
-//    paired Issue lines — all UNCHANGED from the previous single file.
-// ✅ STYLE MATCH — borders/lines now follow Kitchen's
-//    KitchenHistoryTable.tsx (Request History) for a consistent look:
-//    outer border 1.5px #334155 (radius 5, soft shadow), column
-//    dividers + item-row borders #94a3b8, a #94a3b8 top line between
-//    category blocks, column header #f1f5f9 with a 1.35px #334155
-//    bottom line and #334155 extra-bold text. Today-mode category
-//    headers alternate Kitchen's blue (#2563eb) / green (#059669);
-//    Historical (past dates) keeps its own navy/teal so a past date
-//    is still instantly recognisable. Batch-row lines unchanged.
-// ✅ Column widths rebalanced (still 900px total) so "Received Qty",
-//    "Opening" and "Closing" headers no longer break mid-word:
-//    Received Qty 60, Opening 58, Closing 54, Issue 128.
-// ✅ Readability tweak — letterhead address and phone/email/VAT line
-//    use darker, semi-bold text; item-row separator lines slightly
-//    stronger (1.5px #64748b) so each item stands out. S.N. column
-//    widened 30 → 36 (Issue 128 → 122) so the "S.N." header no longer
-//    wraps its dot onto a second line. Total width still 900px.
-// ✅ CALM CATEGORY ROWS — category headers no longer use solid
-//    blue/green bars (they pulled attention away from the row data).
-//    Each is now a very light tint (lighter than the letterhead, so
-//    hierarchy is letterhead > category > rows) with a 4px coloured
-//    left bar and coloured bold text to keep sections easy to find.
-//    Today alternates soft blue / soft green; Historical (past dates)
-//    alternates soft navy / soft teal so a past date is still
-//    recognisable. All item/batch rows are plain white (zebra
-//    striping removed) — the 1.5px item-row line separates items.
-// ✅ Category row lines (top + bottom) use the SAME strong line as the
-//    column-header line (1.35px #334155). The LAST item row of each
-//    category drops its own bottom line, so the next category's top
-//    line (or the table's outer border) is never doubled.
-// ✅ COLUMN HEADER ON TOP — the column header row is now rendered ONCE,
-//    directly under the letterhead and ABOVE all category sections
-//    (standard report layout: columns → groups → rows), instead of
-//    inside the first category. It draws its own column divider lines
-//    (top/bottom-anchored, no measuring needed) at the same x
-//    positions as the table body, so lines stay aligned.
-// ✅ Letterhead a shade darker (#dbeafe) and the column header lighter
-//    (#f8fafc) so the two are clearly different bands.
-// ✅ Category rows no longer repeat the date — it is shown once in the
-//    letterhead ("INVENTORY REPORT" + date).
-// ✅ Column header is now a DARK NAVY band (#1e293b) with white bold
-//    text and soft light dividers — the classic accounting-report
-//    header, clearly distinct from the light-blue letterhead above and
-//    the soft category tints below.
+//    paired Issue lines — behaviour unchanged.
+// ✅ FINAL POLISH — "data issue" badge readable (9px, was 7px); the
+//    S.N./Item Name strip no longer paints its own white background, so
+//    it always matches the item row colour.
+// ✅ STICKY HEAD — letterhead + column header stay fixed; ONLY the
+//    category sections scroll (inner vertical ScrollView). The
+//    component measures the height it is given (onLayout) and caps the
+//    table block to it, so this works the same on web and native. A
+//    short table simply stays short (maxHeight, not a fixed height).
+// ✅ Letterhead is a deep navy band with white text — clearly distinct
+//    from the light column header and category rows.
+// ✅ Category row: item count moved to the RIGHT side, same text style
+//    and colour as the category name (e.g. "2 ITEMS").
 // ============================================
 
 import React, { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, LayoutChangeEvent } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { InventoryItem } from "../types/inventory";
 import { HistoricalItemStock } from "../hooks/useHistoricalInventory";
@@ -137,7 +109,7 @@ const DIVIDER_X_POSITIONS_HISTORICAL = buildDividerPositions(false);
 
 interface CategoryAccent { bar: string; bg: string; text: string }
 
-// Soft tints — all much lighter than the letterhead's #dbeafe.
+// Soft tints for category rows (letterhead is a deep navy band).
 const CATEGORY_ACCENTS_TODAY: CategoryAccent[] = [
   { bar: "#2563eb", bg: "#f7faff", text: "#1e40af" }, // soft blue
   { bar: "#059669", bg: "#f3fbf7", text: "#065f46" }, // soft green
@@ -174,6 +146,12 @@ export function HistoricalInventoryTable({
   restaurantName, restaurantAddress, restaurantPhone, restaurantEmail, restaurantVatNumber,
 }: HistoricalInventoryTableProps) {
   const [tableAreaHeights, setTableAreaHeights] = useState<Record<string, number>>({});
+  const [availableHeight, setAvailableHeight] = useState<number | null>(null);
+
+  const handleRootLayout = (e: LayoutChangeEvent) => {
+    const h = Math.floor(e.nativeEvent.layout.height);
+    setAvailableHeight((prev) => (prev === h ? prev : h));
+  };
 
   const tableWidth = getHistoricalTableWidth(isHistorical);
   const categoryAccents = isHistorical ? CATEGORY_ACCENTS_HISTORICAL : CATEGORY_ACCENTS_TODAY;
@@ -189,265 +167,278 @@ export function HistoricalInventoryTable({
   let categoryAccentIndex = 0;
 
   return (
-    <ScrollView
-      horizontal
-      style={[styles.tableHScroll, { maxWidth: tableWidth + 2 }]}
-      showsHorizontalScrollIndicator
-    >
-      <View style={[styles.tableOuterBlock, { width: tableWidth }]}>
-        {hasLetterheadData && (
-          <View style={styles.letterheadCard}>
-            <View style={styles.letterheadIconCircle}>
-              <MaterialIcons name="storefront" size={16} color="#fff" />
+    <View style={styles.root} onLayout={handleRootLayout}>
+      <ScrollView
+        horizontal
+        style={[styles.tableHScroll, { maxWidth: tableWidth + 2 }]}
+        showsHorizontalScrollIndicator
+      >
+        <View
+          style={[
+            styles.tableOuterBlock,
+            { width: tableWidth },
+            // Leave a few px for the horizontal scrollbar.
+            availableHeight !== null && { maxHeight: Math.max(availableHeight - 6, 200) },
+          ]}
+        >
+          {hasLetterheadData && (
+            <View style={styles.letterheadCard}>
+              <View style={styles.letterheadIconCircle}>
+                <MaterialIcons name="storefront" size={16} color="#fff" />
+              </View>
+              <View style={styles.letterheadTextGroup}>
+                {restaurantName ? <Text style={styles.letterheadName}>{restaurantName}</Text> : null}
+                {restaurantAddress ? <Text style={styles.letterheadAddress}>{restaurantAddress}</Text> : null}
+                {letterheadMetaParts.length > 0 ? (
+                  <Text style={styles.letterheadMeta}>{letterheadMetaParts.join("   •   ")}</Text>
+                ) : null}
+              </View>
+              <View style={styles.letterheadReportGroup}>
+                <Text style={styles.letterheadReportTitle}>INVENTORY REPORT</Text>
+                <Text style={styles.letterheadReportDate}>{reportDateLabel}</Text>
+              </View>
             </View>
-            <View style={styles.letterheadTextGroup}>
-              {restaurantName ? <Text style={styles.letterheadName}>{restaurantName}</Text> : null}
-              {restaurantAddress ? <Text style={styles.letterheadAddress}>{restaurantAddress}</Text> : null}
-              {letterheadMetaParts.length > 0 ? (
-                <Text style={styles.letterheadMeta}>{letterheadMetaParts.join("   •   ")}</Text>
-              ) : null}
-            </View>
-            <View style={styles.letterheadReportGroup}>
-              <Text style={styles.letterheadReportTitle}>INVENTORY REPORT</Text>
-              <Text style={styles.letterheadReportDate}>{reportDateLabel}</Text>
-            </View>
-          </View>
-        )}
-
-        <View style={[styles.tableHeaderRow, !hasLetterheadData && styles.tableHeaderRowNoTopLine]}>
-          <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.sn }]}>S.N.</Text>
-          <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.item }]}>Item Name</Text>
-          <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.date }]}>Received Date</Text>
-          <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
-          <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: RIGHT_COLS.receivedQty }]}>Received Qty</Text>
-          <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: RIGHT_COLS.opening }]}>Opening</Text>
-          <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.issue }]}>Issue</Text>
-          <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: RIGHT_COLS.closing }]}>Closing</Text>
-          <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
-          <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry</Text>
-          <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: TOTAL_COL }]}>Total QTY</Text>
-          <Text style={[styles.tableHeaderCell, { width: STATUS_COL }]}>Status</Text>
-          {!isHistorical && (
-            <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: ARROW_COL }]}>Edit</Text>
           )}
-          {dividerXPositions.map((x) => (
-            <View key={x} pointerEvents="none" style={[styles.headerDivider, { left: x }]} />
-          ))}
-        </View>
 
-        {groups.map((group) => {
-          const groupHeights = group.items.map((item) =>
-            item.batches.reduce((sum, b) => sum + getBatchRowHeight(b.issues.length), 0)
-          );
-          const key = group.categoryId;
-          const measuredHeight = tableAreaHeights[key] ?? 0;
-          const accent = categoryAccents[categoryAccentIndex % categoryAccents.length];
-          categoryAccentIndex += 1;
+          <View style={[styles.tableHeaderRow, !hasLetterheadData && styles.tableHeaderRowNoTopLine]}>
+            <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.sn }]}>S.N.</Text>
+            <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.item }]}>Item Name</Text>
+            <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.date }]}>Received Date</Text>
+            <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
+            <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: RIGHT_COLS.receivedQty }]}>Received Qty</Text>
+            <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: RIGHT_COLS.opening }]}>Opening</Text>
+            <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.issue }]}>Issue</Text>
+            <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: RIGHT_COLS.closing }]}>Closing</Text>
+            <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
+            <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry</Text>
+            <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: TOTAL_COL }]}>Total QTY</Text>
+            <Text style={[styles.tableHeaderCell, { width: STATUS_COL }]}>Status</Text>
+            {!isHistorical && (
+              <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: ARROW_COL }]}>Edit</Text>
+            )}
+            {dividerXPositions.map((x) => (
+              <View key={x} pointerEvents="none" style={[styles.headerDivider, { left: x }]} />
+            ))}
+          </View>
 
-          return (
-            <View key={key} style={styles.groupBlock}>
-              <View style={[styles.categoryHeader, { backgroundColor: accent.bg, borderLeftColor: accent.bar }]}>
-                <View style={styles.categoryHeaderLeft}>
-                  <Text style={[styles.categoryHeaderText, { color: accent.text }]}>
-                    {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
-                  </Text>
-                  <Text style={styles.categoryHeaderCount}>
-                    {group.items.length} {group.items.length === 1 ? "item" : "items"}
-                  </Text>
-                </View>
-              </View>
+          <ScrollView
+            style={styles.bodyScroll}
+            nestedScrollEnabled
+            showsVerticalScrollIndicator={false}
+          >
+            {groups.map((group) => {
+              const groupHeights = group.items.map((item) =>
+                item.batches.reduce((sum, b) => sum + getBatchRowHeight(b.issues.length), 0)
+              );
+              const key = group.categoryId;
+              const measuredHeight = tableAreaHeights[key] ?? 0;
+              const accent = categoryAccents[categoryAccentIndex % categoryAccents.length];
+              categoryAccentIndex += 1;
 
-              <View
-                style={styles.tableArea}
-                onLayout={(e) => {
-                  const h = e.nativeEvent.layout.height;
-                  setTableAreaHeights((prev) =>
-                    prev[key] === h ? prev : { ...prev, [key]: h }
-                  );
-                }}
-              >
-                {group.items.map((item, itemIndex) => {
-                  const groupHeight = groupHeights[itemIndex];
-                  const realItem = inventoryItemById.get(item.inventoryId);
-                  const itemStatuses = statusesByInventoryId.get(item.inventoryId) ?? [];
+              return (
+                <View key={key} style={styles.groupBlock}>
+                  <View style={[styles.categoryHeader, { backgroundColor: accent.bg, borderLeftColor: accent.bar }]}>
+                    <Text style={[styles.categoryHeaderText, { color: accent.text }]}>
+                      {group.categoryIcon ? `${group.categoryIcon} ` : ""}{group.categoryName.toUpperCase()}
+                    </Text>
+                    <Text style={[styles.categoryHeaderText, { color: accent.text }]}>
+                      {group.items.length} {group.items.length === 1 ? "ITEM" : "ITEMS"}
+                    </Text>
+                  </View>
 
-                  return (
-                    <View
-                      key={item.inventoryId}
-                      style={[
-                        styles.itemGroupRow,
-                        { minHeight: groupHeight },
-                        itemIndex === group.items.length - 1 && styles.itemGroupRowLast,
-                      ]}
-                    >
-                      <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }]}>
-                        <Text style={[styles.leftStripCell, { width: LEFT_COLS.sn }]}>{itemIndex + 1}</Text>
-                        <View style={{ width: LEFT_COLS.item }}>
-                          <Text style={[styles.leftStripCell, styles.itemNameCell]}>{item.itemName}</Text>
-                          {item.hasInconsistency && (
-                            <View style={styles.inconsistencyBadge}>
-                              <MaterialIcons name="warning" size={10} color="#b45309" />
-                              <Text style={styles.inconsistencyText}>data issue</Text>
-                            </View>
-                          )}
-                        </View>
-                      </View>
-
-                      <View style={styles.rightBatchRows}>
-                        {item.batches.map((batch, batchIndex) => {
-                          const batchRowHeight = getBatchRowHeight(batch.issues.length);
-                          const wasReceivedToday = batch.receivedDate === selectedDate;
-                          const isArchivedToday = batch.isBatchArchived && batch.batchArchivedDate === selectedDate;
-                          const isRestoredToday = batch.isBatchRestoredToday;
-
-                          return (
-                            <View
-                              key={batch.batchId}
-                              style={[
-                                styles.batchRow,
-                                { minHeight: batchRowHeight },
-                                batchIndex < item.batches.length - 1 && styles.batchRowDivider,
-                              ]}
-                            >
-                              <Text style={[
-                                styles.tableCell,
-                                { width: RIGHT_COLS.date },
-                                wasReceivedToday && styles.receivedDateHighlight,
-                              ]}>
-                                {batch.receivedDate}
-                              </Text>
-                              <View style={{ width: RIGHT_COLS.batch, position: "relative", justifyContent: "center" }}>
-                                <Text style={[
-                                  styles.tableCell,
-                                  styles.batchNoCell,
-                                  isArchivedToday && styles.archivedBatchNoText,
-                                  isRestoredToday && styles.restoredBatchNoText,
-                                ]}>
-                                  {batch.batchNo}
-                                </Text>
-                                {isArchivedToday && <View style={styles.diagonalStrike} pointerEvents="none" />}
-                              </View>
-                              <Text style={[styles.tableCell, styles.receivedQtyCell, { width: RIGHT_COLS.receivedQty }]}>
-                                {wasReceivedToday ? String(batch.originalQuantity) : "—"}
-                              </Text>
-                              <Text style={[styles.tableCell, styles.openingQtyCell, { width: RIGHT_COLS.opening }]}>
-                                {batch.quantity}
-                              </Text>
-                              <View style={{ width: RIGHT_COLS.issue }}>
-                                {isArchivedToday && (
-                                  <Text style={[styles.tableCell, styles.archivedIndicatorText]}>Archived</Text>
-                                )}
-                                {isRestoredToday && (
-                                  <Text style={[styles.tableCell, styles.restoredIndicatorText]}>Restored {batch.batchRestoredDate}</Text>
-                                )}
-                                {batch.issues.length === 0 ? (
-                                  !isArchivedToday && !isRestoredToday && <Text style={[styles.tableCell, styles.issueCell]}>—</Text>
-                                ) : batch.issues.length <= 2 ? (
-                                  <Text style={[styles.tableCell, styles.issueCell]} numberOfLines={1}>
-                                    {batch.issues.map((iss) => `${iss.quantity} ${batch.unit} ${iss.source}`).join(" • ")}
-                                  </Text>
-                                ) : (
-                                  Array.from({ length: Math.ceil(batch.issues.length / 2) }).map((_, lineIdx) => {
-                                    const pair = batch.issues.slice(lineIdx * 2, lineIdx * 2 + 2);
-                                    return (
-                                      <Text key={lineIdx} style={[styles.tableCell, styles.issueCell, styles.issueMultiLine]} numberOfLines={1}>
-                                        {pair.map((iss) => `${iss.quantity} ${batch.unit} ${iss.source}`).join(" / ")}
-                                      </Text>
-                                    );
-                                  })
-                                )}
-                              </View>
-                              <Text style={[styles.tableCell, styles.closingQtyCell, { width: RIGHT_COLS.closing }]}>
-                                {batch.closingQuantity}
-                              </Text>
-                              <Text style={[styles.tableCell, { width: RIGHT_COLS.unit }]}>{batch.unit}</Text>
-                              <Text style={[styles.tableCell, { width: RIGHT_COLS.expiry }]}>{batch.expiryDate ?? "—"}</Text>
-                            </View>
-                          );
-                        })}
-                      </View>
-
-                      <View style={[styles.centeredCol, { width: TOTAL_COL, minHeight: groupHeight }]}>
-                        <Text style={styles.totalCell}>{String(item.historicalStock)}</Text>
-                      </View>
-
-                      <View style={[styles.statusCol, { width: STATUS_COL, minHeight: groupHeight }]}>
-                        {itemStatuses.length === 0 ? (
-                          <Text style={styles.statusNone}>—</Text>
-                        ) : (
-                          itemStatuses.map((kind) => (
-                            <View
-                              key={kind}
-                              style={[styles.statusBadge, { backgroundColor: STATUS_STYLE[kind].bg }]}
-                            >
-                              <Text style={[styles.statusBadgeText, { color: STATUS_STYLE[kind].color }]}>
-                                {STATUS_STYLE[kind].label}
-                              </Text>
-                            </View>
-                          ))
-                        )}
-                      </View>
-
-                      {!isHistorical && (
-                        <View style={[styles.centeredCol, { width: ARROW_COL, minHeight: groupHeight }]}>
-                          {realItem && (
-                            <TouchableOpacity onPress={() => onItemPress(realItem)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                              <MaterialIcons name="chevron-right" size={16} color="#dc2626" />
-                            </TouchableOpacity>
-                          )}
-                        </View>
-                      )}
-                    </View>
-                  );
-                })}
-
-                {measuredHeight > 0 && dividerXPositions.map((x) => (
                   <View
-                    key={x}
-                    pointerEvents="none"
-                    style={[styles.columnDivider, { left: x, height: measuredHeight }]}
-                  />
-                ))}
-              </View>
-            </View>
-          );
-        })}
-      </View>
-    </ScrollView>
+                    style={styles.tableArea}
+                    onLayout={(e) => {
+                      const h = e.nativeEvent.layout.height;
+                      setTableAreaHeights((prev) =>
+                        prev[key] === h ? prev : { ...prev, [key]: h }
+                      );
+                    }}
+                  >
+                    {group.items.map((item, itemIndex) => {
+                      const groupHeight = groupHeights[itemIndex];
+                      const realItem = inventoryItemById.get(item.inventoryId);
+                      const itemStatuses = statusesByInventoryId.get(item.inventoryId) ?? [];
+
+                      return (
+                        <View
+                          key={item.inventoryId}
+                          style={[
+                            styles.itemGroupRow,
+                            { minHeight: groupHeight },
+                            itemIndex === group.items.length - 1 && styles.itemGroupRowLast,
+                          ]}
+                        >
+                          <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }]}>
+                            <Text style={[styles.leftStripCell, { width: LEFT_COLS.sn }]}>{itemIndex + 1}</Text>
+                            <View style={{ width: LEFT_COLS.item }}>
+                              <Text style={[styles.leftStripCell, styles.itemNameCell]}>{item.itemName}</Text>
+                              {item.hasInconsistency && (
+                                <View style={styles.inconsistencyBadge}>
+                                  <MaterialIcons name="warning" size={11} color="#b45309" />
+                                  <Text style={styles.inconsistencyText}>data issue</Text>
+                                </View>
+                              )}
+                            </View>
+                          </View>
+
+                          <View style={styles.rightBatchRows}>
+                            {item.batches.map((batch, batchIndex) => {
+                              const batchRowHeight = getBatchRowHeight(batch.issues.length);
+                              const wasReceivedToday = batch.receivedDate === selectedDate;
+                              const isArchivedToday = batch.isBatchArchived && batch.batchArchivedDate === selectedDate;
+                              const isRestoredToday = batch.isBatchRestoredToday;
+
+                              return (
+                                <View
+                                  key={batch.batchId}
+                                  style={[
+                                    styles.batchRow,
+                                    { minHeight: batchRowHeight },
+                                    batchIndex < item.batches.length - 1 && styles.batchRowDivider,
+                                  ]}
+                                >
+                                  <Text style={[
+                                    styles.tableCell,
+                                    { width: RIGHT_COLS.date },
+                                    wasReceivedToday && styles.receivedDateHighlight,
+                                  ]}>
+                                    {batch.receivedDate}
+                                  </Text>
+                                  <View style={{ width: RIGHT_COLS.batch, position: "relative", justifyContent: "center" }}>
+                                    <Text style={[
+                                      styles.tableCell,
+                                      styles.batchNoCell,
+                                      isArchivedToday && styles.archivedBatchNoText,
+                                      isRestoredToday && styles.restoredBatchNoText,
+                                    ]}>
+                                      {batch.batchNo}
+                                    </Text>
+                                    {isArchivedToday && <View style={styles.diagonalStrike} pointerEvents="none" />}
+                                  </View>
+                                  <Text style={[styles.tableCell, styles.receivedQtyCell, { width: RIGHT_COLS.receivedQty }]}>
+                                    {wasReceivedToday ? String(batch.originalQuantity) : "—"}
+                                  </Text>
+                                  <Text style={[styles.tableCell, styles.openingQtyCell, { width: RIGHT_COLS.opening }]}>
+                                    {batch.quantity}
+                                  </Text>
+                                  <View style={{ width: RIGHT_COLS.issue }}>
+                                    {isArchivedToday && (
+                                      <Text style={[styles.tableCell, styles.archivedIndicatorText]}>Archived</Text>
+                                    )}
+                                    {isRestoredToday && (
+                                      <Text style={[styles.tableCell, styles.restoredIndicatorText]}>Restored {batch.batchRestoredDate}</Text>
+                                    )}
+                                    {batch.issues.length === 0 ? (
+                                      !isArchivedToday && !isRestoredToday && <Text style={[styles.tableCell, styles.issueCell]}>—</Text>
+                                    ) : batch.issues.length <= 2 ? (
+                                      <Text style={[styles.tableCell, styles.issueCell]} numberOfLines={1}>
+                                        {batch.issues.map((iss) => `${iss.quantity} ${batch.unit} ${iss.source}`).join(" • ")}
+                                      </Text>
+                                    ) : (
+                                      Array.from({ length: Math.ceil(batch.issues.length / 2) }).map((_, lineIdx) => {
+                                        const pair = batch.issues.slice(lineIdx * 2, lineIdx * 2 + 2);
+                                        return (
+                                          <Text key={lineIdx} style={[styles.tableCell, styles.issueCell, styles.issueMultiLine]} numberOfLines={1}>
+                                            {pair.map((iss) => `${iss.quantity} ${batch.unit} ${iss.source}`).join(" / ")}
+                                          </Text>
+                                        );
+                                      })
+                                    )}
+                                  </View>
+                                  <Text style={[styles.tableCell, styles.closingQtyCell, { width: RIGHT_COLS.closing }]}>
+                                    {batch.closingQuantity}
+                                  </Text>
+                                  <Text style={[styles.tableCell, { width: RIGHT_COLS.unit }]}>{batch.unit}</Text>
+                                  <Text style={[styles.tableCell, { width: RIGHT_COLS.expiry }]}>{batch.expiryDate ?? "—"}</Text>
+                                </View>
+                              );
+                            })}
+                          </View>
+
+                          <View style={[styles.centeredCol, { width: TOTAL_COL, minHeight: groupHeight }]}>
+                            <Text style={styles.totalCell}>{String(item.historicalStock)}</Text>
+                          </View>
+
+                          <View style={[styles.statusCol, { width: STATUS_COL, minHeight: groupHeight }]}>
+                            {itemStatuses.length === 0 ? (
+                              <Text style={styles.statusNone}>—</Text>
+                            ) : (
+                              itemStatuses.map((kind) => (
+                                <View
+                                  key={kind}
+                                  style={[styles.statusBadge, { backgroundColor: STATUS_STYLE[kind].bg }]}
+                                >
+                                  <Text style={[styles.statusBadgeText, { color: STATUS_STYLE[kind].color }]}>
+                                    {STATUS_STYLE[kind].label}
+                                  </Text>
+                                </View>
+                              ))
+                            )}
+                          </View>
+
+                          {!isHistorical && (
+                            <View style={[styles.centeredCol, { width: ARROW_COL, minHeight: groupHeight }]}>
+                              {realItem && (
+                                <TouchableOpacity onPress={() => onItemPress(realItem)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                  <MaterialIcons name="chevron-right" size={16} color="#dc2626" />
+                                </TouchableOpacity>
+                              )}
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })}
+
+                    {measuredHeight > 0 && dividerXPositions.map((x) => (
+                      <View
+                        key={x}
+                        pointerEvents="none"
+                        style={[styles.columnDivider, { left: x, height: measuredHeight }]}
+                      />
+                    ))}
+                  </View>
+                </View>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: { flex: 1, alignSelf: "stretch" },
   tableHScroll: { width: "100%", flexGrow: 0 },
+  bodyScroll: { flexGrow: 0, flexShrink: 1 },
   tableOuterBlock: {
     borderWidth: 1.5, borderColor: "#334155", borderRadius: 5, overflow: "hidden", backgroundColor: "#fff",
     shadowColor: "#0f172a", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4,
   },
   letterheadCard: {
     flexDirection: "row", alignItems: "center", gap: 10,
-    backgroundColor: "#dbeafe",
+    backgroundColor: "#4b7ac6",
     paddingHorizontal: 12, paddingVertical: 10,
   },
   letterheadIconCircle: {
-    width: 32, height: 32, borderRadius: 16, backgroundColor: "#2563eb",
+    width: 32, height: 32, borderRadius: 16, backgroundColor: "#3b82f6",
     alignItems: "center", justifyContent: "center",
   },
   letterheadTextGroup: { flex: 1 },
-  letterheadName: { fontSize: 15, fontWeight: "800", color: "#0f172a" },
-  letterheadAddress: { fontSize: 12, color: "#1e293b", fontWeight: "600", marginTop: 1 },
-  letterheadMeta: { fontSize: 11, color: "#334155", fontWeight: "600", marginTop: 2 },
+  letterheadName: { fontSize: 15, fontWeight: "800", color: "#fefefe" },
+  letterheadAddress: { fontSize: 12, color: "#fdfeff", fontWeight: "600", marginTop: 1 },
+  letterheadMeta: { fontSize: 11, color: "#fdfeff", fontWeight: "600", marginTop: 2 },
   letterheadReportGroup: { alignItems: "flex-end", justifyContent: "center", paddingLeft: 12 },
-  letterheadReportTitle: { fontSize: 13, fontWeight: "800", color: "#0f172a", letterSpacing: 1.2 },
-  letterheadReportDate: { fontSize: 11, fontWeight: "600", color: "#475569", marginTop: 2 },
+  letterheadReportTitle: { fontSize: 13, fontWeight: "800", color: "#ffffff", letterSpacing: 1.2 },
+  letterheadReportDate: { fontSize: 11, fontWeight: "600", color: "#f9f9f9", marginTop: 2 },
   groupBlock: { borderTopWidth: 1.35, borderTopColor: "#334155" },
   categoryHeader: {
     paddingVertical: 5, paddingLeft: 10, paddingRight: 14, minHeight: 22,
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
     borderLeftWidth: 4, borderBottomWidth: 1.35, borderBottomColor: "#334155",
   },
-  categoryHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
   categoryHeaderText: { fontWeight: "800", fontSize: 13, letterSpacing: 0.3 },
-  categoryHeaderCount: { color: "#64748b", fontWeight: "700", fontSize: 11 },
   tableArea: { position: "relative" },
   tableHeaderRow: {
     flexDirection: "row", alignItems: "center", backgroundColor: "#e3edfa",
@@ -464,15 +455,15 @@ const styles = StyleSheet.create({
   itemGroupRowLast: { borderBottomWidth: 0 },
   leftStrip: {
     flexDirection: "row", alignItems: "center",
-    backgroundColor: "#fff", paddingVertical: 4,
+    paddingVertical: 4,
   },
   leftStripCell: { fontSize: 11, color: "#475569", paddingHorizontal: 4 },
   itemNameCell: { fontWeight: "700", color: "#0f172a", fontSize: 11 },
   inconsistencyBadge: {
-    flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: 5, paddingVertical: 1,
-    marginTop: 3, marginLeft: 4, backgroundColor: "#fef3c7", borderRadius: 3, alignSelf: "flex-start",
+    flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2,
+    marginTop: 3, marginLeft: 4, backgroundColor: "#fef3c7", borderRadius: 4, alignSelf: "flex-start",
   },
-  inconsistencyText: { fontSize: 7, color: "#92400e", fontWeight: "700" },
+  inconsistencyText: { fontSize: 9, color: "#92400e", fontWeight: "700" },
   rightBatchRows: { flex: 1 },
   batchRow: { flexDirection: "row", alignItems: "center", paddingVertical: 3 },
   batchRowDivider: { borderBottomWidth: 1, borderBottomColor: "#e2e8f0" },

@@ -35,6 +35,10 @@
 //    title/buttons/stat cards, so all blocks share one left edge.
 //    The fixed header has a raised zIndex/elevation so the category
 //    dropdown still opens OVER the table.
+// ✅ STICKY TABLE HEAD — the table is no longer inside a page-level
+//    vertical ScrollView. It fills the remaining height, and
+//    HistoricalInventoryTable scrolls ONLY its category rows, so the
+//    letterhead and column header stay fixed while scrolling.
 // FROZEN
 // ============================================
 
@@ -327,7 +331,7 @@ export function HistoricalInventoryTableView({
   return (
     <View style={styles.container}>
       <View style={styles.fixedHeader}>{toolbar}</View>
-      <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
+      <View style={styles.tableBody}>
         {error && (
           <View style={[styles.errorBanner, { maxWidth: tableWidth }]}>
             <Text style={styles.errorBannerText}>{error}</Text>
@@ -355,7 +359,7 @@ export function HistoricalInventoryTableView({
             restaurantVatNumber={restaurantVatNumber}
           />
         )}
-      </ScrollView>
+      </View>
     </View>
   );
 }
@@ -369,6 +373,7 @@ const styles = StyleSheet.create({
   },
   body: { flex: 1, zIndex: 0 },
   bodyContent: { paddingHorizontal: 16, paddingBottom: 16, alignItems: "flex-start" },
+  tableBody: { flex: 1, paddingHorizontal: 16, paddingBottom: 12, alignItems: "flex-start" },
   errorBanner: {
     backgroundColor: "#fef2f2", padding: 10, borderRadius: 6, marginBottom: 10, width: "100%",
     borderWidth: 1, borderColor: "#fecaca",
