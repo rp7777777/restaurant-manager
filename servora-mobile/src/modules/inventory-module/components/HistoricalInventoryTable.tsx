@@ -47,6 +47,24 @@
 //    alternates soft navy / soft teal so a past date is still
 //    recognisable. All item/batch rows are plain white (zebra
 //    striping removed) — the 1.5px item-row line separates items.
+// ✅ Category row lines (top + bottom) use the SAME strong line as the
+//    column-header line (1.35px #334155). The LAST item row of each
+//    category drops its own bottom line, so the next category's top
+//    line (or the table's outer border) is never doubled.
+// ✅ COLUMN HEADER ON TOP — the column header row is now rendered ONCE,
+//    directly under the letterhead and ABOVE all category sections
+//    (standard report layout: columns → groups → rows), instead of
+//    inside the first category. It draws its own column divider lines
+//    (top/bottom-anchored, no measuring needed) at the same x
+//    positions as the table body, so lines stay aligned.
+// ✅ Letterhead a shade darker (#dbeafe) and the column header lighter
+//    (#f8fafc) so the two are clearly different bands.
+// ✅ Category rows no longer repeat the date — it is shown once in the
+//    letterhead ("INVENTORY REPORT" + date).
+// ✅ Column header is now a DARK NAVY band (#1e293b) with white bold
+//    text and soft light dividers — the classic accounting-report
+//    header, clearly distinct from the light-blue letterhead above and
+//    the soft category tints below.
 // ============================================
 
 import React, { useState } from "react";
@@ -119,7 +137,7 @@ const DIVIDER_X_POSITIONS_HISTORICAL = buildDividerPositions(false);
 
 interface CategoryAccent { bar: string; bg: string; text: string }
 
-// Soft tints — all lighter than the letterhead's #eff6ff.
+// Soft tints — all much lighter than the letterhead's #dbeafe.
 const CATEGORY_ACCENTS_TODAY: CategoryAccent[] = [
   { bar: "#2563eb", bg: "#f7faff", text: "#1e40af" }, // soft blue
   { bar: "#059669", bg: "#f3fbf7", text: "#065f46" }, // soft green
@@ -168,7 +186,6 @@ export function HistoricalInventoryTable({
 
   const hasLetterheadData = Boolean(restaurantName || restaurantAddress || letterheadMetaParts.length > 0);
 
-  let hasShownColumnHeader = false;
   let categoryAccentIndex = 0;
 
   return (
@@ -197,6 +214,27 @@ export function HistoricalInventoryTable({
           </View>
         )}
 
+        <View style={[styles.tableHeaderRow, !hasLetterheadData && styles.tableHeaderRowNoTopLine]}>
+          <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.sn }]}>S.N.</Text>
+          <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.item }]}>Item Name</Text>
+          <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.date }]}>Received Date</Text>
+          <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
+          <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: RIGHT_COLS.receivedQty }]}>Received Qty</Text>
+          <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: RIGHT_COLS.opening }]}>Opening</Text>
+          <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.issue }]}>Issue</Text>
+          <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: RIGHT_COLS.closing }]}>Closing</Text>
+          <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
+          <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry</Text>
+          <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: TOTAL_COL }]}>Total QTY</Text>
+          <Text style={[styles.tableHeaderCell, { width: STATUS_COL }]}>Status</Text>
+          {!isHistorical && (
+            <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: ARROW_COL }]}>Edit</Text>
+          )}
+          {dividerXPositions.map((x) => (
+            <View key={x} pointerEvents="none" style={[styles.headerDivider, { left: x }]} />
+          ))}
+        </View>
+
         {groups.map((group) => {
           const groupHeights = group.items.map((item) =>
             item.batches.reduce((sum, b) => sum + getBatchRowHeight(b.issues.length), 0)
@@ -205,8 +243,6 @@ export function HistoricalInventoryTable({
           const measuredHeight = tableAreaHeights[key] ?? 0;
           const accent = categoryAccents[categoryAccentIndex % categoryAccents.length];
           categoryAccentIndex += 1;
-          const showColumnHeader = !hasShownColumnHeader;
-          if (showColumnHeader) hasShownColumnHeader = true;
 
           return (
             <View key={key} style={styles.groupBlock}>
@@ -219,7 +255,6 @@ export function HistoricalInventoryTable({
                     {group.items.length} {group.items.length === 1 ? "item" : "items"}
                   </Text>
                 </View>
-                <Text style={styles.categoryHeaderDate}>{reportDateLabel}</Text>
               </View>
 
               <View
@@ -231,26 +266,6 @@ export function HistoricalInventoryTable({
                   );
                 }}
               >
-                {showColumnHeader && (
-                  <View style={styles.tableHeaderRow}>
-                    <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.sn }]}>S.N.</Text>
-                    <Text style={[styles.tableHeaderCell, { width: LEFT_COLS.item }]}>Item Name</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.date }]}>Received Date</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.batch }]}>Lot/Batch No.</Text>
-                    <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: RIGHT_COLS.receivedQty }]}>Received Qty</Text>
-                    <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: RIGHT_COLS.opening }]}>Opening</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.issue }]}>Issue</Text>
-                    <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: RIGHT_COLS.closing }]}>Closing</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.unit }]}>Unit</Text>
-                    <Text style={[styles.tableHeaderCell, { width: RIGHT_COLS.expiry }]}>Expiry</Text>
-                    <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: TOTAL_COL }]}>Total QTY</Text>
-                    <Text style={[styles.tableHeaderCell, { width: STATUS_COL }]}>Status</Text>
-                    {!isHistorical && (
-                      <Text style={[styles.tableHeaderCell, styles.headerCenter, { width: ARROW_COL }]}>Edit</Text>
-                    )}
-                  </View>
-                )}
-
                 {group.items.map((item, itemIndex) => {
                   const groupHeight = groupHeights[itemIndex];
                   const realItem = inventoryItemById.get(item.inventoryId);
@@ -259,7 +274,11 @@ export function HistoricalInventoryTable({
                   return (
                     <View
                       key={item.inventoryId}
-                      style={[styles.itemGroupRow, { minHeight: groupHeight }]}
+                      style={[
+                        styles.itemGroupRow,
+                        { minHeight: groupHeight },
+                        itemIndex === group.items.length - 1 && styles.itemGroupRowLast,
+                      ]}
                     >
                       <View style={[styles.leftStrip, { width: LEFT_WIDTH, minHeight: groupHeight }]}>
                         <Text style={[styles.leftStripCell, { width: LEFT_COLS.sn }]}>{itemIndex + 1}</Text>
@@ -406,7 +425,7 @@ const styles = StyleSheet.create({
   },
   letterheadCard: {
     flexDirection: "row", alignItems: "center", gap: 10,
-    backgroundColor: "#eff6ff",
+    backgroundColor: "#dbeafe",
     paddingHorizontal: 12, paddingVertical: 10,
   },
   letterheadIconCircle: {
@@ -420,24 +439,29 @@ const styles = StyleSheet.create({
   letterheadReportGroup: { alignItems: "flex-end", justifyContent: "center", paddingLeft: 12 },
   letterheadReportTitle: { fontSize: 13, fontWeight: "800", color: "#0f172a", letterSpacing: 1.2 },
   letterheadReportDate: { fontSize: 11, fontWeight: "600", color: "#475569", marginTop: 2 },
-  groupBlock: { borderTopWidth: 1, borderTopColor: "#94a3b8" },
+  groupBlock: { borderTopWidth: 1.35, borderTopColor: "#334155" },
   categoryHeader: {
     paddingVertical: 5, paddingLeft: 10, paddingRight: 14, minHeight: 22,
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    borderLeftWidth: 4, borderBottomWidth: 1, borderBottomColor: "#cbd5e1",
+    borderLeftWidth: 4, borderBottomWidth: 1.35, borderBottomColor: "#334155",
   },
   categoryHeaderLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
   categoryHeaderText: { fontWeight: "800", fontSize: 13, letterSpacing: 0.3 },
   categoryHeaderCount: { color: "#64748b", fontWeight: "700", fontSize: 11 },
-  categoryHeaderDate: { color: "#475569", fontWeight: "700", fontSize: 12 },
   tableArea: { position: "relative" },
   tableHeaderRow: {
-    flexDirection: "row", alignItems: "center", backgroundColor: "#f1f5f9",
-    borderBottomWidth: 1.35, borderBottomColor: "#334155", paddingVertical: 6,
+    flexDirection: "row", alignItems: "center", backgroundColor: "#e3edfa",
+    borderTopWidth: 1.35, borderTopColor: "#12161c", paddingVertical: 7,
+    position: "relative",
   },
-  tableHeaderCell: { fontSize: 11, fontWeight: "800", color: "#334155", paddingHorizontal: 4 },
+  tableHeaderRowNoTopLine: { borderTopWidth: 0 },
+  headerDivider: {
+    position: "absolute", top: 0, bottom: 0, width: 1, backgroundColor: "#94a3b8",
+  },
+  tableHeaderCell: { fontSize: 11, fontWeight: "800", color: "#0e0a0a", paddingHorizontal: 4, letterSpacing: 0.2 },
   headerCenter: { textAlign: "center" },
-  itemGroupRow: { flexDirection: "row", borderBottomWidth: 1.5, borderBottomColor: "#64748b", backgroundColor: "#fff" },
+  itemGroupRow: { flexDirection: "row", borderBottomWidth: 1.5, borderBottomColor: "#121417", backgroundColor: "#f8f8f9e7" },
+  itemGroupRowLast: { borderBottomWidth: 0 },
   leftStrip: {
     flexDirection: "row", alignItems: "center",
     backgroundColor: "#fff", paddingVertical: 4,
