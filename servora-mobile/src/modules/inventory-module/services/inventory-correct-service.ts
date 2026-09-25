@@ -21,14 +21,20 @@
 //    "pending architecture item") — when quantity actually changes,
 //    the SAME transaction now also writes a stock movement:
 //    movementType "ADJUSTMENT", reasonCategory "DATA_CORRECTION",
-//    quantityChanged = new − old batch quantity (signed), before/after
-//    = item currentStock before/after, and ONE batchAllocation
+//    quantityChanged = new − old batch quantity (signed), and ONE
+//    batchAllocation
 //    { batchId, batchNo, quantity: |delta| }. historical-batch-replay-
 //    service.ts replays this record, so Historical Inventory stays
 //    correct and the batch is no longer flagged as over-issued.
 //    originalQuantity is still NOT rewritten (it keeps meaning
 //    "quantity at batch creation time"). Edits that change only
 //    batchNo/expiryDate write NO movement, exactly as before.
+// ✅ AUDIT CONSISTENCY (review fix) — afterQuantity = the item stock
+//    recomputed from the actual batch documents, and beforeQuantity =
+//    afterQuantity − quantityChanged (the same batch-sum basis
+//    deductStockBatch() uses), so after − before === quantityChanged
+//    ALWAYS holds — even if the stored item.currentStock had drifted.
+//    The stale stored value is NOT used for the audit record.
 // ⚠️ CONCURRENCY NOTE — same project-wide Firestore SDK typings
 //    constraint as receiveBatch()/deductStockBatch(): sibling
 //    batches are read with getDocs() BEFORE the transaction starts
@@ -172,14 +178,13 @@ export async function correctBatchDetails(
       const quantityDelta = input.quantity! - oldQuantity;
       const batchUnitCost = Number(batchData.unitCost ?? 0);
       const safeUnitCost = Number.isFinite(batchUnitCost) ? batchUnitCost : 0;
-      const itemBeforeQuantity = Number(itemData.currentStock ?? 0);
 
       transaction.set(correctionMovementRef, {
         inventoryId:     input.itemId,
         itemName:        itemData.itemName ?? batchData.itemName ?? "",
         movementType:    "ADJUSTMENT",
         quantityChanged: quantityDelta,
-        beforeQuantity:  Number.isFinite(itemBeforeQuantity) ? itemBeforeQuantity : 0,
+        beforeQuantity:  newCurrentStock - quantityDelta,
         afterQuantity:   newCurrentStock,
         unit:            batchData.unit ?? itemData.unit ?? "",
         unitCostAtTime:  safeUnitCost,

@@ -43,12 +43,17 @@
 //    closing, Total QTY, visibility or archive rules are calculated
 //    changed — the existing value is just exposed per row so the table
 //    can show Opening | Issue | Closing.
-// ✅ BATCH CORRECTIONS (approved change) — closing now also applies
-//    same-day batch corrections (ADJUSTMENT + DATA_CORRECTION with a
-//    batchAllocation), using the replay service's own
-//    isBatchCorrection()/getBatchCorrectionDelta(), so Opening and
-//    Closing follow one rule. Closing = opening − same-day real
-//    deductions ± same-day corrections, floored at 0.
+// ✅ CLOSING = NEXT DAY'S OPENING (review fix) — a batch's closing
+//    quantity for selectedDate is now taken from the replay service
+//    itself: replayBatchAsOfDate(batch, movements, selectedDate + 1)
+//    applies every movement up to and including selectedDate, in
+//    CHRONOLOGICAL order, with the exact same deduction/correction/
+//    floor-at-0 rules as Opening. This replaces the old same-day
+//    aggregate (opening − Σ deductions ± Σ corrections), which could
+//    disagree with the replay when a batch hit 0 mid-day and was then
+//    corrected (e.g. 5 − 10 → 0, then +10 = 10; the aggregate gave 5).
+//    Closing therefore always equals the next day's Opening. A batch
+//    not yet received on selectedDate has closing 0.
 // FROZEN
 // ============================================
 
@@ -61,11 +66,17 @@ import { InventoryBatch } from "../types/inventory-batch";
 import { InventoryItem } from "../types/inventory";
 import { useAllInventoryBatches } from "./useAllInventoryBatches";
 import {
-  replayBatchesAsOfDate, getIssuesForDate, isRealStockDeduction,
-  isBatchCorrection, getBatchCorrectionDelta,
+  replayBatchesAsOfDate, getIssuesForDate,
   toJsDate, toDateKey,
   HistoricalBatchState, HistoricalIssueEntry,
 } from "../services/historical-batch-replay-service";
+
+// Local calendar day after a "YYYY-MM-DD" key — same local-date
+// convention as toDateKey() in the replay service.
+function nextDateKey(dateKey: string): string {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return toDateKey(new Date(year, month - 1, day + 1));
+}
 
 function movementsCollection(restaurantId: string) {
   return collection(db, COL.RESTAURANTS, restaurantId, RCOL.STOCK_MOVEMENTS);
@@ -73,7 +84,7 @@ function movementsCollection(restaurantId: string) {
 
 export interface HistoricalBatchWithIssues extends HistoricalBatchState {
   issues: HistoricalIssueEntry[];
-  closingQuantity: number; // CLOSING qty for selectedDate (opening − same-day real deductions, min 0)
+  closingQuantity: number; // CLOSING qty for selectedDate (= next day's replayed opening)
 }
 
 export interface HistoricalItemStock {
@@ -240,39 +251,16 @@ export function useHistoricalInventory(
       ),
     }));
 
+    // ✅ Closing = the replay's own opening for the NEXT day (see header).
+    const replayedNextDay = replayBatchesAsOfDate(batches, movements, nextDateKey(selectedDate));
+    const nextDayQuantityByBatchId = new Map(replayedNextDay.map((s) => [s.batchId, s.quantity]));
+
     const closingMap = new Map<string, number>();
     for (const state of states) {
-      const batchMovements = movementsByBatchId.get(state.batchId) ?? [];
-      let sameDayDeductedQty = 0;
-      let sameDayCorrectionQty = 0;
-
-      for (const movement of batchMovements) {
-        const isDeduction = isRealStockDeduction(movement);
-        const isCorrection = isBatchCorrection(movement);
-        if (!isDeduction && !isCorrection) continue;
-
-        const jsDate = toJsDate(movement.createdAt);
-        if (!jsDate) continue;
-        if (toDateKey(jsDate) !== selectedDate) continue;
-
-        const allocation = (movement.batchAllocations ?? []).find((a) => a.batchId === state.batchId);
-        if (!allocation) continue;
-
-        if (isCorrection) {
-          const delta = getBatchCorrectionDelta(movement, allocation.quantity);
-          if (delta !== null) sameDayCorrectionQty += delta;
-          continue;
-        }
-
-        if (Number.isFinite(allocation.quantity) && allocation.quantity > 0) {
-          sameDayDeductedQty += allocation.quantity;
-        }
-      }
-
-      closingMap.set(
-        state.batchId,
-        Math.max(0, state.quantity - sameDayDeductedQty + sameDayCorrectionQty)
-      );
+      const closing = selectedDate < state.receivedDate
+        ? 0
+        : nextDayQuantityByBatchId.get(state.batchId) ?? state.quantity;
+      closingMap.set(state.batchId, closing);
     }
 
     const statesWithClosing: HistoricalBatchWithIssues[] = states.map((state) => ({
