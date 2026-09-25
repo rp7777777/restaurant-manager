@@ -5,6 +5,10 @@
 // ✅ Set<Permission> — O(1) lookup
 // ✅ permission-service ready
 // ✅ 10/10 production ready
+// ✅ "fix_inventory_data" — added with the Batch Data Check feature:
+//    resolves a batch whose live quantity disagrees with its movement
+//    ledger (records a correction or syncs live stock). OWNER + MANAGER
+//    only (confirmed decision).
 // ============================================
 
 // ── Types ─────────────────────────────────────
@@ -20,6 +24,7 @@ export type Permission =
   | "edit_inventory"
   | "edit_store"
   | "edit_purchase_orders"  // ✅ Purchase Orders + Suppliers — added when PO/Supplier modules were built, after this file's original design
+  | "fix_inventory_data"    // ✅ Batch Data Check fixes — OWNER + MANAGER only
   | "view_payroll"
   | "edit_payroll"
   | "view_reports"
@@ -43,7 +48,7 @@ export interface RoleConfig {
 // ── Role Permission Lists ─────────────────────
 const OWNER_PERMISSIONS: Permission[] = [
   "edit_schedule",    "edit_inventory",  "edit_store",
-  "edit_purchase_orders",
+  "edit_purchase_orders", "fix_inventory_data",
   "view_payroll",     "edit_payroll",    "view_reports",
   "edit_employees",   "edit_settings",   "manage_permissions",
   "view_sales",       "edit_sales",      "view_kitchen",
@@ -52,7 +57,7 @@ const OWNER_PERMISSIONS: Permission[] = [
 
 const MANAGER_PERMISSIONS: Permission[] = [
   "edit_schedule",    "edit_inventory",  "edit_store",
-  "edit_purchase_orders",
+  "edit_purchase_orders", "fix_inventory_data",
   "view_payroll",     "view_reports",    "edit_employees",
   "edit_settings",    "view_sales",      "edit_sales",
   "view_kitchen",

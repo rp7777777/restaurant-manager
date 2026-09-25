@@ -54,6 +54,16 @@
 //    corrected (e.g. 5 − 10 → 0, then +10 = 10; the aggregate gave 5).
 //    Closing therefore always equals the next day's Opening. A batch
 //    not yet received on selectedDate has closing 0.
+// ✅ BATCH DATA CHECK (approved feature) — batchChecksByInventoryId:
+//    for every batch, computeBatchLedger() (batch-reconciliation-
+//    service.ts, pure) compares the LIVE batch quantity with its
+//    movement ledger. Batches that disagree (or carry a malformed
+//    record) are grouped by inventoryId. hasInconsistency is now ALSO
+//    true for an item with such a batch, so a mismatch the replay
+//    alone cannot see (e.g. a batch set to 0 with no record while its
+//    ledger stays positive) still shows the "data issue" badge. The
+//    check is date-independent (live vs full ledger). Opening/closing/
+//    visibility/archive rules are unchanged.
 // FROZEN
 // ============================================
 
@@ -65,6 +75,9 @@ import { StockMovement } from "../../stock-movement-module/types/stock-movement"
 import { InventoryBatch } from "../types/inventory-batch";
 import { InventoryItem } from "../types/inventory";
 import { useAllInventoryBatches } from "./useAllInventoryBatches";
+import {
+  computeBatchLedger, isBatchLedgerMismatch, BatchLedgerCheck,
+} from "../services/batch-reconciliation-service";
 import {
   replayBatchesAsOfDate, getIssuesForDate,
   toJsDate, toDateKey,
@@ -105,6 +118,7 @@ export interface DepletedItemInfo {
 
 export interface UseHistoricalInventoryResult {
   batchStates:              HistoricalBatchWithIssues[];
+  batchChecksByInventoryId: Map<string, BatchLedgerCheck[]>;
   itemsWithHistoricalStock: HistoricalItemStock[];
   depletedItems:            DepletedItemInfo[];
   loading:                  boolean;
@@ -271,6 +285,28 @@ export function useHistoricalInventory(
     return { batchStates: statesWithClosing, closingQuantityByBatchId: closingMap };
   }, [batches, movements, selectedDate]);
 
+  // ✅ Batch Data Check — live quantity vs movement ledger (see header).
+  const batchChecksByInventoryId = useMemo(() => {
+    const movementsByBatchId = new Map<string, StockMovement[]>();
+    for (const movement of movements) {
+      for (const allocation of movement.batchAllocations ?? []) {
+        const list = movementsByBatchId.get(allocation.batchId) ?? [];
+        list.push(movement);
+        movementsByBatchId.set(allocation.batchId, list);
+      }
+    }
+
+    const map = new Map<string, BatchLedgerCheck[]>();
+    for (const batch of batches) {
+      const check = computeBatchLedger(batch, movementsByBatchId.get(batch.id) ?? []);
+      if (!isBatchLedgerMismatch(check)) continue;
+      const list = map.get(batch.inventoryId) ?? [];
+      list.push(check);
+      map.set(batch.inventoryId, list);
+    }
+    return map;
+  }, [batches, movements]);
+
   const itemsWithHistoricalStock = useMemo(() => {
     const batchById = new Map<string, InventoryBatch>();
     for (const b of batches) batchById.set(b.id, b);
@@ -318,7 +354,9 @@ export function useHistoricalInventory(
         hasInconsistency: false,
       };
 
-      if (state.inconsistent) entry.hasInconsistency = true;
+      if (state.inconsistent || batchChecksByInventoryId.has(batch.inventoryId)) {
+        entry.hasInconsistency = true;
+      }
 
       if (state.visible) {
         // ✅ Total QTY excludes this batch's own quantity starting on
@@ -349,7 +387,7 @@ export function useHistoricalInventory(
     }
 
     return Array.from(byItem.values()).filter((item) => item.batches.length > 0);
-  }, [batchStates, batches, inventoryItems, selectedDate, closingQuantityByBatchId]);
+  }, [batchStates, batches, inventoryItems, selectedDate, closingQuantityByBatchId, batchChecksByInventoryId]);
 
   const depletedItems = useMemo(() => {
     const batchById = new Map<string, InventoryBatch>();
@@ -390,6 +428,7 @@ export function useHistoricalInventory(
 
   return {
     batchStates,
+    batchChecksByInventoryId,
     itemsWithHistoricalStock,
     depletedItems,
     loading: batchesLoading || movementsLoading,

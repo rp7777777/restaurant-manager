@@ -39,10 +39,15 @@
 //    vertical ScrollView. It fills the remaining height, and
 //    HistoricalInventoryTable scrolls ONLY its category rows, so the
 //    letterhead and column header stay fixed while scrolling.
+// ✅ BATCH DATA CHECK — tapping an item's "data issue" badge opens
+//    BatchDataCheckModal with that item's mismatched batches (from
+//    useHistoricalInventory's batchChecksByInventoryId). Fix buttons
+//    are shown only with the "fix_inventory_data" permission
+//    (OWNER + MANAGER).
 // FROZEN
 // ============================================
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { Category } from "../types/category";
@@ -55,6 +60,8 @@ import {
   HistoricalInventoryTable, HistoricalCategoryGroup, ItemStatusKind, getHistoricalTableWidth,
 } from "./HistoricalInventoryTable";
 import { OutOfStockTable, OutOfStockGroup, OutOfStockRow } from "./OutOfStockTable";
+import { BatchDataCheckModal } from "./BatchDataCheckModal";
+import { usePermission } from "../../../hooks/usePermission";
 
 type StockStatusFilter = "all" | "lowStock" | "outOfStock" | "expiringSoon";
 
@@ -109,8 +116,11 @@ export function HistoricalInventoryTableView({
   const tableWidth = getHistoricalTableWidth(isHistorical);
   const reportDateLabel = formatReportDate(selectedDate);
 
-  const { itemsWithHistoricalStock, depletedItems, loading, error } =
+  const { itemsWithHistoricalStock, depletedItems, loading, error, batchChecksByInventoryId } =
     useHistoricalInventory(restaurantId, selectedDate, inventoryItems);
+
+  const canFixInventoryData = usePermission("fix_inventory_data");
+  const [dataCheckInventoryId, setDataCheckInventoryId] = useState<string | null>(null);
 
   const inventoryItemById = useMemo(() => {
     const map = new Map<string, InventoryItem>();
@@ -291,6 +301,24 @@ export function HistoricalInventoryTableView({
     return groups;
   }, [depletedItems, inventoryItems, categories, categoryId, searchQuery, isHistorical]);
 
+  const dataCheckItem = dataCheckInventoryId ? inventoryItemById.get(dataCheckInventoryId) ?? null : null;
+  const dataCheckItemName =
+    dataCheckItem?.itemName ??
+    itemsWithHistoricalStock.find((it) => it.inventoryId === dataCheckInventoryId)?.itemName ??
+    "";
+
+  const dataCheckModal = (
+    <BatchDataCheckModal
+      visible={dataCheckInventoryId !== null}
+      onClose={() => setDataCheckInventoryId(null)}
+      restaurantId={restaurantId}
+      item={dataCheckItem}
+      itemName={dataCheckItemName}
+      checks={dataCheckInventoryId ? batchChecksByInventoryId.get(dataCheckInventoryId) ?? [] : []}
+      canFix={canFixInventoryData}
+    />
+  );
+
   if (loading) {
     return <ActivityIndicator size="large" color={headerBg} style={styles.loadingIndicator} />;
   }
@@ -352,6 +380,7 @@ export function HistoricalInventoryTableView({
             inventoryItemById={inventoryItemById}
             statusesByInventoryId={statusesByInventoryId}
             onItemPress={onItemPress}
+            onDataIssuePress={setDataCheckInventoryId}
             restaurantName={restaurantName}
             restaurantAddress={restaurantAddress}
             restaurantPhone={restaurantPhone}
@@ -360,6 +389,7 @@ export function HistoricalInventoryTableView({
           />
         )}
       </View>
+      {dataCheckModal}
     </View>
   );
 }

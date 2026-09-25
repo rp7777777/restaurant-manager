@@ -35,6 +35,14 @@
 //    deductStockBatch() uses), so after − before === quantityChanged
 //    ALWAYS holds — even if the stored item.currentStock had drifted.
 //    The stale stored value is NOT used for the audit record.
+// ✅ auditMode "ledger-sync" (Batch Data Check) — used ONLY by
+//    batch-reconciliation-service.ts syncBatchToLedger() when the
+//    movement ledger is right and the LIVE batch quantity is wrong.
+//    Same transaction and same batch/item updates as a normal edit,
+//    but the audit movement carries NO batchAllocation (so historical
+//    replay does not apply it — the ledger already holds the right
+//    value) and referenceId "LEDGER-SYNC-<batchId>". Default mode
+//    ("correction") is unchanged.
 // ⚠️ CONCURRENCY NOTE — same project-wide Firestore SDK typings
 //    constraint as receiveBatch()/deductStockBatch(): sibling
 //    batches are read with getDocs() BEFORE the transaction starts
@@ -59,6 +67,7 @@ export interface CorrectBatchDetailsInput {
   batchNo?:    string;
   expiryDate?: string;
   quantity?:   number;
+  auditMode?:  "correction" | "ledger-sync"; // default "correction" — see header
 }
 
 export interface CorrectBatchDetailsResult {
@@ -175,6 +184,7 @@ export async function correctBatchDetails(
       });
 
       // ✅ Audit record for the quantity correction (see header).
+      const isLedgerSync = input.auditMode === "ledger-sync";
       const quantityDelta = input.quantity! - oldQuantity;
       const batchUnitCost = Number(batchData.unitCost ?? 0);
       const safeUnitCost = Number.isFinite(batchUnitCost) ? batchUnitCost : 0;
@@ -191,11 +201,13 @@ export async function correctBatchDetails(
         movementValue:   Math.round(Math.abs(quantityDelta) * safeUnitCost * 100) / 100,
         reasonCategory:  "DATA_CORRECTION",
         referenceType:   "MANUAL",
-        referenceId:     null,
-        reason:          `Batch ${currentBatchNo} quantity corrected ${oldQuantity} → ${input.quantity}`,
-        batchAllocations: [
-          { batchId: input.batchId, batchNo: currentBatchNo, quantity: Math.abs(quantityDelta) },
-        ],
+        referenceId:     isLedgerSync ? `LEDGER-SYNC-${input.batchId}` : null,
+        reason:          isLedgerSync
+          ? `Batch Data Check: batch ${currentBatchNo} live quantity synced to its movement ledger ${oldQuantity} → ${input.quantity}`
+          : `Batch ${currentBatchNo} quantity corrected ${oldQuantity} → ${input.quantity}`,
+        batchAllocations: isLedgerSync
+          ? []
+          : [{ batchId: input.batchId, batchNo: currentBatchNo, quantity: Math.abs(quantityDelta) }],
         restaurantId,
         createdBy:       auth.currentUser!.uid,
         createdByName:   null,

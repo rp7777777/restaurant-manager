@@ -37,6 +37,9 @@
 //    from the light column header and category rows.
 // ✅ Category row: item count moved to the RIGHT side, same text style
 //    and colour as the category name (e.g. "2 ITEMS").
+// ✅ "data issue" badge is TAPPABLE (Batch Data Check) — calls
+//    onDataIssuePress(inventoryId); the parent opens the check window.
+//    Display-only otherwise, as before.
 // ============================================
 
 import React, { useState } from "react";
@@ -133,6 +136,7 @@ interface HistoricalInventoryTableProps {
   inventoryItemById:     Map<string, InventoryItem>;
   statusesByInventoryId: Map<string, ItemStatusKind[]>;
   onItemPress:           (item: InventoryItem) => void;
+  onDataIssuePress?:     (inventoryId: string) => void;
   restaurantName?:       string;
   restaurantAddress?:    string;
   restaurantPhone?:      string;
@@ -142,7 +146,7 @@ interface HistoricalInventoryTableProps {
 
 export function HistoricalInventoryTable({
   groups, isHistorical, selectedDate, reportDateLabel,
-  inventoryItemById, statusesByInventoryId, onItemPress,
+  inventoryItemById, statusesByInventoryId, onItemPress, onDataIssuePress,
   restaurantName, restaurantAddress, restaurantPhone, restaurantEmail, restaurantVatNumber,
 }: HistoricalInventoryTableProps) {
   const [tableAreaHeights, setTableAreaHeights] = useState<Record<string, number>>({});
@@ -274,10 +278,16 @@ export function HistoricalInventoryTable({
                             <View style={{ width: LEFT_COLS.item }}>
                               <Text style={[styles.leftStripCell, styles.itemNameCell]}>{item.itemName}</Text>
                               {item.hasInconsistency && (
-                                <View style={styles.inconsistencyBadge}>
+                                <TouchableOpacity
+                                  style={styles.inconsistencyBadge}
+                                  onPress={() => onDataIssuePress?.(item.inventoryId)}
+                                  disabled={!onDataIssuePress}
+                                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                                >
                                   <MaterialIcons name="warning" size={11} color="#b45309" />
                                   <Text style={styles.inconsistencyText}>data issue</Text>
-                                </View>
+                                  {onDataIssuePress && <MaterialIcons name="chevron-right" size={11} color="#b45309" />}
+                                </TouchableOpacity>
                               )}
                             </View>
                           </View>
@@ -426,12 +436,12 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   letterheadTextGroup: { flex: 1 },
-  letterheadName: { fontSize: 15, fontWeight: "800", color: "#fefefe" },
-  letterheadAddress: { fontSize: 12, color: "#fdfeff", fontWeight: "600", marginTop: 1 },
-  letterheadMeta: { fontSize: 11, color: "#fdfeff", fontWeight: "600", marginTop: 2 },
+  letterheadName: { fontSize: 15, fontWeight: "800", color: "#ffffff" },
+  letterheadAddress: { fontSize: 12, color: "#e2e8f0", fontWeight: "600", marginTop: 1 },
+  letterheadMeta: { fontSize: 11, color: "#cbd5e1", fontWeight: "600", marginTop: 2 },
   letterheadReportGroup: { alignItems: "flex-end", justifyContent: "center", paddingLeft: 12 },
   letterheadReportTitle: { fontSize: 13, fontWeight: "800", color: "#ffffff", letterSpacing: 1.2 },
-  letterheadReportDate: { fontSize: 11, fontWeight: "600", color: "#f9f9f9", marginTop: 2 },
+  letterheadReportDate: { fontSize: 11, fontWeight: "600", color: "#cbd5e1", marginTop: 2 },
   groupBlock: { borderTopWidth: 1.35, borderTopColor: "#334155" },
   categoryHeader: {
     paddingVertical: 5, paddingLeft: 10, paddingRight: 14, minHeight: 22,
