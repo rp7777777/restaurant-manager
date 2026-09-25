@@ -29,6 +29,19 @@
 //    restore date (restore date onward shows it again). Falls back
 //    to the old archivedAt-only logic when archiveHistory is empty
 //    (legacy batches archived before this field existed).
+// ✅ BATCH CORRECTIONS (approved change) — an ADJUSTMENT movement with
+//    reasonCategory "DATA_CORRECTION" that carries a batchAllocation
+//    is a manual batch quantity correction (written by
+//    correctBatchDetails(), or backfilled for older corrections). It
+//    is now REPLAYED: the batch quantity moves by
+//    sign(quantityChanged) × allocation.quantity at that point in
+//    time. This closes the old "pending architecture item" where an
+//    Edit Batch quantity change was invisible to replay and made the
+//    batch look over-issued ("data issue"). A correction that brings a
+//    depleted batch back above 0 clears its depletedDate, so the batch
+//    becomes visible again from that date. Deduction rules, opening/
+//    closing semantics, visibility and archive rules are otherwise
+//    UNCHANGED.
 // FROZEN
 // ============================================
 
@@ -74,6 +87,25 @@ export function toDateKey(date: Date): string {
 }
 
 const DEDUCTING_MOVEMENT_TYPES = new Set(["KITCHEN_ISSUE", "WASTE", "TRANSFER_OUT"]);
+
+// ✅ A manual batch quantity correction (see header). EXPORTED so
+// useHistoricalInventory.ts applies the exact same rule to closing.
+export function isBatchCorrection(movement: StockMovement): boolean {
+  return (
+    movement.movementType === "ADJUSTMENT" &&
+    movement.reasonCategory === "DATA_CORRECTION" &&
+    (movement.batchAllocations ?? []).length > 0
+  );
+}
+
+// ✅ Signed change a correction applies to ONE batch, or null when the
+// record is malformed (caller marks the batch inconsistent).
+export function getBatchCorrectionDelta(movement: StockMovement, allocationQuantity: number): number | null {
+  if (!Number.isFinite(allocationQuantity) || allocationQuantity < 0) return null;
+  const change = Number(movement.quantityChanged);
+  if (!Number.isFinite(change) || change === 0) return null;
+  return change > 0 ? allocationQuantity : -allocationQuantity;
+}
 
 export function isRealStockDeduction(movement: StockMovement): boolean {
   if (!DEDUCTING_MOVEMENT_TYPES.has(movement.movementType)) return false;
@@ -163,7 +195,7 @@ export function replayBatchAsOfDate(
   }
 
   const relevantMovements = movements
-    .filter((m) => isRealStockDeduction(m))
+    .filter((m) => isRealStockDeduction(m) || isBatchCorrection(m))
     .filter((m) => (m.batchAllocations ?? []).some((a) => a.batchId === batch.id))
     .map((m) => {
       const jsDate = toJsDate(m.createdAt);
@@ -181,6 +213,24 @@ export function replayBatchAsOfDate(
 
     const allocation = (movement.batchAllocations ?? []).find((a) => a.batchId === batch.id);
     if (!allocation) continue;
+
+    if (isBatchCorrection(movement)) {
+      const delta = getBatchCorrectionDelta(movement, allocation.quantity);
+      if (delta === null) {
+        inconsistent = true;
+        continue;
+      }
+      const corrected = quantity + delta;
+      quantity = corrected < 0 ? 0 : corrected;
+      if (corrected < 0) inconsistent = true;
+
+      if (quantity > 0) {
+        depletedDate = null; // revived by the correction
+      } else if (depletedDate === null) {
+        depletedDate = dateKey;
+      }
+      continue;
+    }
 
     if (!Number.isFinite(allocation.quantity) || allocation.quantity < 0) {
       inconsistent = true;

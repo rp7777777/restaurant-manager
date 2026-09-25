@@ -43,6 +43,12 @@
 //    closing, Total QTY, visibility or archive rules are calculated
 //    changed — the existing value is just exposed per row so the table
 //    can show Opening | Issue | Closing.
+// ✅ BATCH CORRECTIONS (approved change) — closing now also applies
+//    same-day batch corrections (ADJUSTMENT + DATA_CORRECTION with a
+//    batchAllocation), using the replay service's own
+//    isBatchCorrection()/getBatchCorrectionDelta(), so Opening and
+//    Closing follow one rule. Closing = opening − same-day real
+//    deductions ± same-day corrections, floored at 0.
 // FROZEN
 // ============================================
 
@@ -56,6 +62,7 @@ import { InventoryItem } from "../types/inventory";
 import { useAllInventoryBatches } from "./useAllInventoryBatches";
 import {
   replayBatchesAsOfDate, getIssuesForDate, isRealStockDeduction,
+  isBatchCorrection, getBatchCorrectionDelta,
   toJsDate, toDateKey,
   HistoricalBatchState, HistoricalIssueEntry,
 } from "../services/historical-batch-replay-service";
@@ -237,21 +244,35 @@ export function useHistoricalInventory(
     for (const state of states) {
       const batchMovements = movementsByBatchId.get(state.batchId) ?? [];
       let sameDayDeductedQty = 0;
+      let sameDayCorrectionQty = 0;
 
       for (const movement of batchMovements) {
-        if (!isRealStockDeduction(movement)) continue;
+        const isDeduction = isRealStockDeduction(movement);
+        const isCorrection = isBatchCorrection(movement);
+        if (!isDeduction && !isCorrection) continue;
 
         const jsDate = toJsDate(movement.createdAt);
         if (!jsDate) continue;
         if (toDateKey(jsDate) !== selectedDate) continue;
 
         const allocation = (movement.batchAllocations ?? []).find((a) => a.batchId === state.batchId);
-        if (allocation && Number.isFinite(allocation.quantity) && allocation.quantity > 0) {
+        if (!allocation) continue;
+
+        if (isCorrection) {
+          const delta = getBatchCorrectionDelta(movement, allocation.quantity);
+          if (delta !== null) sameDayCorrectionQty += delta;
+          continue;
+        }
+
+        if (Number.isFinite(allocation.quantity) && allocation.quantity > 0) {
           sameDayDeductedQty += allocation.quantity;
         }
       }
 
-      closingMap.set(state.batchId, Math.max(0, state.quantity - sameDayDeductedQty));
+      closingMap.set(
+        state.batchId,
+        Math.max(0, state.quantity - sameDayDeductedQty + sameDayCorrectionQty)
+      );
     }
 
     const statesWithClosing: HistoricalBatchWithIssues[] = states.map((state) => ({

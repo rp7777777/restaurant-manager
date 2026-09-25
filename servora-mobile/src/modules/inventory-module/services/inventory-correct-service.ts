@@ -17,18 +17,18 @@
 //    BEFORE being used in the quantityIsChanging comparison — a
 //    malformed existing value would otherwise make that comparison
 //    unreliable.
-// ⚠️ PENDING ARCHITECTURE ITEM (not fixed here, documented) —
-//    manual quantity correction changes `quantity` but leaves
-//    `originalQuantity` unchanged (by design — originalQuantity
-//    means "quantity at batch creation time", which a later
-//    correction does not retroactively rewrite). No movement/audit
-//    record is created for a correction, and
-//    historical-batch-replay-service.ts has no concept of a
-//    "correction event" — so a manual quantity correction is not
-//    currently reflected in historical replay for dates BEFORE the
-//    correction. Representing this properly would require a new
-//    BATCH_CORRECTION-style audit event and coordinated changes to
-//    the replay service — a larger design decision, deferred.
+// ✅ BATCH CORRECTION AUDIT (approved change — closes the old
+//    "pending architecture item") — when quantity actually changes,
+//    the SAME transaction now also writes a stock movement:
+//    movementType "ADJUSTMENT", reasonCategory "DATA_CORRECTION",
+//    quantityChanged = new − old batch quantity (signed), before/after
+//    = item currentStock before/after, and ONE batchAllocation
+//    { batchId, batchNo, quantity: |delta| }. historical-batch-replay-
+//    service.ts replays this record, so Historical Inventory stays
+//    correct and the batch is no longer flagged as over-issued.
+//    originalQuantity is still NOT rewritten (it keeps meaning
+//    "quantity at batch creation time"). Edits that change only
+//    batchNo/expiryDate write NO movement, exactly as before.
 // ⚠️ CONCURRENCY NOTE — same project-wide Firestore SDK typings
 //    constraint as receiveBatch()/deductStockBatch(): sibling
 //    batches are read with getDocs() BEFORE the transaction starts
@@ -39,11 +39,11 @@
 // FROZEN
 // ============================================
 
-import { runTransaction, query, where, getDocs, serverTimestamp } from "firebase/firestore";
+import { doc, runTransaction, query, where, getDocs, serverTimestamp } from "firebase/firestore";
 import { db, auth } from "../../../firebase";
 import { InventoryItem } from "../types/inventory";
 import {
-  inventoryDoc, batchDoc, batchesCollection, batchKeyDoc,
+  inventoryDoc, batchDoc, batchesCollection, batchKeyDoc, stockMovementsCollection,
   computeIsLowStock, normalizeBatchKey, normalizeBatchKeyString, isValidDateString,
 } from "./inventory-service-helpers";
 
@@ -83,6 +83,7 @@ export async function correctBatchDetails(
 
   const targetBatchRef = batchDoc(restaurantId, input.batchId);
   const itemRef = inventoryDoc(restaurantId, input.itemId);
+  const correctionMovementRef = doc(stockMovementsCollection(restaurantId));
 
   // ⚠️ See file-level CONCURRENCY NOTE.
   const siblingBatchesSnap = await getDocs(
@@ -165,6 +166,36 @@ export async function correctBatchDetails(
         isLowStock,
         totalValue:   recomputedTotalValue,
         updatedAt:    serverTimestamp(),
+      });
+
+      // ✅ Audit record for the quantity correction (see header).
+      const quantityDelta = input.quantity! - oldQuantity;
+      const batchUnitCost = Number(batchData.unitCost ?? 0);
+      const safeUnitCost = Number.isFinite(batchUnitCost) ? batchUnitCost : 0;
+      const itemBeforeQuantity = Number(itemData.currentStock ?? 0);
+
+      transaction.set(correctionMovementRef, {
+        inventoryId:     input.itemId,
+        itemName:        itemData.itemName ?? batchData.itemName ?? "",
+        movementType:    "ADJUSTMENT",
+        quantityChanged: quantityDelta,
+        beforeQuantity:  Number.isFinite(itemBeforeQuantity) ? itemBeforeQuantity : 0,
+        afterQuantity:   newCurrentStock,
+        unit:            batchData.unit ?? itemData.unit ?? "",
+        unitCostAtTime:  safeUnitCost,
+        movementValue:   Math.round(Math.abs(quantityDelta) * safeUnitCost * 100) / 100,
+        reasonCategory:  "DATA_CORRECTION",
+        referenceType:   "MANUAL",
+        referenceId:     null,
+        reason:          `Batch ${currentBatchNo} quantity corrected ${oldQuantity} → ${input.quantity}`,
+        batchAllocations: [
+          { batchId: input.batchId, batchNo: currentBatchNo, quantity: Math.abs(quantityDelta) },
+        ],
+        restaurantId,
+        createdBy:       auth.currentUser!.uid,
+        createdByName:   null,
+        createdByRole:   null,
+        createdAt:       serverTimestamp(),
       });
     }
 
