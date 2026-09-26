@@ -13,6 +13,16 @@
 //    design — was previously giving each category its OWN separate
 //    bordered categoryBlock with a 16px gap between them, and
 //    repeating the column header row for every category.
+// ✅ PHASE 3 — PERMANENT DELETE (OWNER + MANAGER, "fix_inventory_data"
+//    permission): a red delete icon next to Restore, for an archived
+//    item row and for each archived batch line. Tapping it first runs
+//    the eligibility check (inventory-permanent-delete-service.ts):
+//    only items/batches created by mistake — no kitchen/waste/transfer
+//    history, 0 stock, not linked to a Purchase Order — can be deleted.
+//    If not eligible, the reasons are shown and nothing is deleted
+//    (keep it archived). If eligible, a confirm dialog explains it
+//    cannot be undone, then the record and its own records are removed
+//    atomically. Restore behaviour is UNCHANGED.
 // FROZEN
 // ============================================
 
@@ -29,6 +39,11 @@ import { restoreInventoryBatch } from "../repository/inventory-batch-repository"
 import { useAllInventoryBatches } from "../hooks/useAllInventoryBatches";
 import { todayISO } from "../../../utils/date-utils";
 import { syncItemStockFromBatches } from "../services/inventory-item-service";
+import {
+  checkItemPermanentDelete, permanentlyDeleteItem,
+  checkBatchPermanentDelete, permanentlyDeleteBatch,
+} from "../services/inventory-permanent-delete-service";
+import { usePermission } from "../../../hooks/usePermission";
 
 const isWeb = Platform.OS === "web";
 
@@ -157,6 +172,7 @@ export function ArchivedItemsModal({
   const [selectedDate, setSelectedDate] = useState(today);
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [restoringId, setRestoringId] = useState<string | null>(null);
+  const canDeletePermanently = usePermission("fix_inventory_data");
   const [tableAreaHeights, setTableAreaHeights] = useState<Record<string, number>>({});
   const { batches, loading: batchesLoading } = useAllInventoryBatches(restaurantId);
 
@@ -285,6 +301,71 @@ export function ArchivedItemsModal({
       const msg = err?.message ?? "Failed to restore batch";
       if (isWeb) window.alert(`Error: ${msg}`);
       else Alert.alert("Error", msg);
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  // ✅ Phase 3 — permanent delete (see header). Reuses restoringId as
+  // the single "busy" lock so restore and delete never run together.
+  const confirmDelete = (title: string, message: string): Promise<boolean> => {
+    if (isWeb) return Promise.resolve(window.confirm(`${title}\n\n${message}`));
+    return new Promise((resolve) => {
+      Alert.alert(title, message, [
+        { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+        { text: "Delete", style: "destructive", onPress: () => resolve(true) },
+      ]);
+    });
+  };
+
+  const showDeleteMessage = (title: string, message: string) => {
+    if (isWeb) window.alert(`${title}\n\n${message}`);
+    else Alert.alert(title, message);
+  };
+
+  const handleDeleteItem = async (inventoryId: string) => {
+    if (restoringId) return;
+    const item = itemById.get(inventoryId);
+    if (!item) return;
+    setRestoringId(inventoryId);
+    try {
+      const check = await checkItemPermanentDelete(restaurantId, item);
+      if (!check.eligible) {
+        showDeleteMessage(`Can't delete "${item.itemName}"`, check.reasons.join("\n"));
+        return;
+      }
+      const ok = await confirmDelete(
+        `Delete "${item.itemName}" permanently?`,
+        "The item, its batches and its receive records will be removed. This cannot be undone."
+      );
+      if (!ok) return;
+      await permanentlyDeleteItem(restaurantId, item);
+    } catch (err: any) {
+      showDeleteMessage("Delete failed", err?.message ?? "Failed to delete item");
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  const handleDeleteBatch = async (batchId: string) => {
+    if (restoringId) return;
+    const batch = batches.find((b) => b.id === batchId);
+    if (!batch) return;
+    setRestoringId(batchId);
+    try {
+      const check = await checkBatchPermanentDelete(restaurantId, batch);
+      if (!check.eligible) {
+        showDeleteMessage(`Can't delete batch ${batch.batchNo}`, check.reasons.join("\n"));
+        return;
+      }
+      const ok = await confirmDelete(
+        `Delete batch ${batch.batchNo} permanently?`,
+        "The batch and its receive record will be removed. This cannot be undone."
+      );
+      if (!ok) return;
+      await permanentlyDeleteBatch(restaurantId, batch);
+    } catch (err: any) {
+      showDeleteMessage("Delete failed", err?.message ?? "Failed to delete batch");
     } finally {
       setRestoringId(null);
     }
@@ -448,7 +529,7 @@ export function ArchivedItemsModal({
                             </View>
 
                             {row.isItemLevel ? (
-                              <View style={[styles.mergedCell, { width: COLS.action, minHeight: rowsHeight }]}>
+                              <View style={[styles.mergedCell, styles.actionGroup, { width: COLS.action, minHeight: rowsHeight }]}>
                                 <TouchableOpacity
                                   style={styles.restoreBtn}
                                   onPress={() => handleRestoreItem(row.inventoryId)}
@@ -461,6 +542,16 @@ export function ArchivedItemsModal({
                                     <MaterialIcons name="unarchive" size={16} color="#0369a1" />
                                   )}
                                 </TouchableOpacity>
+                                {canDeletePermanently && !isRestoringItem && (
+                                  <TouchableOpacity
+                                    style={styles.restoreBtn}
+                                    onPress={() => handleDeleteItem(row.inventoryId)}
+                                    disabled={!!restoringId}
+                                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                                  >
+                                    <MaterialIcons name="delete-forever" size={16} color="#dc2626" />
+                                  </TouchableOpacity>
+                                )}
                               </View>
                             ) : (
                               <View style={{ width: COLS.action }}>
@@ -469,18 +560,30 @@ export function ArchivedItemsModal({
                                   return (
                                     <View key={b ? b.batchId : "no-batch"} style={[styles.batchLine, styles.actionBatchLine, { height: ROW_HEIGHT }, i < rows.length - 1 && styles.batchLineDivider]}>
                                       {b && (
-                                        <TouchableOpacity
-                                          style={styles.restoreBtn}
-                                          onPress={() => handleRestoreBatch(b.batchId)}
-                                          disabled={!!restoringId}
-                                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                                        >
-                                          {isRestoringThisBatch ? (
-                                            <ActivityIndicator size="small" color="#0369a1" />
-                                          ) : (
-                                            <MaterialIcons name="unarchive" size={16} color="#0369a1" />
+                                        <View style={styles.actionGroup}>
+                                          <TouchableOpacity
+                                            style={styles.restoreBtn}
+                                            onPress={() => handleRestoreBatch(b.batchId)}
+                                            disabled={!!restoringId}
+                                            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                                          >
+                                            {isRestoringThisBatch ? (
+                                              <ActivityIndicator size="small" color="#0369a1" />
+                                            ) : (
+                                              <MaterialIcons name="unarchive" size={16} color="#0369a1" />
+                                            )}
+                                          </TouchableOpacity>
+                                          {canDeletePermanently && !isRestoringThisBatch && (
+                                            <TouchableOpacity
+                                              style={styles.restoreBtn}
+                                              onPress={() => handleDeleteBatch(b.batchId)}
+                                              disabled={!!restoringId}
+                                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                                            >
+                                              <MaterialIcons name="delete-forever" size={16} color="#dc2626" />
+                                            </TouchableOpacity>
                                           )}
-                                        </TouchableOpacity>
+                                        </View>
                                       )}
                                     </View>
                                   );
@@ -574,6 +677,7 @@ const styles = StyleSheet.create({
   actionBatchLine: { alignItems: "center" },
   batchLineDivider: { borderBottomWidth: 1, borderBottomColor: "#94a3b8" },
   mergedCell: { justifyContent: "center", alignItems: "center" },
+  actionGroup: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 22 },
 
   restoreBtn: {
     width: 5, height: 5, borderRadius: 5, backgroundColor: "#e0f2fe",
